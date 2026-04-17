@@ -11,3 +11,4 @@ openpyxl
 reportlab
 python-pptx
 python-docx
+itsdangerous
