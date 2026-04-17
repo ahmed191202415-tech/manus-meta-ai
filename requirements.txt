@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+requests
+pydantic
+python-dotenv
+pandas
+numpy
+scipy
+scikit-learn
+openpyxl
+reportlab
+python-pptx
+python-docx
