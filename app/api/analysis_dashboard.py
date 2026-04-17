@@ -1,6 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 from app.analytics.preprocessing import fetch_insights_df, infer_previous_range
 from app.analytics.metrics import summarize_df
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/analysis_dashboard", tags=["analysis_dashboard"])
 
 class AnalysisDashboardRequest(BaseModel):
     account_id: str
-    access_token: str
+    access_token: Optional[str] = None
     title: str = "Meta Ads Dashboard"
     subtitle: Optional[str] = None
     level: str = "campaign"
@@ -32,11 +32,19 @@ class AnalysisDashboardRequest(BaseModel):
     file_name: Optional[str] = None
 
 
+def pick_token(request: Request, body_token: str | None):
+    return body_token or request.session.get("meta_access_token")
+
+
 @router.post("/build")
-async def build_analysis_dashboard(body: AnalysisDashboardRequest):
+async def build_analysis_dashboard(body: AnalysisDashboardRequest, request: Request):
+    token = pick_token(request, body.access_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="No Meta token found. Login first via /auth/meta/login or pass access_token.")
+
     current_df = fetch_insights_df(
         body.account_id,
-        body.access_token,
+        token,
         body.level,
         body.fields,
         body.date_preset,
@@ -60,7 +68,7 @@ async def build_analysis_dashboard(body: AnalysisDashboardRequest):
     if compare_since and compare_until:
         compare_df = fetch_insights_df(
             body.account_id,
-            body.access_token,
+            token,
             body.level,
             body.fields,
             None,

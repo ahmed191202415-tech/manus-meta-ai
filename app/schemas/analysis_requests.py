@@ -1,11 +1,10 @@
-
 from typing import Optional, Literal
 from pydantic import BaseModel
 
 
 class AnalysisRunRequest(BaseModel):
     account_id: str
-    access_token: str
+    access_token: Optional[str] = None
     analysis_type: Literal[
         "summary_kpis",
         "period_comparison",

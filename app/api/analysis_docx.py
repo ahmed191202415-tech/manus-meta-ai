@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/analysis_docx", tags=["analysis_docx"])
 
 class AnalysisDocxRequest(BaseModel):
     account_id: str
-    access_token: str
+    access_token: Optional[str] = None
     title: str = "Meta Ads Report"
     subtitle: Optional[str] = None
     level: str = "campaign"
@@ -32,11 +32,19 @@ class AnalysisDocxRequest(BaseModel):
     file_name: Optional[str] = None
 
 
+def pick_token(request: Request, body_token: str | None):
+    return body_token or request.session.get("meta_access_token")
+
+
 @router.post("/build")
-async def build_analysis_docx(body: AnalysisDocxRequest):
+async def build_analysis_docx(body: AnalysisDocxRequest, request: Request):
+    token = pick_token(request, body.access_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="No Meta token found. Login first via /auth/meta/login or pass access_token.")
+
     current_df = fetch_insights_df(
         body.account_id,
-        body.access_token,
+        token,
         body.level,
         body.fields,
         body.date_preset,
@@ -60,7 +68,7 @@ async def build_analysis_docx(body: AnalysisDocxRequest):
     if compare_since and compare_until:
         compare_df = fetch_insights_df(
             body.account_id,
-            body.access_token,
+            token,
             body.level,
             body.fields,
             None,

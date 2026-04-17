@@ -1,5 +1,4 @@
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, HTTPException
 
 from app.schemas.analysis_requests import AnalysisRunRequest
 from app.analytics.preprocessing import fetch_insights_df, infer_previous_range
@@ -23,11 +22,19 @@ from app.analytics.audit_framework import build_audit_snapshot
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
+def pick_token(request: Request, body_token: str | None):
+    return body_token or request.session.get("meta_access_token")
+
+
 @router.post("/run")
-async def analysis_run(body: AnalysisRunRequest):
+async def analysis_run(body: AnalysisRunRequest, request: Request):
+    token = pick_token(request, body.access_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="No Meta token found. Login first via /auth/meta/login or pass access_token.")
+
     current_df = fetch_insights_df(
         body.account_id,
-        body.access_token,
+        token,
         body.level,
         body.fields,
         body.date_preset,
@@ -51,7 +58,7 @@ async def analysis_run(body: AnalysisRunRequest):
     if compare_since and compare_until:
         compare_df = fetch_insights_df(
             body.account_id,
-            body.access_token,
+            token,
             body.level,
             body.fields,
             None,
@@ -87,7 +94,7 @@ async def analysis_run(body: AnalysisRunRequest):
     if body.analysis_type == "anomaly_scan":
         daily_df = fetch_insights_df(
             body.account_id,
-            body.access_token,
+            token,
             body.level,
             body.fields,
             body.date_preset,
@@ -102,7 +109,7 @@ async def analysis_run(body: AnalysisRunRequest):
     if body.analysis_type == "executive_report":
         daily_df = fetch_insights_df(
             body.account_id,
-            body.access_token,
+            token,
             body.level,
             body.fields,
             body.date_preset,
@@ -121,7 +128,7 @@ async def analysis_run(body: AnalysisRunRequest):
     if body.analysis_type == "forecast":
         daily_df = fetch_insights_df(
             body.account_id,
-            body.access_token,
+            token,
             body.level,
             body.fields,
             body.date_preset,
