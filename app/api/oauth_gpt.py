@@ -25,16 +25,15 @@ async def oauth_authorize(
     if response_type != "code":
         raise HTTPException(status_code=400, detail="Unsupported response_type")
 
-    meta_access_token = request.session.get("meta_access_token")
-    meta_user = request.session.get("meta_user")
+    meta_user_id = request.session.get("meta_user_id")
 
-    if not meta_access_token:
+    if not meta_user_id:
         request.session["gpt_oauth_redirect_uri"] = redirect_uri
         request.session["gpt_oauth_state"] = state
         request.session["gpt_oauth_client_id"] = client_id
         return RedirectResponse(url="/auth/meta/login", status_code=302)
 
-    code = create_auth_code(meta_access_token=meta_access_token, meta_user=meta_user or {})
+    code = create_auth_code(meta_user_id=meta_user_id)
     final_url = f"{redirect_uri}?code={code}"
     if state:
         final_url += f"&state={state}"
@@ -62,10 +61,7 @@ async def oauth_token(
     if not auth_data:
         raise HTTPException(status_code=400, detail="Invalid or expired code")
 
-    app_token = create_app_token(
-        meta_access_token=auth_data["meta_access_token"],
-        meta_user=auth_data.get("meta_user", {})
-    )
+    app_token = create_app_token(meta_user_id=auth_data["meta_user_id"])
 
     return {
         "access_token": app_token,

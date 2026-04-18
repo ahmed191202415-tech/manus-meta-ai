@@ -3,6 +3,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import requests
 
 from app.config import META_APP_ID, META_APP_SECRET, META_OAUTH_REDIRECT_URI, META_OAUTH_SCOPES
+from app.core.oauth_store import save_meta_connection, create_auth_code
 
 router = APIRouter(prefix="/auth/meta", tags=["auth"])
 
@@ -55,24 +56,33 @@ async def meta_callback(
     if resp.status_code >= 400 or "access_token" not in data:
         return JSONResponse(status_code=400, content={"success": False, "meta_response": data})
 
-    request.session["meta_access_token"] = data["access_token"]
-    request.session["meta_token_type"] = data.get("token_type")
-    request.session["meta_expires_in"] = data.get("expires_in")
-
     me_resp = requests.get(
         "https://graph.facebook.com/me",
         params={"fields": "id,name", "access_token": data["access_token"]},
         timeout=30,
     )
     me_data = me_resp.json()
+
+    meta_user_id = me_data.get("id")
+    meta_user_name = me_data.get("name")
+
+    if not meta_user_id:
+        return JSONResponse(status_code=400, content={"success": False, "meta_response": me_data})
+
+    save_meta_connection(
+        meta_user_id=meta_user_id,
+        meta_access_token=data["access_token"],
+        meta_user_name=meta_user_name,
+    )
+
+    request.session["meta_user_id"] = meta_user_id
     request.session["meta_user"] = me_data
 
     gpt_redirect_uri = request.session.get("gpt_oauth_redirect_uri")
     gpt_state = request.session.get("gpt_oauth_state")
 
     if gpt_redirect_uri:
-        from app.core.oauth_store import create_auth_code
-        oauth_code = create_auth_code(meta_access_token=data["access_token"], meta_user=me_data)
+        oauth_code = create_auth_code(meta_user_id=meta_user_id)
         final_url = f"{gpt_redirect_uri}?code={oauth_code}"
         if gpt_state:
             final_url += f"&state={gpt_state}"
@@ -92,11 +102,9 @@ async def meta_callback(
 
 @router.get("/me")
 async def auth_me(request: Request):
-    token = request.session.get("meta_access_token")
     user = request.session.get("meta_user")
-
     return {
-        "logged_in": bool(token),
+        "logged_in": bool(user),
         "user": user,
     }
 
