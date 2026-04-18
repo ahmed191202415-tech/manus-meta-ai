@@ -1,5 +1,6 @@
 from typing import Optional
-from fastapi import Header, Query, HTTPException, Request\nfrom app.core.oauth_store import get_app_token_data
+from fastapi import Header, Query, HTTPException, Request
+from app.core.oauth_store import get_app_token_data
 
 
 async def resolve_access_token(
