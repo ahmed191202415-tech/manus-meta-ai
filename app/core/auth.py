@@ -1,54 +1,53 @@
 from typing import Optional
 
-import requests
-from fastapi import Header, Query, HTTPException, Request
+from fastapi import HTTPException, Request
 
-from app.core.oauth_store import get_app_token_data, SUPABASE_URL, _headers
+from app.core.oauth_store import get_app_token_data
 
 
-async def resolve_access_token(
-    request: Request,
-    authorization: Optional[str] = Header(None),
-    access_token: Optional[str] = Query(None),
-) -> str:
-    # 1) لو التوكن جاي مباشرة في query
-    if access_token:
-        return access_token
+async def resolve_access_token(request: Request) -> str:
+    """
+    يرجع Meta access token الحقيقي من واحد من المصادر التالية بالترتيب:
+    1) query param اسمه access_token (لو أُرسل مباشرة)
+    2) Authorization: Bearer <token>
+       - لو كان App Token داخلي من GPT OAuth -> نقرأ منه meta_access_token
+       - لو لم نجده في التخزين -> نعتبره Meta token مباشر
+    3) session["meta_access_token"]
 
-    # 2) لو جاي في Authorization header
+    مهم:
+    - لا نقرأ آخر توكن من Supabase بشكل عام
+    - لا نستخدم Header() أو Query() هنا لأن هذه helper function وليست endpoint dependency
+    """
+
+    # 1) access_token من query string
+    query_token = request.query_params.get("access_token")
+    if query_token:
+        return query_token.strip()
+
+    # 2) Authorization header
+    authorization = request.headers.get("authorization")
     if authorization and authorization.lower().startswith("bearer "):
         bearer = authorization.split(" ", 1)[1].strip()
 
-        # لو ده app token داخلي من GPT OAuth
-        app_token_data = get_app_token_data(bearer)
-        if app_token_data and app_token_data.get("meta_access_token"):
-            return app_token_data["meta_access_token"]
+        if not bearer:
+            raise HTTPException(status_code=401, detail="Empty bearer token")
 
-        # لو المستخدم باعت Meta token مباشر
+        # جرّب أولًا: هل هذا app token داخلي صادر من /oauth/token ؟
+        app_token_data = get_app_token_data(bearer)
+        if app_token_data:
+            meta_access_token = app_token_data.get("meta_access_token")
+            if meta_access_token:
+                return meta_access_token
+
+        # لو لم نجده في التخزين، اعتبره Meta access token مباشر
         return bearer
 
-    # 3) لو موجود في session
+    # 3) session
     session_token = request.session.get("meta_access_token")
     if session_token:
         return session_token
 
-    # 4) fallback: هات آخر Meta token محفوظ من Supabase
-    if SUPABASE_URL:
-        url = f"{SUPABASE_URL}/rest/v1/meta_connections"
-        params = {
-            "select": "meta_access_token",
-            "order": "updated_at.desc",
-            "limit": "1",
-        }
-
-        resp = requests.get(url, headers=_headers(), params=params, timeout=30)
-        resp.raise_for_status()
-
-        data = resp.json()
-        if data and data[0].get("meta_access_token"):
-            return data[0]["meta_access_token"]
-
     raise HTTPException(
         status_code=401,
-        detail="No access token found. Login first via /auth/meta/login or pass token manually."
+        detail="No access token found. Please authenticate first."
     )
