@@ -9,6 +9,7 @@ from app.analytics.funnel import build_video_funnel
 from app.analytics.diagnostics import build_deep_root_cause
 from app.reports.docx_report import save_docx_report_local
 from app.schemas.report_requests import SaveDocxReportRequest, PdfSectionSpec
+from app.core.auth import resolve_access_token
 
 
 router = APIRouter(prefix="/analysis_docx", tags=["analysis_docx"])
@@ -16,7 +17,6 @@ router = APIRouter(prefix="/analysis_docx", tags=["analysis_docx"])
 
 class AnalysisDocxRequest(BaseModel):
     account_id: str
-    access_token: Optional[str] = None
     title: str = "Meta Ads Report"
     subtitle: Optional[str] = None
     level: str = "campaign"
@@ -31,16 +31,14 @@ class AnalysisDocxRequest(BaseModel):
     top_n: int = 5
     file_name: Optional[str] = None
 
-
-def pick_token(request: Request, body_token: str | None):
-    return body_token or request.session.get("meta_access_token")
-
-
 @router.post("/build")
 async def build_analysis_docx(body: AnalysisDocxRequest, request: Request):
-    token = pick_token(request, body.access_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="No Meta token found. Login first via /auth/meta/login or pass access_token.")
+    try:
+        token = await resolve_access_token(request)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        raise HTTPException(status_code=401, detail="No Meta token found. Please authenticate first.")
 
     current_df = fetch_insights_df(
         body.account_id,

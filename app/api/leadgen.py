@@ -5,6 +5,10 @@ from app.config import DEFAULT_PAGE_LIMIT, DEFAULT_MAX_PAGES
 from app.core.auth import resolve_access_token
 from app.core.pagination import meta_get_all_pages
 from app.core.meta_client import meta_call
+from app.core.token_router import (
+    resolve_page_token_for_page_id,
+    resolve_page_token_for_form_id,
+)
 
 router = APIRouter(tags=["leadgen"])
 
@@ -19,12 +23,16 @@ async def list_leadgen_forms(
     max_pages: int = DEFAULT_MAX_PAGES,
     token: str = Depends(resolve_access_token),
 ):
+    page_token = resolve_page_token_for_page_id(token, page_id)
+
     params = {"fields": fields, "limit": limit}
     if after:
         params["after"] = after
+
     if fetch_all:
-        return meta_get_all_pages(f"{page_id}/leadgen_forms", token, params=params, max_pages=max_pages)
-    return meta_call("GET", f"{page_id}/leadgen_forms", token, params=params)
+        return meta_get_all_pages(f"{page_id}/leadgen_forms", page_token, params=params, max_pages=max_pages)
+
+    return meta_call("GET", f"{page_id}/leadgen_forms", page_token, params=params)
 
 
 @router.get("/leads")
@@ -37,9 +45,13 @@ async def list_leads(
     max_pages: int = DEFAULT_MAX_PAGES,
     token: str = Depends(resolve_access_token),
 ):
+    page_token = resolve_page_token_for_form_id(token, form_id)
+
     params = {"fields": fields, "limit": limit}
     if after:
         params["after"] = after
+
     if fetch_all:
-        return meta_get_all_pages(f"{form_id}/leads", token, params=params, max_pages=max_pages)
-    return meta_call("GET", f"{form_id}/leads", token, params=params)
+        return meta_get_all_pages(f"{form_id}/leads", page_token, params=params, max_pages=max_pages)
+
+    return meta_call("GET", f"{form_id}/leads", page_token, params=params)
