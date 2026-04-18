@@ -11,7 +11,7 @@ def _headers():
         "apikey": SUPABASE_SERVICE_ROLE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
         "Content-Type": "application/json",
-        "Prefer": "return=representation",
+        "Prefer": "resolution=merge-duplicates,return=representation",
     }
 
 def _dt(dt):
