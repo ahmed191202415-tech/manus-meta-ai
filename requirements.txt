@@ -12,3 +12,4 @@ reportlab
 python-pptx
 python-docx
 itsdangerous
+python-multipart
