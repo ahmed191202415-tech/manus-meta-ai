@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import Header, Query, HTTPException, Request
+from fastapi import Header, Query, HTTPException, Request\nfrom app.core.oauth_store import get_app_token_data
 
 
 async def resolve_access_token(
@@ -11,7 +11,11 @@ async def resolve_access_token(
         return access_token
 
     if authorization and authorization.lower().startswith("bearer "):
-        return authorization.split(" ", 1)[1].strip()
+        bearer = authorization.split(" ", 1)[1].strip()
+        app_token_data = get_app_token_data(bearer)
+        if app_token_data:
+            return app_token_data["meta_access_token"]
+        return bearer
 
     session_token = request.session.get("meta_access_token")
     if session_token:

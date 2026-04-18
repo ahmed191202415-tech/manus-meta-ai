@@ -62,6 +62,20 @@ async def meta_callback(request: Request, code: str | None = None, error: str | 
     me_data = me_resp.json()
     request.session["meta_user"] = me_data
 
+    gpt_redirect_uri = request.session.get("gpt_oauth_redirect_uri")
+    gpt_state = request.session.get("gpt_oauth_state")
+
+    if gpt_redirect_uri:
+        from app.core.oauth_store import create_auth_code
+        oauth_code = create_auth_code(meta_access_token=data["access_token"], meta_user=me_data)
+        final_url = f"{gpt_redirect_uri}?code={oauth_code}"
+        if gpt_state:
+            final_url += f"&state={gpt_state}"
+        request.session.pop("gpt_oauth_redirect_uri", None)
+        request.session.pop("gpt_oauth_state", None)
+        request.session.pop("gpt_oauth_client_id", None)
+        return RedirectResponse(url=final_url, status_code=302)
+
     return JSONResponse(
         content={
             "success": True,

@@ -23,7 +23,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.dashboard_builder import router as dashboard_builder_router
 from app.api.analysis_dashboard import router as analysis_dashboard_router
 from app.api.analysis_docx import router as analysis_docx_router
-from app.api.auth_meta import router as auth_meta_router
+from app.api.auth_meta import router as auth_meta_router\nfrom app.api.oauth_gpt import router as oauth_gpt_router
 
 app = FastAPI(title="Manus Sovereign Meta Server", version="6.1.0")
 
@@ -63,3 +63,4 @@ app.include_router(dashboard_builder_router)
 app.include_router(analysis_dashboard_router)
 app.include_router(analysis_docx_router)
 app.include_router(auth_meta_router)
+\napp.include_router(oauth_gpt_router)\n
