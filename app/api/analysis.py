@@ -18,19 +18,14 @@ from app.analytics.decisions import (
 from app.analytics.executive import build_executive_report
 from app.analytics.profitability import build_break_even_analysis
 from app.analytics.audit_framework import build_audit_snapshot
+from app.core.auth import resolve_access_token
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
-def pick_token(request: Request, body_token: str | None):
-    return body_token or request.session.get("meta_access_token")
-
-
 @router.post("/run")
 async def analysis_run(body: AnalysisRunRequest, request: Request):
-    token = pick_token(request, body.access_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="No Meta token found. Login first via /auth/meta/login or pass access_token.")
+    token = await resolve_access_token(request)
 
     current_df = fetch_insights_df(
         body.account_id,
