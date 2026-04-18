@@ -30,6 +30,7 @@ def save_meta_connection(meta_user_id: str, meta_access_token: str, meta_user_na
     r.raise_for_status()
     return True
 
+
 def get_meta_connection(meta_user_id: str):
     url = f"{SUPABASE_URL}/rest/v1/meta_connections"
     params = {
@@ -41,6 +42,15 @@ def get_meta_connection(meta_user_id: str):
     r.raise_for_status()
     data = r.json()
     return data[0] if data else None
+
+
+def delete_meta_connection(meta_user_id: str):
+    url = f"{SUPABASE_URL}/rest/v1/meta_connections"
+    params = {"meta_user_id": f"eq.{meta_user_id}"}
+    r = requests.delete(url, headers=_headers(), params=params, timeout=30)
+    r.raise_for_status()
+    return True
+
 
 def create_auth_code(meta_user_id: str, expires_in: int = 600):
     code = "code_" + secrets.token_urlsafe(24)
@@ -56,6 +66,7 @@ def create_auth_code(meta_user_id: str, expires_in: int = 600):
     r = requests.post(url, headers=_headers(), json=payload, timeout=30)
     r.raise_for_status()
     return code
+
 
 def consume_auth_code(code: str):
     url = f"{SUPABASE_URL}/rest/v1/oauth_codes"
@@ -90,6 +101,7 @@ def consume_auth_code(code: str):
 
     return row
 
+
 def create_app_token(meta_user_id: str, expires_in: int = 86400):
     token = "app_" + secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
@@ -103,6 +115,21 @@ def create_app_token(meta_user_id: str, expires_in: int = 86400):
     r = requests.post(url, headers=_headers(), json=payload, timeout=30)
     r.raise_for_status()
     return token
+
+
+def delete_app_tokens(meta_user_id: str):
+    url = f"{SUPABASE_URL}/rest/v1/app_tokens"
+    params = {"meta_user_id": f"eq.{meta_user_id}"}
+    r = requests.delete(url, headers=_headers(), params=params, timeout=30)
+    r.raise_for_status()
+    return True
+
+
+def purge_meta_connection(meta_user_id: str):
+    delete_app_tokens(meta_user_id)
+    delete_meta_connection(meta_user_id)
+    return True
+
 
 def get_app_token_data(token: str):
     url = f"{SUPABASE_URL}/rest/v1/app_tokens"

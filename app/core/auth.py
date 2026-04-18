@@ -1,8 +1,54 @@
-from typing import Optional
-
 from fastapi import HTTPException, Request
 
-from app.core.oauth_store import get_app_token_data
+from app.core.meta_client import meta_call
+from app.core.oauth_store import get_app_token_data, purge_meta_connection
+
+
+def _clear_meta_session(request: Request):
+    request.session.pop("meta_access_token", None)
+    request.session.pop("meta_user_id", None)
+    request.session.pop("meta_user", None)
+
+
+def _is_invalid_meta_token_error(exc: HTTPException) -> bool:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        error_code = detail.get("code")
+        message = str(detail.get("message") or "").lower()
+        if error_code == 190:
+            return True
+        if "invalid oauth" in message or "session has expired" in message:
+            return True
+    return False
+
+
+def _validate_meta_access_token(access_token: str) -> dict:
+    return meta_call("GET", "me", access_token, params={"fields": "id,name"})
+
+
+def _resolve_valid_saved_token(request: Request, access_token: str, meta_user_id: str | None):
+    try:
+        me_data = _validate_meta_access_token(access_token)
+    except HTTPException as exc:
+        if _is_invalid_meta_token_error(exc):
+            if meta_user_id:
+                purge_meta_connection(meta_user_id)
+            _clear_meta_session(request)
+            raise HTTPException(
+                status_code=401,
+                detail="Meta connection expired or was revoked. Please authenticate again."
+            ) from exc
+        raise
+
+    if meta_user_id and str(me_data.get("id") or "").strip() != str(meta_user_id).strip():
+        purge_meta_connection(meta_user_id)
+        _clear_meta_session(request)
+        raise HTTPException(
+            status_code=401,
+            detail="Meta connection is no longer valid. Please authenticate again."
+        )
+
+    return access_token
 
 
 async def resolve_access_token(request: Request) -> str:
@@ -37,7 +83,11 @@ async def resolve_access_token(request: Request) -> str:
         if app_token_data:
             meta_access_token = app_token_data.get("meta_access_token")
             if meta_access_token:
-                return meta_access_token
+                return _resolve_valid_saved_token(
+                    request,
+                    meta_access_token,
+                    app_token_data.get("meta_user_id"),
+                )
 
         # لو لم نجده في التخزين، اعتبره Meta access token مباشر
         return bearer
@@ -45,7 +95,11 @@ async def resolve_access_token(request: Request) -> str:
     # 3) session
     session_token = request.session.get("meta_access_token")
     if session_token:
-        return session_token
+        return _resolve_valid_saved_token(
+            request,
+            session_token,
+            request.session.get("meta_user_id"),
+        )
 
     raise HTTPException(
         status_code=401,

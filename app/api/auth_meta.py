@@ -3,7 +3,8 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import requests
 
 from app.config import META_APP_ID, META_APP_SECRET, META_OAUTH_REDIRECT_URI, META_OAUTH_SCOPES
-from app.core.oauth_store import save_meta_connection, create_auth_code
+from app.core.auth import _clear_meta_session, _validate_meta_access_token
+from app.core.oauth_store import save_meta_connection, create_auth_code, get_meta_connection, purge_meta_connection
 
 router = APIRouter(prefix="/auth/meta", tags=["auth"])
 
@@ -75,6 +76,7 @@ async def meta_callback(
         meta_user_name=meta_user_name,
     )
 
+    request.session["meta_access_token"] = data["access_token"]
     request.session["meta_user_id"] = meta_user_id
     request.session["meta_user"] = me_data
 
@@ -102,14 +104,47 @@ async def meta_callback(
 
 @router.get("/me")
 async def auth_me(request: Request):
+    meta_user_id = request.session.get("meta_user_id")
     user = request.session.get("meta_user")
+
+    if not meta_user_id:
+        return {
+            "logged_in": False,
+            "user": None,
+        }
+
+    conn = get_meta_connection(meta_user_id)
+    if not conn:
+        _clear_meta_session(request)
+        return {
+            "logged_in": False,
+            "user": None,
+        }
+
+    try:
+        me_data = _validate_meta_access_token(conn["meta_access_token"])
+    except HTTPException:
+        purge_meta_connection(meta_user_id)
+        _clear_meta_session(request)
+        return {
+            "logged_in": False,
+            "user": None,
+        }
+
+    request.session["meta_access_token"] = conn["meta_access_token"]
+    request.session["meta_user_id"] = str(me_data.get("id") or meta_user_id)
+    request.session["meta_user"] = {
+        "id": me_data.get("id"),
+        "name": me_data.get("name"),
+    }
+
     return {
-        "logged_in": bool(user),
-        "user": user,
+        "logged_in": True,
+        "user": request.session.get("meta_user") or user,
     }
 
 
 @router.post("/logout")
 async def auth_logout(request: Request):
-    request.session.clear()
+    _clear_meta_session(request)
     return {"success": True, "message": "Logged out successfully."}

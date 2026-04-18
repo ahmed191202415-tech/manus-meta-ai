@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse
 
+from app.core.auth import _clear_meta_session, _validate_meta_access_token
 from app.core.oauth_store import create_auth_code, consume_auth_code, create_app_token
+from app.core.oauth_store import get_meta_connection, purge_meta_connection
 import os
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -28,6 +30,24 @@ async def oauth_authorize(
     meta_user_id = request.session.get("meta_user_id")
 
     if not meta_user_id:
+        request.session["gpt_oauth_redirect_uri"] = redirect_uri
+        request.session["gpt_oauth_state"] = state
+        request.session["gpt_oauth_client_id"] = client_id
+        return RedirectResponse(url="/auth/meta/login", status_code=302)
+
+    conn = get_meta_connection(meta_user_id)
+    if not conn:
+        _clear_meta_session(request)
+        request.session["gpt_oauth_redirect_uri"] = redirect_uri
+        request.session["gpt_oauth_state"] = state
+        request.session["gpt_oauth_client_id"] = client_id
+        return RedirectResponse(url="/auth/meta/login", status_code=302)
+
+    try:
+        _validate_meta_access_token(conn["meta_access_token"])
+    except HTTPException:
+        purge_meta_connection(meta_user_id)
+        _clear_meta_session(request)
         request.session["gpt_oauth_redirect_uri"] = redirect_uri
         request.session["gpt_oauth_state"] = state
         request.session["gpt_oauth_client_id"] = client_id
