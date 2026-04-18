@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 
 from app.core.oauth_store import create_auth_code, consume_auth_code, create_app_token
-from app.config import META_OAUTH_REDIRECT_URI
 import os
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -10,7 +9,6 @@ router = APIRouter(prefix="/oauth", tags=["oauth"])
 GPT_OAUTH_CLIENT_ID = os.getenv("GPT_OAUTH_CLIENT_ID", "gpt_client_1")
 GPT_OAUTH_CLIENT_SECRET = os.getenv("GPT_OAUTH_CLIENT_SECRET", "super_secret_gpt_client_key")
 
-_PENDING_OAUTH = {}
 
 @router.get("/authorize")
 async def oauth_authorize(
