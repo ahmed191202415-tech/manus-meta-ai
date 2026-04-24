@@ -2,11 +2,14 @@ fastapi
 uvicorn
 requests
 pydantic
+email-validator
 python-dotenv
 pandas
 numpy
 scipy
 scikit-learn
+networkx
+facebook_business
 openpyxl
 reportlab
 python-pptx

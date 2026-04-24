@@ -1,7 +1,16 @@
 from fastapi import HTTPException, Request
 
 from app.core.meta_client import meta_call
-from app.core.oauth_store import get_app_token_data, purge_meta_connection
+from app.core.meta_context import set_current_meta_app_secret
+from app.core.oauth_store import (
+    find_meta_connection_by_access_token,
+    get_active_meta_connection_for_tenant,
+    get_app_token_data,
+    get_tenant_account_by_id,
+    get_tenant_meta_app,
+    is_account_expired,
+    purge_meta_connection,
+)
 
 
 def _clear_meta_session(request: Request):
@@ -22,17 +31,23 @@ def _is_invalid_meta_token_error(exc: HTTPException) -> bool:
     return False
 
 
-def _validate_meta_access_token(access_token: str) -> dict:
-    return meta_call("GET", "me", access_token, params={"fields": "id,name"})
+def _validate_meta_access_token(access_token: str, app_secret: str | None = None) -> dict:
+    return meta_call("GET", "me", access_token, params={"fields": "id,name"}, app_secret=app_secret)
 
 
-def _resolve_valid_saved_token(request: Request, access_token: str, meta_user_id: str | None):
+def _resolve_valid_saved_token(
+    request: Request,
+    access_token: str,
+    meta_user_id: str | None,
+    tenant_id: str | None,
+    app_secret: str | None = None,
+):
     try:
-        me_data = _validate_meta_access_token(access_token)
+        me_data = _validate_meta_access_token(access_token, app_secret=app_secret)
     except HTTPException as exc:
         if _is_invalid_meta_token_error(exc):
             if meta_user_id:
-                purge_meta_connection(meta_user_id)
+                purge_meta_connection(meta_user_id, tenant_id=tenant_id)
             _clear_meta_session(request)
             raise HTTPException(
                 status_code=401,
@@ -41,7 +56,7 @@ def _resolve_valid_saved_token(request: Request, access_token: str, meta_user_id
         raise
 
     if meta_user_id and str(me_data.get("id") or "").strip() != str(meta_user_id).strip():
-        purge_meta_connection(meta_user_id)
+        purge_meta_connection(str(meta_user_id), tenant_id=tenant_id)
         _clear_meta_session(request)
         raise HTTPException(
             status_code=401,
@@ -52,25 +67,21 @@ def _resolve_valid_saved_token(request: Request, access_token: str, meta_user_id
 
 
 async def resolve_access_token(request: Request) -> str:
-    """
-    يرجع Meta access token الحقيقي من واحد من المصادر التالية بالترتيب:
-    1) query param اسمه access_token (لو أُرسل مباشرة)
-    2) Authorization: Bearer <token>
-       - لو كان App Token داخلي من GPT OAuth -> نقرأ منه meta_access_token
-       - لو لم نجده في التخزين -> نعتبره Meta token مباشر
-    3) session["meta_access_token"]
+    tenant_id = request.session.get("tenant_id")
+    if tenant_id:
+        account = get_tenant_account_by_id(tenant_id)
+        status = str((account or {}).get("status") or "").lower()
+        if not account or account.get("deleted_at") or status in {"disabled", "deleted"} or is_account_expired(account):
+            _clear_meta_session(request)
+            request.session.pop("tenant_id", None)
+            request.session.pop("user_email", None)
+            raise HTTPException(status_code=403, detail="This email no longer has access.")
 
-    مهم:
-    - لا نقرأ آخر توكن من Supabase بشكل عام
-    - لا نستخدم Header() أو Query() هنا لأن هذه helper function وليست endpoint dependency
-    """
-
-    # 1) access_token من query string
     query_token = request.query_params.get("access_token")
     if query_token:
+        set_current_meta_app_secret(None)
         return query_token.strip()
 
-    # 2) Authorization header
     authorization = request.headers.get("authorization")
     if authorization and authorization.lower().startswith("bearer "):
         bearer = authorization.split(" ", 1)[1].strip()
@@ -78,28 +89,63 @@ async def resolve_access_token(request: Request) -> str:
         if not bearer:
             raise HTTPException(status_code=401, detail="Empty bearer token")
 
-        # جرّب أولًا: هل هذا app token داخلي صادر من /oauth/token ؟
         app_token_data = get_app_token_data(bearer)
         if app_token_data:
             meta_access_token = app_token_data.get("meta_access_token")
             if meta_access_token:
+                app_secret = app_token_data.get("meta_app_secret")
+                set_current_meta_app_secret(app_secret)
                 return _resolve_valid_saved_token(
                     request,
                     meta_access_token,
                     app_token_data.get("meta_user_id"),
+                    app_token_data.get("tenant_id"),
+                    app_secret=app_secret,
                 )
 
-        # لو لم نجده في التخزين، اعتبره Meta access token مباشر
+        direct_conn = find_meta_connection_by_access_token(bearer)
+        if direct_conn:
+            tenant_id = direct_conn.get("tenant_id")
+            meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
+            set_current_meta_app_secret(meta_app.get("meta_app_secret") if meta_app else None)
+        else:
+            set_current_meta_app_secret(None)
         return bearer
 
-    # 3) session
     session_token = request.session.get("meta_access_token")
     if session_token:
+        tenant_id = request.session.get("tenant_id")
+        meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
+        app_secret = meta_app.get("meta_app_secret") if meta_app else None
+        set_current_meta_app_secret(app_secret)
         return _resolve_valid_saved_token(
             request,
             session_token,
             request.session.get("meta_user_id"),
+            tenant_id,
+            app_secret=app_secret,
         )
+
+    tenant_id = request.session.get("tenant_id")
+    if tenant_id:
+        connection = get_active_meta_connection_for_tenant(tenant_id)
+        meta_app = get_tenant_meta_app(tenant_id)
+        if connection and meta_app:
+            app_secret = meta_app.get("meta_app_secret")
+            set_current_meta_app_secret(app_secret)
+            request.session["meta_access_token"] = connection["meta_access_token"]
+            request.session["meta_user_id"] = connection["meta_user_id"]
+            request.session["meta_user"] = {
+                "id": connection.get("meta_user_id"),
+                "name": connection.get("meta_user_name"),
+            }
+            return _resolve_valid_saved_token(
+                request,
+                connection["meta_access_token"],
+                connection.get("meta_user_id"),
+                tenant_id,
+                app_secret=app_secret,
+            )
 
     raise HTTPException(
         status_code=401,
