@@ -1,8 +1,10 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi.openapi.utils import get_openapi
 
-from app.config import ALLOW_ORIGINS, SESSION_SECRET
+from app.config import ALLOW_ORIGINS, SESSION_SECRET, PUBLIC_BASE_URL
 from app.api.health import router as health_router
 from app.api.reports import router as reports_router
 from app.api.analysis import router as analysis_router
@@ -67,3 +69,25 @@ app.include_router(analysis_docx_router)
 app.include_router(auth_meta_router)
 app.include_router(oauth_gpt_router)
 app.include_router(tenant_portal_router)
+
+
+@app.get("/openapi-gpt.json", include_in_schema=False)
+async def openapi_gpt():
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        routes=app.routes,
+    )
+    keep_paths = {
+        "/health",
+        "/accounts",
+        "/campaigns",
+        "/adsets",
+        "/ads",
+        "/insights",
+        "/analysis/run",
+    }
+    schema["paths"] = {k: v for k, v in schema.get("paths", {}).items() if k in keep_paths}
+    if PUBLIC_BASE_URL:
+        schema["servers"] = [{"url": PUBLIC_BASE_URL}]
+    return JSONResponse(schema)
