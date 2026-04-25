@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -34,6 +36,48 @@ app = FastAPI(
     version="6.1.0",
     servers=openapi_servers,
 )
+
+
+@app.get("/openapi-gpt.json", include_in_schema=False)
+def openapi_gpt_schema():
+    allowed_paths = {
+        "/health",
+        "/meta/request",
+        "/accounts",
+        "/insights",
+        "/campaigns",
+        "/adsets",
+        "/ads",
+        "/adcreatives",
+        "/adimages",
+        "/advideos",
+        "/pages",
+        "/page_posts",
+        "/page_comments",
+        "/page_comments/{comment_id}/reply",
+        "/page_comments/{comment_id}/hide",
+        "/analysis/run",
+        "/analysis_dashboard/build",
+        "/analysis_docx/build",
+        "/reports/save_excel",
+        "/reports/save_pdf",
+        "/reports/save_pptx",
+        "/reports/save_docx",
+        "/reports/save_html_dashboard",
+    }
+    schema = deepcopy(app.openapi())
+    schema["info"] = {
+        "title": "Super Ad Analysis GPT",
+        "version": "1.0.0",
+        "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
+    }
+    schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
+    schema["paths"] = {
+        path: value
+        for path, value in schema.get("paths", {}).items()
+        if path in allowed_paths
+    }
+    return schema
 
 app.add_middleware(
     CORSMiddleware,
