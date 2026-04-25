@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import Any, List, Dict, Optional
 
+from app.config import ANALYSIS_DEFAULT_DATE_PRESET, ANALYSIS_MAX_PAGES, ANALYSIS_PAGE_LIMIT
 from app.core.meta_client import normalize_account_id
 from app.core.pagination import meta_get_all_pages
 
@@ -38,6 +39,26 @@ def extract_video_action(actions: Any) -> float:
         return 0.0
 
 
+def extract_best_result(actions: Any) -> float:
+    # Meta reports different "result" action types depending on campaign objective.
+    result_action_types = [
+        "offsite_complete_registration_add_meta_leads",
+        "onsite_conversion.lead_grouped",
+        "lead",
+        "purchase",
+        "omni_purchase",
+        "offsite_conversion.fb_pixel_purchase",
+        "onsite_conversion.purchase",
+        "messaging_conversation_started_7d",
+        "onsite_conversion.messaging_conversation_started_7d",
+        "onsite_conversion.messaging_first_reply",
+        "contact",
+        "submit_application",
+        "complete_registration",
+    ]
+    return max((extract_action_value(actions, action_type) for action_type in result_action_types), default=0.0)
+
+
 def safe_div(a: float, b: float) -> float:
     return float(a) / float(b) if b not in (0, 0.0, None) else 0.0
 
@@ -52,13 +73,7 @@ def frame_from_insights(rows: List[Dict[str, Any]], level: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    df["results"] = df.get("actions", pd.Series(dtype=object)).apply(
-        lambda x: max(
-            extract_action_value(x, "offsite_complete_registration_add_meta_leads"),
-            extract_action_value(x, "lead"),
-            extract_action_value(x, "onsite_conversion.lead_grouped")
-        )
-    )
+    df["results"] = df.get("actions", pd.Series(dtype=object)).apply(extract_best_result)
 
     df["video_p50"] = df.get("video_p50_watched_actions", pd.Series(dtype=object)).apply(extract_video_action)
     df["video_p75"] = df.get("video_p75_watched_actions", pd.Series(dtype=object)).apply(extract_video_action)
@@ -119,8 +134,11 @@ def fetch_insights_df(
     params: Dict[str, Any] = {
         "level": level,
         "fields": fields or DEFAULT_INSIGHTS_FIELDS,
-        "limit": 500,
+        "limit": ANALYSIS_PAGE_LIMIT,
     }
+
+    if not date_preset and not (since and until):
+        date_preset = ANALYSIS_DEFAULT_DATE_PRESET
 
     if date_preset:
         params["date_preset"] = date_preset
@@ -136,5 +154,5 @@ def fetch_insights_df(
     if time_increment:
         params["time_increment"] = time_increment
 
-    payload = meta_get_all_pages(f"{account_id}/insights", access_token, params=params, max_pages=20)
+    payload = meta_get_all_pages(f"{account_id}/insights", access_token, params=params, max_pages=ANALYSIS_MAX_PAGES)
     return frame_from_insights(payload.get("data", []), level)
