@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.config import ALLOW_ORIGINS, SESSION_SECRET
+from app.config import ALLOW_ORIGINS, PUBLIC_BASE_URL, SESSION_SECRET
 from app.api.health import router as health_router
 from app.api.reports import router as reports_router
 from app.api.analysis import router as analysis_router
@@ -27,7 +27,13 @@ from app.api.auth_meta import router as auth_meta_router
 from app.api.oauth_gpt import router as oauth_gpt_router
 from app.api.tenant_portal import router as tenant_portal_router
 
-app = FastAPI(title="Manus Sovereign Meta Server", version="6.1.0")
+openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
+
+app = FastAPI(
+    title="Super Ad Analysis",
+    version="6.1.0",
+    servers=openapi_servers,
+)
 
 app.add_middleware(
     CORSMiddleware,
