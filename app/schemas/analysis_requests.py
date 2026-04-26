@@ -21,7 +21,8 @@ class AnalysisRunRequest(BaseModel):
         "clustering",
         "budget_reallocation",
         "break_even_analysis",
-        "audit_snapshot"
+        "audit_snapshot",
+        "intelligence_diagnostics"
     ]
     level: Literal["campaign", "adset", "ad"] = "campaign"
     date_preset: Optional[str] = None

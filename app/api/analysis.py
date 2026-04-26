@@ -18,6 +18,8 @@ from app.analytics.decisions import (
 from app.analytics.executive import build_executive_report
 from app.analytics.profitability import build_break_even_analysis
 from app.analytics.audit_framework import build_audit_snapshot
+from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
+from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -172,6 +174,37 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
         return {
             "analysis_type": body.analysis_type,
             "result": build_audit_snapshot(current_df, compare_df, body.level),
+            "compare_range": {"since": compare_since, "until": compare_until},
+        }
+
+
+    if body.analysis_type == "intelligence_diagnostics":
+        daily_df = fetch_insights_df(
+            body.account_id,
+            token,
+            body.level,
+            body.fields,
+            body.date_preset,
+            body.since,
+            body.until,
+            body.filters,
+            body.sort,
+            time_increment="1",
+        )
+        result = build_intelligence_diagnostics(daily_df, compare_df, body.level, body.top_n)
+        run_id = save_intelligence_run(
+            body.account_id,
+            body.level,
+            body.since,
+            body.until,
+            compare_since,
+            compare_until,
+            result,
+        )
+        return {
+            "analysis_type": body.analysis_type,
+            "result": result,
+            "run_id": run_id,
             "compare_range": {"since": compare_since, "until": compare_until},
         }
 
