@@ -1,0 +1,17 @@
+# Python/runtime artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Local analysis outputs
+exports/*.sqlite
+exports/*.db
+exports/*_test*.md
+exports/sample_*.csv
+exports/cli_*.md
+
+# Environment
+.env
+.venv/
+venv/
