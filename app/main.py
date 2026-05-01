@@ -35,7 +35,7 @@ EFFECTIVE_PUBLIC_BASE_URL = PUBLIC_BASE_URL or DEFAULT_PUBLIC_BASE_URL
 openapi_servers = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
 
 app = FastAPI(
-    title="Super Ad Analysis",
+    title="Manus Sovereign Meta Server",
     version="6.1.0",
     servers=openapi_servers,
 )
@@ -71,9 +71,9 @@ def openapi_gpt_schema():
     }
     schema = deepcopy(app.openapi())
     schema["info"] = {
-        "title": "Super Ad Analysis GPT",
+        "title": "Manus Meta AI GPT",
         "version": "1.0.0",
-        "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
+        "description": "Reduced schema for ChatGPT Actions with stable Manus Meta AI, Meta OAuth, analysis, reports, and page operations.",
     }
     schema["servers"] = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
     schema["paths"] = {
