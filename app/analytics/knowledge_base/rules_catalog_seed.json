@@ -1,0 +1,185 @@
+[
+  {
+    "rule_key": "anti_hallucination_no_website_funnel_for_messages",
+    "layer": "anti_hallucination",
+    "campaign_type": "messages",
+    "required_metrics": [
+      "messaging_conversations"
+    ],
+    "condition_logic": "campaign_type == messages",
+    "meaning_ar": "حملات الرسائل لا تعني وجود صفحة هبوط أو سلة أو دفع.",
+    "recommended_action_ar": "لا تعرض website funnel إلا إذا أثبتت البيانات وجود outbound/LPV/website events.",
+    "next_metric": "messaging_conversations"
+  },
+  {
+    "rule_key": "anti_hallucination_no_purchase_for_awareness_video",
+    "layer": "anti_hallucination",
+    "campaign_type": "awareness,video",
+    "required_metrics": [
+      "purchases",
+      "purchase_value"
+    ],
+    "condition_logic": "campaign_type in [awareness, video] and purchases/value missing",
+    "meaning_ar": "حملات الوعي والفيديو لا يتم الحكم عليها بالشراء أو ROAS بدون أحداث شراء وقيمة.",
+    "recommended_action_ar": "ركز على reach/frequency/CPM/video hold/fatigue، واذكر نقص بيانات الشراء فقط عند الحاجة.",
+    "next_metric": "frequency"
+  },
+  {
+    "rule_key": "fatigue_frequency_ctr_cpa",
+    "layer": "relationships_synthesis",
+    "campaign_type": "all",
+    "required_metrics": [
+      "frequency",
+      "ctr_link",
+      "cpa"
+    ],
+    "condition_logic": "frequency up AND ctr_link down AND cpa up",
+    "meaning_ar": "النمط الأقرب هو إجهاد محتوى أو تشبع جمهور، وليس مجرد مشكلة ميزانية.",
+    "recommended_action_ar": "لا تزود الميزانية قبل اختبار كرياتيفات جديدة أو تقسيم الجمهور. راقب CTR وCPA.",
+    "next_metric": "ctr_link"
+  },
+  {
+    "rule_key": "landing_leak_outbound_lpv",
+    "layer": "relationships_synthesis",
+    "campaign_type": "sales,traffic",
+    "required_metrics": [
+      "outbound_ctr",
+      "lpv_rate"
+    ],
+    "condition_logic": "outbound_ctr acceptable/high AND lpv_rate low",
+    "meaning_ar": "النقرات الخارجة لا تتحول إلى وصول فعلي؛ المشكلة بعد الضغط.",
+    "recommended_action_ar": "افحص سرعة الصفحة، الرابط، redirect، التتبع، والاختلاف حسب الجهاز.",
+    "next_metric": "lpv_rate"
+  },
+  {
+    "rule_key": "curiosity_without_intent",
+    "layer": "relationships_synthesis",
+    "campaign_type": "sales,leads,messages",
+    "required_metrics": [
+      "ctr_link",
+      "signal_quality"
+    ],
+    "condition_logic": "ctr_link high AND signal_quality low",
+    "meaning_ar": "الإعلان يجذب الفضول لكن لا يجلب نية كافية أو هناك عدم تطابق بين الوعد وما بعد الضغط.",
+    "recommended_action_ar": "غيّر الزاوية والـ CTA والوعد الإعلاني، واختبر نسخة أكثر تأهيلًا للجمهور.",
+    "next_metric": "signal_quality"
+  },
+  {
+    "rule_key": "auction_pressure_cpm_ctr",
+    "layer": "relationships_synthesis",
+    "campaign_type": "all",
+    "required_metrics": [
+      "cpm",
+      "ctr_link"
+    ],
+    "condition_logic": "cpm up AND ctr_link down",
+    "meaning_ar": "ضغط مزاد أو ضعف جودة الإعلان؛ التكلفة ترتفع والتفاعل يضعف.",
+    "recommended_action_ar": "اختبر كرياتيف/جمهور بديل، وافحص placement/device لو النمط مستمر.",
+    "next_metric": "cpm"
+  },
+  {
+    "rule_key": "budget_waste_spend_results",
+    "layer": "budget",
+    "campaign_type": "all",
+    "required_metrics": [
+      "spend",
+      "results",
+      "cpa"
+    ],
+    "condition_logic": "spend up AND results flat/down OR cpa up",
+    "meaning_ar": "الإنفاق الإضافي لا يولد نتائج كافية؛ احتمال هدر أو توسع غير صحي.",
+    "recommended_action_ar": "أعد توزيع الميزانية نحو العناصر ذات result_share أعلى من spend_share، ولا توسع الخاسر.",
+    "next_metric": "cpa"
+  },
+  {
+    "rule_key": "hidden_winner_share_gap",
+    "layer": "budget",
+    "campaign_type": "all",
+    "required_metrics": [
+      "spend_share",
+      "result_share"
+    ],
+    "condition_logic": "result_share > spend_share with sufficient samples",
+    "meaning_ar": "عنصر رابح مخفي يحصل على نتائج أعلى من حصته من الإنفاق.",
+    "recommended_action_ar": "زود الميزانية تدريجيًا مع مراقبة CPA/ROAS/frequency.",
+    "next_metric": "result_share"
+  },
+  {
+    "rule_key": "creative_hook_dropoff",
+    "layer": "creative_content",
+    "campaign_type": "awareness,video,sales,leads,messages",
+    "required_metrics": [
+      "video_3s",
+      "video_25",
+      "video_50"
+    ],
+    "condition_logic": "hook/3s acceptable AND hold_25/50 low",
+    "meaning_ar": "البداية تجذب الانتباه لكن جسم المحتوى لا يحتفظ بالمشاهد.",
+    "recommended_action_ar": "اختصر المقدمة، قدّم البرهان/العرض أسرع، واختبر ترتيب الرسالة.",
+    "next_metric": "video_25"
+  },
+  {
+    "rule_key": "creative_fragile_winner",
+    "layer": "creative_content",
+    "campaign_type": "all",
+    "required_metrics": [
+      "results",
+      "spend",
+      "frequency"
+    ],
+    "condition_logic": "good performance with small sample or short period",
+    "meaning_ar": "الأداء جيد لكنه غير مؤكد بسبب عينة صغيرة أو فترة قصيرة.",
+    "recommended_action_ar": "لا توسع بعنف؛ ارفع الميزانية تدريجيًا وانتظر عينة كافية.",
+    "next_metric": "data_sufficiency_score"
+  },
+  {
+    "rule_key": "tracking_signal_weak",
+    "layer": "tracking",
+    "campaign_type": "sales,leads,traffic",
+    "required_metrics": [
+      "clicks",
+      "actions"
+    ],
+    "condition_logic": "clicks/outbound exist AND meaningful events very low/unstable",
+    "meaning_ar": "هناك ضعف إشارة: إما تتبع ناقص أو جودة نية ضعيفة بعد النقر.",
+    "recommended_action_ar": "افحص Pixel/CAPI/event matching وترتيب الأحداث قبل الحكم النهائي على الإعلان.",
+    "next_metric": "signal_quality"
+  },
+  {
+    "rule_key": "fetch_breakdown_for_saturation",
+    "layer": "fetch_strategy",
+    "campaign_type": "all",
+    "required_metrics": [
+      "frequency",
+      "reach",
+      "ctr_link"
+    ],
+    "condition_logic": "suspected saturation/fatigue",
+    "meaning_ar": "التشخيص يحتاج تفصيل جمهور أو مواضع لفصل إجهاد المحتوى عن تشبع الجمهور.",
+    "recommended_action_ar": "اسحب breakdowns: age, gender, placement, country عند الحاجة فقط.",
+    "next_metric": "frequency"
+  },
+  {
+    "rule_key": "fetch_breakdown_for_landing_leak",
+    "layer": "fetch_strategy",
+    "campaign_type": "sales,traffic",
+    "required_metrics": [
+      "outbound_clicks",
+      "landing_page_views"
+    ],
+    "condition_logic": "post-click leak suspected",
+    "meaning_ar": "التسريب بعد الضغط قد يكون مرتبطًا بجهاز أو placement معين.",
+    "recommended_action_ar": "اسحب breakdown: device وplacement قبل توصية تقنية نهائية.",
+    "next_metric": "lpv_rate"
+  },
+  {
+    "rule_key": "report_must_include_evidence_confidence_next_metric",
+    "layer": "reporting",
+    "campaign_type": "all",
+    "required_metrics": [],
+    "condition_logic": "always",
+    "meaning_ar": "كل تقرير يجب أن يوضح الدليل والثقة والقرار والرقم التالي للمراقبة.",
+    "recommended_action_ar": "استخدم skipped_sections للأقسام غير المدعومة بدل عرضها.",
+    "next_metric": "varies"
+  }
+]
