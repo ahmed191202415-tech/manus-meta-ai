@@ -11,11 +11,12 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from app.analytics.analysis_storage import connect, prepare_raw_for_storage, save_run, upsert_df
+from app.analytics.analysis_storage import connect, prepare_raw_for_storage, save_run, upsert_df, save_relationship_edges, save_diagnostics
 from app.analytics.semantic_metrics import expand_semantic_metrics
 from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.relationship_engine import discover_relationship_edges
 from app.analytics.report_builder import build_dynamic_report_ar, build_skipped_sections
+from app.analytics.baseline_engine import compute_internal_baselines
 
 
 def load_export(path: str | Path) -> pd.DataFrame:
@@ -104,7 +105,11 @@ def analyze_dataframe(
         con = connect(db_path)
         upsert_df(con, 'raw_insights_daily', prepare_raw_for_storage(df, level=level))
         upsert_df(con, 'derived_metrics_daily', _derived_for_storage(current, level=level))
-        # Store run metadata even if diagnostic event persistence is expanded later.
+        entity_col = f'{level}_id' if f'{level}_id' in current.columns else 'campaign_id'
+        baselines = compute_internal_baselines(current, entity_col=entity_col, entity_level=level)
+        upsert_df(con, 'baselines', baselines)
+        save_relationship_edges(con, run_id, relationships)
+        save_diagnostics(con, run_id, result['diagnostics'], entity_level=level)
         save_run(
             con,
             run_id,

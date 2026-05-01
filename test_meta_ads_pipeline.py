@@ -66,3 +66,18 @@ def test_pipeline_runs_without_hallucinated_sections():
     assert 'report_markdown' in result
     assert any(s['section'] == 'website_funnel' for s in result['skipped_sections'])
     assert 'صفحة هبوط' in result['report_markdown'] or 'website_funnel' in result['report_markdown']
+
+
+def test_pipeline_persists_core_tables(tmp_path=None):
+    import sqlite3
+    db_path = 'exports/test_meta_intelligence_unit.sqlite'
+    Path(db_path).unlink(missing_ok=True)
+    result = analyze_dataframe(sample_df(), campaign_type='messages', db_path=db_path)
+    assert result['rows'] == 2
+    con = sqlite3.connect(db_path)
+    assert con.execute('select count(*) from analysis_runs').fetchone()[0] == 1
+    assert con.execute('select count(*) from raw_insights_daily').fetchone()[0] == 2
+    assert con.execute('select count(*) from derived_metrics_daily').fetchone()[0] == 2
+    assert con.execute('select count(*) from baselines').fetchone()[0] > 0
+    con.close()
+    Path(db_path).unlink(missing_ok=True)

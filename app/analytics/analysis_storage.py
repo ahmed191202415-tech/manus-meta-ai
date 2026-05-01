@@ -178,3 +178,50 @@ def save_run(con: sqlite3.Connection, run_id: str, **kwargs: Any) -> None:
     sql = f"INSERT OR REPLACE INTO analysis_runs ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})"
     con.execute(sql, [row[c] for c in cols])
     con.commit()
+
+
+
+def save_relationship_edges(con: sqlite3.Connection, run_id: str, edges: Iterable[Dict[str, Any]]) -> None:
+    rows = []
+    for edge in edges or []:
+        rows.append((
+            run_id,
+            edge.get('source_metric', ''),
+            edge.get('target_metric', ''),
+            edge.get('relation_type', ''),
+            float(edge.get('weight') or 0),
+            edge.get('confidence', ''),
+            edge.get('explanation_ar', ''),
+            json.dumps(edge.get('evidence', {}), ensure_ascii=False, default=str),
+        ))
+    if rows:
+        con.executemany(
+            "INSERT INTO relationship_edges (run_id, source_metric, target_metric, relation_type, weight, confidence, explanation_ar, evidence_json) VALUES (?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        con.commit()
+
+
+def save_diagnostics(con: sqlite3.Connection, run_id: str, diagnostics: Iterable[Dict[str, Any]], entity_level: str = 'campaign') -> None:
+    rows = []
+    for item in diagnostics or []:
+        entity = item.get('entity') if isinstance(item.get('entity'), dict) else {}
+        rows.append((
+            run_id,
+            item.get('date', ''),
+            entity_level,
+            str(entity.get('id') or item.get('entity_id') or ''),
+            item.get('scenario') or item.get('code') or item.get('family') or '',
+            item.get('severity', ''),
+            item.get('confidence', ''),
+            json.dumps(item.get('evidence', {}), ensure_ascii=False, default=str),
+            item.get('diagnosis_ar') or item.get('message') or item.get('explanation') or '',
+            item.get('decision_ar') or item.get('recommended_action') or item.get('action') or '',
+            item.get('next_metric', ''),
+        ))
+    if rows:
+        con.executemany(
+            "INSERT INTO diagnostics_daily (run_id, date, entity_level, entity_id, scenario, severity, confidence, evidence_json, diagnosis_ar, recommended_action, next_metric) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        con.commit()
