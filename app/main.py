@@ -46,7 +46,7 @@ def openapi_gpt_schema():
     """Small no-$ref OpenAPI schema optimized for ChatGPT Actions import."""
     server_url = EFFECTIVE_PUBLIC_BASE_URL
     return {
-        "openapi": "3.0.3",
+        "openapi": "3.1.0",
         "info": {
             "title": "Super Ad Analysis GPT",
             "version": "1.0.0",
@@ -155,7 +155,7 @@ def openapi_gpt_schema():
                 "post": {
                     "operationId": "save_pdf_report",
                     "summary": "Save a PDF report",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}},
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "content": {"type": "string"}, "html": {"type": "string"}, "markdown": {"type": "string"}, "filename": {"type": "string"}}, "additionalProperties": True}}}},
                     "responses": {"200": {"description": "Saved report"}},
                 }
             },
@@ -163,7 +163,7 @@ def openapi_gpt_schema():
                 "post": {
                     "operationId": "save_docx_report",
                     "summary": "Save a DOCX report",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}},
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "content": {"type": "string"}, "html": {"type": "string"}, "markdown": {"type": "string"}, "filename": {"type": "string"}}, "additionalProperties": True}}}},
                     "responses": {"200": {"description": "Saved report"}},
                 }
             },
