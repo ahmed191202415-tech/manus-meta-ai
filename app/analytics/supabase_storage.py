@@ -1,6 +1,6 @@
 """Supabase/PostgREST storage backend for Meta Ads intelligence.
 
-Uses SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. Service role should only be kept
+Uses INTELLIGENCE_SUPABASE_URL + INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY. Service role should only be kept
 server-side, e.g. Railway variables.
 """
 from __future__ import annotations
@@ -24,11 +24,11 @@ SUPABASE_TABLES = {
 
 
 def enabled() -> bool:
-    return (os.getenv('INTELLIGENCE_STORAGE', '').lower() == 'supabase' and bool(os.getenv('SUPABASE_URL')) and bool(os.getenv('SUPABASE_SERVICE_ROLE_KEY')))
+    return (os.getenv('INTELLIGENCE_STORAGE', '').lower() == 'supabase' and bool(os.getenv('INTELLIGENCE_SUPABASE_URL')) and bool(os.getenv('INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY')))
 
 
 def _headers() -> Dict[str, str]:
-    key = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
+    key = os.getenv('INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY', '')
     return {
         'apikey': key,
         'Authorization': f'Bearer {key}',
@@ -38,7 +38,7 @@ def _headers() -> Dict[str, str]:
 
 
 def _endpoint(table: str, on_conflict: str | None = None) -> str:
-    base = os.getenv('SUPABASE_URL', '').rstrip('/')
+    base = os.getenv('INTELLIGENCE_SUPABASE_URL', '').rstrip('/')
     url = f'{base}/rest/v1/{table}'
     if on_conflict:
         url += f'?on_conflict={on_conflict}'

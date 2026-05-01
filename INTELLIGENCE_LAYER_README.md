@@ -73,8 +73,11 @@ For Railway production, set:
 
 ```env
 INTELLIGENCE_STORAGE=supabase
-SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...
+INTELLIGENCE_SUPABASE_URL=...
+INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 Then run `supabase/intelligence_schema.sql` in Supabase SQL Editor. The progressive pipeline will keep SQLite fallback if `db_path` is provided, and also persist raw insights, derived metrics, baselines, diagnostics, relationships, and analysis runs to Supabase.
+
+
+Important: Do not reuse the auth/app Supabase project for intelligence storage. Use `INTELLIGENCE_SUPABASE_URL` and `INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY` for a separate project only.

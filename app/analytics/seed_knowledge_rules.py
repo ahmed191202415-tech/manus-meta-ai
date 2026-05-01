@@ -11,7 +11,7 @@ from app.analytics import supabase_storage
 
 def seed_rules(path: str | Path | None = None) -> int:
     if not supabase_storage.enabled():
-        raise RuntimeError('Set INTELLIGENCE_STORAGE=supabase, SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before seeding rules.')
+        raise RuntimeError('Set INTELLIGENCE_STORAGE=supabase, INTELLIGENCE_SUPABASE_URL and INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY before seeding rules.')
     path = Path(path) if path else Path(__file__).parent / 'knowledge_base' / 'rules_catalog_seed.json'
     rules = json.loads(path.read_text(encoding='utf-8'))
     url = supabase_storage._endpoint('knowledge_rules', on_conflict='rule_key')
