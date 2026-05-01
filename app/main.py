@@ -30,7 +30,9 @@ from app.api.auth_meta import router as auth_meta_router
 from app.api.oauth_gpt import router as oauth_gpt_router
 from app.api.tenant_portal import router as tenant_portal_router
 
-openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
+DEFAULT_PUBLIC_BASE_URL = "https://manus-meta-ai-production.up.railway.app"
+EFFECTIVE_PUBLIC_BASE_URL = PUBLIC_BASE_URL or DEFAULT_PUBLIC_BASE_URL
+openapi_servers = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
 
 app = FastAPI(
     title="Super Ad Analysis",
@@ -73,7 +75,7 @@ def openapi_gpt_schema():
         "version": "1.0.0",
         "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
     }
-    schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
+    schema["servers"] = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
     schema["paths"] = {
         path: value
         for path, value in schema.get("paths", {}).items()
