@@ -14,6 +14,8 @@ from app.analytics.semantic_metrics import aggregate_metrics, expand_semantic_me
 from app.analytics.statistics_engine import pct_change, severity_from_score
 from app.analytics.arabic_explainer import evidence_sentence
 from app.analytics.diagnostic_rules_catalog import RULES_CATALOG
+from app.analytics.insight_engine import build_human_insights_from_diagnostics
+from app.analytics.synthesis_engine import build_deep_multivariate_analysis
 
 
 def _row_dict(df: pd.DataFrame, idx: int) -> Dict[str, Any]:
@@ -185,6 +187,12 @@ def build_intelligence_diagnostics(current_df: pd.DataFrame, compare_df: pd.Data
         scenario_counts[hit['scenario']] = scenario_counts.get(hit['scenario'], 0) + 1
 
     top_hits = hits[:top_n]
+    human_insights = build_human_insights_from_diagnostics(top_hits, limit=min(5, top_n))
+    multivariate_synthesis = build_deep_multivariate_analysis(
+        current,
+        campaign_context={'level': level, 'entities_analyzed': int(len(current)) if current is not None else 0},
+        limit=5,
+    )
     summary_ar = 'تم تحليل العلاقات بين الأرقام وليس الأرقام منفردة.'
     if top_hits:
         top = top_hits[0]
@@ -205,11 +213,13 @@ def build_intelligence_diagnostics(current_df: pd.DataFrame, compare_df: pd.Data
         'diagnostics_count': len(hits),
         'scenario_counts': scenario_counts,
         'top_diagnostics': top_hits,
+        'human_insights': human_insights,
+        'multivariate_synthesis': multivariate_synthesis,
         'objective_notes': _objective_notes(current_df),
         'missing_notes': missing_notes,
         'method': {
             'source': 'Recovered Downloads content + project prompt + rules catalog',
-            'principle': 'relationship between metrics + previous window + semantic action flattening',
+            'principle': 'relationship between metrics + previous window + semantic action flattening + human insight translation + multivariate synthesis',
             'no_external_ai': True,
         },
     }
