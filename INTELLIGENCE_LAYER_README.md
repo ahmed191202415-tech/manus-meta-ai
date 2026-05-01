@@ -41,3 +41,28 @@
 
 ## السيناريوهات الحالية
 Creative Fatigue, Audience Saturation, Landing Page Friction, Offer/Product Friction, Checkout Friction, Budget Waste, Auction Pressure, Weak Signal Quality, Scale Candidate, Tracking/Attribution Mismatch, Weak Hook, Video Hold Problem, Message Match, Message Campaign Conversation Friction.
+
+## Local progressive pipeline
+
+تمت إضافة pipeline محلي تدريجي يعمل على ملفات CSV/XLSX/JSON بدون كسر الـ endpoint الحالي.
+
+### تشغيل محلي
+
+```bash
+python run_meta_ads_intelligence.py --input exports/sample.csv --campaign-type sales --question "حلل سبب التدهور" --db exports/meta_ads_intelligence.sqlite --report-out exports/report.md
+```
+
+### الطبقات الجديدة
+
+- `analysis_schema.py`: تعريفات الطلب والنتيجة وskipped sections.
+- `analysis_storage.py`: جداول raw/derived/baselines/diagnostics/relationships/runs.
+- `baseline_engine.py`: خط مرجعي داخلي 7/14/30 مع median/std/p10/p90.
+- `relationship_engine.py`: علاقات ثنائية قابلة للشرح.
+- `report_builder.py`: تقرير عربي ديناميكي يمنع الأقسام غير المدعومة.
+- `meta_fetcher.py`: سياسة السحب التدريجي من Meta API بدون breakdowns أولًا.
+- `analysis_pipeline.py`: منسق التحليل المحلي.
+- `knowledge_base/`: قاعدة معرفة مختصرة للمقاييس والعلاقات والمحتوى وأنواع الحملات.
+
+### قاعدة عدم الهبد
+
+التقرير لا يعرض website funnel لحملات الرسائل أو النماذج، ولا يعرض ROAS/شراء لحملات الوعي والفيديو إلا عند وجود events/value.
