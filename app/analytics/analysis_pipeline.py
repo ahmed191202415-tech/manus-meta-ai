@@ -44,6 +44,40 @@ def _basic_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     return metrics
 
 
+
+def infer_campaign_type_from_metrics(df: pd.DataFrame, fallback: str = 'unknown') -> str:
+    requested = (fallback or 'unknown').lower()
+    if requested != 'unknown':
+        return requested
+    if df is None or df.empty:
+        return 'unknown'
+    def total(col: str) -> float:
+        if col not in df.columns:
+            return 0.0
+        return float(pd.to_numeric(df[col], errors='coerce').fillna(0).sum())
+    if total('purchases') > 0 or total('purchase_value') > 0:
+        return 'sales'
+    if total('messaging_conversations') > 0:
+        return 'messages'
+    if total('leads') > 0:
+        return 'leads'
+    objective_text = ' '.join(str(x).lower() for x in df.get('objective', pd.Series(dtype=object)).dropna().unique().tolist())
+    if 'message' in objective_text or 'engagement' in objective_text:
+        return 'messages'
+    if 'lead' in objective_text:
+        return 'leads'
+    if 'sales' in objective_text or 'conversion' in objective_text or 'purchase' in objective_text:
+        return 'sales'
+    if 'video' in objective_text:
+        return 'video'
+    if 'awareness' in objective_text or 'reach' in objective_text:
+        return 'awareness'
+    if 'traffic' in objective_text:
+        return 'traffic'
+    if 'app' in objective_text:
+        return 'app'
+    return 'unknown'
+
 def _derived_for_storage(df: pd.DataFrame, level: str = 'campaign') -> pd.DataFrame:
     out = df.copy()
     for col in ['date', 'account_id', 'campaign_id', 'adset_id', 'ad_id']:
@@ -81,6 +115,7 @@ def analyze_dataframe(
     current = expand_semantic_metrics(df)
     previous = expand_semantic_metrics(compare_df) if compare_df is not None else current.iloc[0:0].copy()
 
+    campaign_type = infer_campaign_type_from_metrics(current, campaign_type)
     diagnostics_bundle = build_intelligence_diagnostics(current, previous, level=level, top_n=10)
     relationships = discover_relationship_edges(current)
     skipped = build_skipped_sections(current, campaign_type)

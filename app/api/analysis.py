@@ -19,6 +19,7 @@ from app.analytics.executive import build_executive_report
 from app.analytics.profitability import build_break_even_analysis
 from app.analytics.audit_framework import build_audit_snapshot
 from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
+from app.analytics.analysis_pipeline import analyze_dataframe
 from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
 
@@ -191,8 +192,19 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             body.sort,
             time_increment="1",
         )
-        result = build_intelligence_diagnostics(daily_df, compare_df, body.level, body.top_n)
-        run_id = save_intelligence_run(
+        # Feed the live Meta API data into the progressive intelligence pipeline.
+        # This preserves the existing Meta pull path while adding semantic metrics,
+        # SQLite raw/derived/baselines storage, relationships, skipped sections and
+        # the dynamic Arabic report.
+        result = analyze_dataframe(
+            daily_df,
+            compare_df=compare_df,
+            campaign_type="unknown",
+            question="",
+            level=body.level,
+            db_path="exports/meta_ads_intelligence.sqlite",
+        )
+        legacy_run_id = save_intelligence_run(
             body.account_id,
             body.level,
             body.since,
@@ -204,7 +216,10 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
         return {
             "analysis_type": body.analysis_type,
             "result": result,
-            "run_id": run_id,
+            "run_id": result.get("run_id"),
+            "legacy_run_id": legacy_run_id,
+            "source": "meta_api_live_fetch",
+            "db_path": "exports/meta_ads_intelligence.sqlite",
             "compare_range": {"since": compare_since, "until": compare_until},
         }
 
