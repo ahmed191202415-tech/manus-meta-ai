@@ -25,6 +25,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.dashboard_builder import router as dashboard_builder_router
 from app.api.analysis_dashboard import router as analysis_dashboard_router
 from app.api.analysis_docx import router as analysis_docx_router
+from app.api.campaign_analysis import router as campaign_analysis_router
 from app.api.auth_meta import router as auth_meta_router
 from app.api.oauth_gpt import router as oauth_gpt_router
 from app.api.tenant_portal import router as tenant_portal_router
@@ -57,6 +58,7 @@ def openapi_gpt_schema():
         "/page_comments/{comment_id}/reply",
         "/page_comments/{comment_id}/hide",
         "/analysis/run",
+        "/analysis/campaign",
         "/analysis_dashboard/build",
         "/analysis_docx/build",
         "/reports/save_excel",
@@ -114,6 +116,7 @@ app.include_router(dashboard_router)
 app.include_router(dashboard_builder_router)
 app.include_router(analysis_dashboard_router)
 app.include_router(analysis_docx_router)
+app.include_router(campaign_analysis_router)
 app.include_router(auth_meta_router)
 app.include_router(oauth_gpt_router)
 app.include_router(tenant_portal_router)
