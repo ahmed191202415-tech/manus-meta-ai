@@ -76,11 +76,28 @@ def openapi_gpt_schema():
         "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
     }
     schema["servers"] = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
-    schema["paths"] = {
-        path: value
-        for path, value in schema.get("paths", {}).items()
-        if path in allowed_paths
+    schema.setdefault("components", {})
+    schema["components"].setdefault("securitySchemes", {})
+    schema["components"]["securitySchemes"]["GPTMetaOAuth"] = {
+        "type": "oauth2",
+        "flows": {
+            "authorizationCode": {
+                "authorizationUrl": f"{EFFECTIVE_PUBLIC_BASE_URL}/oauth/authorize",
+                "tokenUrl": f"{EFFECTIVE_PUBLIC_BASE_URL}/oauth/token",
+                "scopes": {},
+            }
+        },
     }
+    filtered_paths = {}
+    for path, value in schema.get("paths", {}).items():
+        if path not in allowed_paths:
+            continue
+        if path != "/health":
+            for operation in value.values():
+                if isinstance(operation, dict):
+                    operation.setdefault("security", [{"GPTMetaOAuth": []}])
+        filtered_paths[path] = value
+    schema["paths"] = filtered_paths
     return schema
 
 app.add_middleware(
