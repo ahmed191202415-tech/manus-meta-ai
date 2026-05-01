@@ -43,45 +43,132 @@ app = FastAPI(
 
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
-    allowed_paths = {
-        "/health",
-        "/meta/request",
-        "/accounts",
-        "/insights",
-        "/campaigns",
-        "/adsets",
-        "/ads",
-        "/adcreatives",
-        "/adimages",
-        "/advideos",
-        "/pages",
-        "/page_posts",
-        "/page_comments",
-        "/page_comments/{comment_id}/reply",
-        "/page_comments/{comment_id}/hide",
-        "/analysis/run",
-        "/analysis/campaign",
-        "/analysis_dashboard/build",
-        "/analysis_docx/build",
-        "/reports/save_excel",
-        "/reports/save_pdf",
-        "/reports/save_pptx",
-        "/reports/save_docx",
-        "/reports/save_html_dashboard",
+    """Small no-$ref OpenAPI schema optimized for ChatGPT Actions import."""
+    server_url = EFFECTIVE_PUBLIC_BASE_URL
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "Super Ad Analysis GPT",
+            "version": "1.0.0",
+            "description": "ChatGPT Actions schema for Meta Ads data, live campaign analysis, reports, and page operations.",
+        },
+        "servers": [{"url": server_url}],
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "health",
+                    "summary": "Check API health",
+                    "responses": {"200": {"description": "API is healthy"}},
+                }
+            },
+            "/accounts": {
+                "get": {
+                    "operationId": "list_ad_accounts",
+                    "summary": "List connected Meta ad accounts",
+                    "responses": {"200": {"description": "Meta ad accounts"}},
+                }
+            },
+            "/campaigns": {
+                "get": {
+                    "operationId": "list_campaigns",
+                    "summary": "List Meta campaigns for an ad account",
+                    "parameters": [
+                        {"name": "account_id", "in": "query", "required": True, "schema": {"type": "string"}},
+                        {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "default": 50}},
+                    ],
+                    "responses": {"200": {"description": "Campaign list"}},
+                }
+            },
+            "/insights": {
+                "get": {
+                    "operationId": "get_insights",
+                    "summary": "Get Meta Ads insights",
+                    "parameters": [
+                        {"name": "account_id", "in": "query", "required": True, "schema": {"type": "string"}},
+                        {"name": "level", "in": "query", "required": False, "schema": {"type": "string", "default": "campaign"}},
+                        {"name": "date_preset", "in": "query", "required": False, "schema": {"type": "string"}},
+                        {"name": "since", "in": "query", "required": False, "schema": {"type": "string"}},
+                        {"name": "until", "in": "query", "required": False, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "Insights data"}},
+                }
+            },
+            "/analysis/campaign": {
+                "post": {
+                    "operationId": "analyze_campaign",
+                    "summary": "Analyze one Meta Ads campaign using live Meta API data",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["account_id", "campaign_id"],
+                                    "properties": {
+                                        "account_id": {"type": "string", "description": "Meta ad account id, with or without act_"},
+                                        "campaign_id": {"type": "string", "description": "Meta campaign id"},
+                                        "since": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                                        "until": {"type": "string", "description": "End date YYYY-MM-DD"},
+                                        "date_preset": {"type": "string", "description": "Meta date preset such as last_7d or last_30d"},
+                                        "compare_since": {"type": "string"},
+                                        "compare_until": {"type": "string"},
+                                        "level": {"type": "string", "default": "ad", "enum": ["account", "campaign", "adset", "ad"]},
+                                        "question": {"type": "string", "default": "حلل هذه الحملة"},
+                                        "fields": {"type": "string"},
+                                        "deep": {"type": "boolean", "default": False},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "Campaign intelligence analysis"}},
+                }
+            },
+            "/analysis/run": {
+                "post": {
+                    "operationId": "run_analysis",
+                    "summary": "Run general Meta Ads analysis",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["account_id"],
+                                    "properties": {
+                                        "account_id": {"type": "string"},
+                                        "analysis_type": {"type": "string", "default": "intelligence_diagnostics"},
+                                        "level": {"type": "string", "default": "campaign"},
+                                        "date_preset": {"type": "string"},
+                                        "since": {"type": "string"},
+                                        "until": {"type": "string"},
+                                        "top_n": {"type": "integer", "default": 10},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "Analysis result"}},
+                }
+            },
+            "/reports/save_pdf": {
+                "post": {
+                    "operationId": "save_pdf_report",
+                    "summary": "Save a PDF report",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}},
+                    "responses": {"200": {"description": "Saved report"}},
+                }
+            },
+            "/reports/save_docx": {
+                "post": {
+                    "operationId": "save_docx_report",
+                    "summary": "Save a DOCX report",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}},
+                    "responses": {"200": {"description": "Saved report"}},
+                }
+            },
+        },
     }
-    schema = deepcopy(app.openapi())
-    schema["info"] = {
-        "title": "Super Ad Analysis GPT",
-        "version": "1.0.0",
-        "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
-    }
-    schema["servers"] = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
-    schema["paths"] = {
-        path: value
-        for path, value in schema.get("paths", {}).items()
-        if path in allowed_paths
-    }
-    return schema
 
 app.add_middleware(
     CORSMiddleware,
