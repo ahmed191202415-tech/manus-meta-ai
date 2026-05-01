@@ -66,3 +66,15 @@ python run_meta_ads_intelligence.py --input exports/sample.csv --campaign-type s
 ### قاعدة عدم الهبد
 
 التقرير لا يعرض website funnel لحملات الرسائل أو النماذج، ولا يعرض ROAS/شراء لحملات الوعي والفيديو إلا عند وجود events/value.
+
+## Production Supabase storage
+
+For Railway production, set:
+
+```env
+INTELLIGENCE_STORAGE=supabase
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+```
+
+Then run `supabase/intelligence_schema.sql` in Supabase SQL Editor. The progressive pipeline will keep SQLite fallback if `db_path` is provided, and also persist raw insights, derived metrics, baselines, diagnostics, relationships, and analysis runs to Supabase.

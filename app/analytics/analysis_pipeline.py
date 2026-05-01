@@ -17,6 +17,7 @@ from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.relationship_engine import discover_relationship_edges
 from app.analytics.report_builder import build_dynamic_report_ar, build_skipped_sections
 from app.analytics.baseline_engine import compute_internal_baselines
+from app.analytics import supabase_storage
 
 
 def load_export(path: str | Path) -> pd.DataFrame:
@@ -136,12 +137,15 @@ def analyze_dataframe(
     }
     result['report_markdown'] = build_dynamic_report_ar(result, campaign_type=campaign_type, question=question)
 
+    entity_col = f'{level}_id' if f'{level}_id' in current.columns else 'campaign_id'
+    baselines = compute_internal_baselines(current, entity_col=entity_col, entity_level=level)
+    raw_storage_df = prepare_raw_for_storage(df, level=level)
+    derived_storage_df = _derived_for_storage(current, level=level)
+
     if db_path:
         con = connect(db_path)
-        upsert_df(con, 'raw_insights_daily', prepare_raw_for_storage(df, level=level))
-        upsert_df(con, 'derived_metrics_daily', _derived_for_storage(current, level=level))
-        entity_col = f'{level}_id' if f'{level}_id' in current.columns else 'campaign_id'
-        baselines = compute_internal_baselines(current, entity_col=entity_col, entity_level=level)
+        upsert_df(con, 'raw_insights_daily', raw_storage_df)
+        upsert_df(con, 'derived_metrics_daily', derived_storage_df)
         upsert_df(con, 'baselines', baselines)
         save_relationship_edges(con, run_id, relationships)
         save_diagnostics(con, run_id, result['diagnostics'], entity_level=level)
@@ -157,6 +161,23 @@ def analyze_dataframe(
             errors=[],
         )
         con.close()
+
+    if supabase_storage.enabled():
+        supabase_storage.save_dataframe_outputs(
+            run_id=run_id,
+            raw_df=df,
+            raw_storage_df=raw_storage_df,
+            derived_df=derived_storage_df,
+            baselines_df=baselines,
+            relationships=relationships,
+            diagnostics=result['diagnostics'],
+            result=result,
+            account_id=str(current.get('account_id', [''])[0]) if 'account_id' in current.columns and len(current) else '',
+            campaign_id=str(current.get('campaign_id', [''])[0]) if 'campaign_id' in current.columns and len(current) else '',
+            level=level,
+            question=question,
+            campaign_type=campaign_type,
+        )
     return result
 
 
