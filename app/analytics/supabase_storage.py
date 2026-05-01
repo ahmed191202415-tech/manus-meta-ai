@@ -1,6 +1,6 @@
 """Supabase/PostgREST storage backend for Meta Ads intelligence.
 
-Uses INTELLIGENCE_SUPABASE_URL + INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY. Service role should only be kept
+Uses INTELLIGENCE_SUPABASE_URL plus INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY, falling back to SUPABASE_SERVICE_ROLE_KEY only when INTELLIGENCE_SUPABASE_URL is explicitly set. Service role should only be kept
 server-side, e.g. Railway variables.
 """
 from __future__ import annotations
@@ -24,11 +24,11 @@ SUPABASE_TABLES = {
 
 
 def enabled() -> bool:
-    return (os.getenv('INTELLIGENCE_STORAGE', '').lower() == 'supabase' and bool(os.getenv('INTELLIGENCE_SUPABASE_URL')) and bool(os.getenv('INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY')))
+    return (os.getenv('INTELLIGENCE_STORAGE', '').lower() == 'supabase' and bool(os.getenv('INTELLIGENCE_SUPABASE_URL')) and bool(os.getenv('INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_ROLE_KEY')))
 
 
 def _headers() -> Dict[str, str]:
-    key = os.getenv('INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY', '')
+    key = os.getenv('INTELLIGENCE_SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
     return {
         'apikey': key,
         'Authorization': f'Bearer {key}',
