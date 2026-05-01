@@ -7,6 +7,7 @@ that the diagnostics engine can reason over.
 from __future__ import annotations
 
 from typing import Any, Iterable
+import json
 import math
 import pandas as pd
 import numpy as np
@@ -28,12 +29,33 @@ def safe_div(numerator: Any, denominator: Any) -> float:
     return safe_float(numerator) / den if den else 0.0
 
 
+def _coerce_action_list(actions: Any) -> list:
+    if actions is None:
+        return []
+    if isinstance(actions, list):
+        return actions
+    if isinstance(actions, dict):
+        return [actions]
+    if isinstance(actions, str):
+        value = actions.strip()
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                return [parsed]
+        except Exception:
+            return []
+    return []
+
+
 def _extract_from_action_list(actions: Any, action_types: Iterable[str]) -> float:
-    if not isinstance(actions, list):
-        return 0.0
+    action_list = _coerce_action_list(actions)
     wanted = set(action_types)
     total = 0.0
-    for item in actions:
+    for item in action_list:
         if not isinstance(item, dict):
             continue
         if item.get('action_type') in wanted:
