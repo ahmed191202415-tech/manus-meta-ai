@@ -16,6 +16,7 @@ from app.analytics.analysis_storage import connect, prepare_raw_for_storage, sav
 from app.analytics.semantic_metrics import expand_semantic_metrics
 from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.relationship_engine import discover_relationship_edges
+from app.analytics.statistical_skills_layer import add_statistical_features, build_statistical_profile
 from app.analytics.report_builder import build_dynamic_report_ar, build_skipped_sections
 from app.analytics.baseline_engine import compute_internal_baselines
 from app.analytics import supabase_storage
@@ -405,6 +406,7 @@ def analyze_dataframe(
     campaign_type = infer_campaign_type_from_metrics(current, campaign_type)
     diagnostics_bundle = build_intelligence_diagnostics(current, previous, level=level, top_n=10)
     relationships = discover_relationship_edges(current)
+    statistical_profile = build_statistical_profile(current, level=level)
     skipped = build_skipped_sections(current, campaign_type)
     metrics = _basic_metrics(current)
     diagnostics = diagnostics_bundle.get('top_diagnostics', []) or []
@@ -427,6 +429,7 @@ def analyze_dataframe(
         'summary_ar': diagnostics_bundle.get('summary_ar') or 'تم تحليل البيانات عبر طبقات المقاييس والعلاقات والتشخيص.',
         'rows': int(len(current)),
         'metrics': metrics,
+        'statistical_profile': statistical_profile,
         'diagnostics': diagnostics,
         'human_insights': human_insights,
         'multivariate_synthesis': multivariate_synthesis,

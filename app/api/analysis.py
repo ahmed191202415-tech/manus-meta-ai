@@ -21,6 +21,7 @@ from app.analytics.audit_framework import build_audit_snapshot
 from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.analysis_pipeline import analyze_dataframe
 from app.analytics.report_builder import build_dynamic_report_ar
+from app.analytics.storage_cache import cached_raw_insights, cache_coverage
 from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
 
@@ -137,6 +138,23 @@ def _run_deep_breakdown_fetches(body, token: str, plans: list[dict]) -> list[dic
             results.append(_clean_json_value({"plan": plan, "error_type": type(exc).__name__, "message": str(exc)[:1000]}))
     return _clean_json_value(results)
 
+def _campaign_id_from_filters(filters: str | None) -> str | None:
+    if not filters:
+        return None
+    try:
+        import json
+        data = json.loads(filters)
+        for item in data if isinstance(data, list) else []:
+            if str(item.get("field")) in {"campaign.id", "campaign_id"}:
+                val = item.get("value")
+                if isinstance(val, list) and val:
+                    return str(val[0])
+                if val:
+                    return str(val)
+    except Exception:
+        return None
+    return None
+
 DEEP_SAFE_FIELDS = "date_start,date_stop,account_id,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,objective,spend,impressions,reach,frequency,inline_link_clicks,outbound_clicks,actions,action_values,cost_per_action_type,cpm,cpc,ctr,quality_ranking,engagement_rate_ranking,conversion_rate_ranking"
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -146,17 +164,26 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 async def analysis_run(body: AnalysisRunRequest, request: Request):
     token = await resolve_access_token(request)
 
-    current_df = fetch_insights_df(
-        body.account_id,
-        token,
-        body.level,
-        body.fields,
-        body.date_preset,
-        body.since,
-        body.until,
-        body.filters,
-        body.sort,
-    )
+    cache_meta = {"source": "meta_api", "cache_checked": False, "cache_hit": False}
+    campaign_id_for_cache = _campaign_id_from_filters(body.filters)
+    cache_df = cached_raw_insights(body.account_id, body.level, body.since, body.until, campaign_id=campaign_id_for_cache)
+    coverage = cache_coverage(cache_df)
+    cache_meta.update({"cache_checked": True, "coverage": coverage})
+    if coverage.get("hit"):
+        current_df = cache_df
+        cache_meta.update({"source": "supabase_cache", "cache_hit": True})
+    else:
+        current_df = fetch_insights_df(
+            body.account_id,
+            token,
+            body.level,
+            body.fields,
+            body.date_preset,
+            body.since,
+            body.until,
+            body.filters,
+            body.sort,
+        )
 
     compare_since = body.compare_since
     compare_until = body.compare_until
@@ -344,7 +371,8 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             "run_id": result.get("run_id"),
             "legacy_run_id": legacy_run_id,
             "storage_warning": storage_warning,
-            "source": "meta_api_live_fetch",
+            "source": cache_meta.get("source", "meta_api_live_fetch"),
+            "cache": cache_meta,
             "db_path": "exports/meta_ads_intelligence.sqlite",
             "compare_range": {"since": compare_since, "until": compare_until},
         }

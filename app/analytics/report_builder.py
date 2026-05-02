@@ -49,6 +49,7 @@ def build_dynamic_report_ar(result: Dict[str, Any], campaign_type: str = 'unknow
     rows = result.get('rows', 0)
     metrics = result.get('metrics', {}) or {}
     diagnostics = result.get('diagnostics', []) or []
+    statistical_profile = result.get('statistical_profile', {}) or {}
     human_insights = result.get('human_insights', []) or []
     synthesis = result.get('multivariate_synthesis', []) or []
     relationships = result.get('relationships', []) or []
@@ -81,6 +82,26 @@ def build_dynamic_report_ar(result: Dict[str, Any], campaign_type: str = 'unknow
         lines.append('## العلاقات المكتشفة')
         for edge in relationships[:8]:
             lines.append(f"- **{edge.get('relation_type','علاقة')}**: {edge.get('explanation_ar','')} (الثقة: {edge.get('confidence','غير محددة')}, الوزن: {edge.get('weight','')})")
+        lines.append('')
+
+
+    if statistical_profile:
+        lines.append('## الطبقة الإحصائية قبل التشخيص')
+        ss = statistical_profile.get('sample_sufficiency', {})
+        lines.append(f"- حجم العينة: {ss.get('rows', statistical_profile.get('rows', 0))} صف، أيام: {ss.get('days', 0)}، المستوى: {ss.get('level', '')}")
+        anomalies = statistical_profile.get('anomalies', []) or []
+        lines.append(f"- الشذوذات المكتشفة: {len(anomalies)}")
+        decisions = statistical_profile.get('decision_scores', []) or []
+        if decisions:
+            lines.append('- قرارات مبدئية حسب الإحصاء:')
+            for d in decisions[:5]:
+                name = d.get('ad_name') or d.get('adset_name') or d.get('campaign_name') or d.get('ad_id') or d.get('adset_id') or d.get('campaign_id') or ''
+                lines.append(f"  - {name}: {d.get('decision')} score={_fmt_num(d.get('decision_score',0))}, results={_fmt_num(d.get('results',0))}, cpa={_fmt_num(d.get('cpa',0))}")
+        trends = statistical_profile.get('trends', {}) or {}
+        important = ['spend','results','stat_cpa','stat_ctr','frequency','cpm']
+        vals = [f"{k}: {_fmt_num(trends.get(k,0))}" for k in important if k in trends]
+        if vals:
+            lines.append('- اتجاهات مختصرة: ' + ' | '.join(vals))
         lines.append('')
 
     if diagnostics:
