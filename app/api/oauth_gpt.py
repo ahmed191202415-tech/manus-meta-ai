@@ -10,7 +10,6 @@ from app.core.oauth_store import (
     create_auth_code,
     consume_auth_code,
     get_active_meta_connection_for_tenant,
-    get_latest_meta_connection,
     get_tenant_meta_app,
     purge_meta_connection,
 )
@@ -40,17 +39,6 @@ async def oauth_authorize(
 
     tenant_id = str(request.session.get("tenant_id") or "").strip()
     if not tenant_id:
-        # Mobile ChatGPT sometimes opens the login flow in a browser that loses
-        # the portal session/cookies and shows a Not Found page. If a Meta
-        # connection already exists, complete the GPT OAuth handshake directly.
-        saved_connection = get_latest_meta_connection()
-        if saved_connection and saved_connection.get("meta_user_id"):
-            saved_tenant_id = str(saved_connection.get("tenant_id") or "default").strip() or "default"
-            code = create_auth_code(tenant_id=saved_tenant_id, meta_user_id=saved_connection["meta_user_id"])
-            final_url = f"{redirect_uri}?code={code}"
-            if state:
-                final_url += f"&state={state}"
-            return RedirectResponse(url=final_url, status_code=302)
         request.session["gpt_oauth_redirect_uri"] = redirect_uri
         request.session["gpt_oauth_state"] = state
         request.session["gpt_oauth_client_id"] = client_id
