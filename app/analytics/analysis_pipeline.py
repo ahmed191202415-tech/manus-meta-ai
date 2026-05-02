@@ -134,6 +134,7 @@ def analyze_dataframe(
         'relationships': relationships,
         'skipped_sections': skipped + diagnostics_bundle.get('missing_notes', []),
         'objective_notes': diagnostics_bundle.get('objective_notes', []),
+        'storage_errors': [],
     }
     result['report_markdown'] = build_dynamic_report_ar(result, campaign_type=campaign_type, question=question)
 
@@ -143,41 +144,53 @@ def analyze_dataframe(
     derived_storage_df = _derived_for_storage(current, level=level)
 
     if db_path:
-        con = connect(db_path)
-        upsert_df(con, 'raw_insights_daily', raw_storage_df)
-        upsert_df(con, 'derived_metrics_daily', derived_storage_df)
-        upsert_df(con, 'baselines', baselines)
-        save_relationship_edges(con, run_id, relationships)
-        save_diagnostics(con, run_id, result['diagnostics'], entity_level=level)
-        save_run(
-            con,
-            run_id,
-            scope='dataframe',
-            level=level,
-            period='',
-            phase=result['phase'],
-            completed_modules=['semantic_metrics', 'relationships', 'diagnostics', 'report'],
-            skipped_modules=result['skipped_sections'],
-            errors=[],
-        )
-        con.close()
+        con = None
+        try:
+            con = connect(db_path)
+            upsert_df(con, 'raw_insights_daily', raw_storage_df)
+            upsert_df(con, 'derived_metrics_daily', derived_storage_df)
+            upsert_df(con, 'baselines', baselines)
+            save_relationship_edges(con, run_id, relationships)
+            save_diagnostics(con, run_id, result['diagnostics'], entity_level=level)
+            save_run(
+                con,
+                run_id,
+                scope='dataframe',
+                level=level,
+                period='',
+                phase=result['phase'],
+                completed_modules=['semantic_metrics', 'relationships', 'diagnostics', 'report'],
+                skipped_modules=result['skipped_sections'],
+                errors=[],
+            )
+        except Exception as exc:
+            result['storage_errors'].append({'backend': 'sqlite', 'error_type': type(exc).__name__, 'message': str(exc)})
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
 
     if supabase_storage.enabled():
-        supabase_storage.save_dataframe_outputs(
-            run_id=run_id,
-            raw_df=df,
-            raw_storage_df=raw_storage_df,
-            derived_df=derived_storage_df,
-            baselines_df=baselines,
-            relationships=relationships,
-            diagnostics=result['diagnostics'],
-            result=result,
-            account_id=str(current.get('account_id', [''])[0]) if 'account_id' in current.columns and len(current) else '',
-            campaign_id=str(current.get('campaign_id', [''])[0]) if 'campaign_id' in current.columns and len(current) else '',
-            level=level,
-            question=question,
-            campaign_type=campaign_type,
-        )
+        try:
+            supabase_storage.save_dataframe_outputs(
+                run_id=run_id,
+                raw_df=df,
+                raw_storage_df=raw_storage_df,
+                derived_df=derived_storage_df,
+                baselines_df=baselines,
+                relationships=relationships,
+                diagnostics=result['diagnostics'],
+                result=result,
+                account_id=str(current.get('account_id', [''])[0]) if 'account_id' in current.columns and len(current) else '',
+                campaign_id=str(current.get('campaign_id', [''])[0]) if 'campaign_id' in current.columns and len(current) else '',
+                level=level,
+                question=question,
+                campaign_type=campaign_type,
+            )
+        except Exception as exc:
+            result['storage_errors'].append({'backend': 'supabase', 'error_type': type(exc).__name__, 'message': str(exc)})
     return result
 
 
