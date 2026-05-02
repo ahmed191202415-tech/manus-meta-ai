@@ -8,7 +8,7 @@ from app.core.oauth_store import (
     get_app_token_data,
     get_tenant_account_by_id,
     get_tenant_meta_app,
-    list_tenant_accounts,
+    get_latest_meta_connection,
     is_account_expired,
     purge_meta_connection,
 )
@@ -70,38 +70,32 @@ def _resolve_valid_saved_token(
 def _resolve_default_saved_connection(request: Request) -> str | None:
     """Fallback for GPT Actions when ChatGPT does not send the OAuth bearer token.
 
-    It uses the newest active tenant with a saved Meta connection. This keeps the
-    old portal/Meta connection usable even if the GPT editor test call misses the
-    Authorization header.
+    It uses the newest saved Meta connection directly from meta_connections so it
+    keeps working even if the tenant_accounts table schema is older.
     """
     try:
-        for account in list_tenant_accounts(include_deleted=False):
-            status = str((account or {}).get("status") or "").lower()
-            if status in {"disabled", "deleted"} or is_account_expired(account):
-                continue
-            tenant_id = account.get("tenant_id")
-            if not tenant_id:
-                continue
-            connection = get_active_meta_connection_for_tenant(tenant_id)
-            if not connection or not connection.get("meta_access_token"):
-                continue
-            meta_app = get_tenant_meta_app(tenant_id)
-            app_secret = meta_app.get("meta_app_secret") if meta_app else None
-            set_current_meta_app_secret(app_secret)
+        connection = get_latest_meta_connection()
+        if not connection or not connection.get("meta_access_token"):
+            return None
+        tenant_id = connection.get("tenant_id")
+        meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
+        app_secret = meta_app.get("meta_app_secret") if meta_app else None
+        set_current_meta_app_secret(app_secret)
+        if tenant_id:
             request.session["tenant_id"] = tenant_id
-            request.session["meta_access_token"] = connection["meta_access_token"]
-            request.session["meta_user_id"] = connection.get("meta_user_id")
-            request.session["meta_user"] = {
-                "id": connection.get("meta_user_id"),
-                "name": connection.get("meta_user_name"),
-            }
-            return _resolve_valid_saved_token(
-                request,
-                connection["meta_access_token"],
-                connection.get("meta_user_id"),
-                tenant_id,
-                app_secret=app_secret,
-            )
+        request.session["meta_access_token"] = connection["meta_access_token"]
+        request.session["meta_user_id"] = connection.get("meta_user_id")
+        request.session["meta_user"] = {
+            "id": connection.get("meta_user_id"),
+            "name": connection.get("meta_user_name"),
+        }
+        return _resolve_valid_saved_token(
+            request,
+            connection["meta_access_token"],
+            connection.get("meta_user_id"),
+            tenant_id,
+            app_secret=app_secret,
+        )
     except HTTPException:
         raise
     except Exception:

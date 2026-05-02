@@ -446,6 +446,17 @@ def get_active_meta_connection_for_tenant(tenant_id: str):
     )
 
 
+def get_latest_meta_connection():
+    return _get_single(
+        "meta_connections",
+        params={
+            "select": "*",
+            "limit": "1",
+            "order": "updated_at.desc",
+        },
+    )
+
+
 def find_meta_connection_by_access_token(access_token: str):
     return _get_single(
         "meta_connections",
