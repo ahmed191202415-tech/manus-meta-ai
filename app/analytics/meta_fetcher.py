@@ -54,15 +54,15 @@ def recommend_breakdowns(question: str = '', diagnostics: Optional[List[Dict]] =
     q = (question or '').lower()
     diagnostics = diagnostics or []
     plans: List[FetchPlan] = []
-    if any(word in q for word in ['موضع', 'placement', 'مكان الظهور']):
+    if any(word in q for word in ['موضع', 'مواضع', 'placement', 'مكان الظهور']):
         plans.append(build_deep_fetch_plan('user asked for placement detail', 'placement'))
-    if any(word in q for word in ['جهاز', 'device', 'موبايل', 'desktop']):
+    if any(word in q for word in ['جهاز', 'أجهزة', 'اجهزة', 'device', 'موبايل', 'desktop']):
         plans.append(build_deep_fetch_plan('user asked for device detail', 'device'))
-    if any(word in q for word in ['دولة', 'country', 'منطقة', 'بلد']):
+    if any(word in q for word in ['دولة', 'دول', 'country', 'منطقة', 'مناطق', 'بلد']):
         plans.append(build_deep_fetch_plan('user asked for country detail', 'country'))
-    if any(word in q for word in ['سن', 'نوع', 'age', 'gender']):
+    if any(word in q for word in ['سن', 'نوع', 'عمر', 'جنس', 'age', 'gender']):
         plans.append(build_deep_fetch_plan('user asked for demographic detail', 'age_gender'))
-    if any(word in q for word in ['ساعة', 'وقت', 'hour']):
+    if any(word in q for word in ['ساعة', 'ساعات', 'وقت', 'أوقات', 'اوقات', 'hour']):
         plans.append(build_deep_fetch_plan('user asked for hourly detail', 'hour'))
     for d in diagnostics:
         fam = str(d.get('family') or d.get('scenario') or d.get('code') or '').lower()
