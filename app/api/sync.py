@@ -1,6 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 import json
+import uuid
 from fastapi import APIRouter, Request
 
 from app.core.auth import resolve_access_token
@@ -49,7 +50,7 @@ async def sync_meta_cache(payload: dict, request: Request):
     try:
         if supabase_storage.enabled():
             supabase_storage.save_dataframe_outputs(
-                run_id="sync_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                run_id=str(uuid.uuid4()),
                 raw_df=df,
                 raw_storage_df=raw_storage,
                 derived_df=derived,
