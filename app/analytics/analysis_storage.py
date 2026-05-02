@@ -135,6 +135,13 @@ def _sanitize_json(value: Any) -> Any:
             return None
     except Exception:
         pass
+    if isinstance(value, pd.Timestamp):
+        return value.date().isoformat()
+    if hasattr(value, 'isoformat') and not isinstance(value, (str, bytes)):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
     if isinstance(value, dict):
         return {str(k): _sanitize_json(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):

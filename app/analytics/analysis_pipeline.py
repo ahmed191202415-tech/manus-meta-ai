@@ -35,6 +35,39 @@ def load_export(path: str | Path) -> pd.DataFrame:
     raise ValueError(f'Unsupported file type: {suffix}')
 
 
+def _metric_number_for_storage(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (list, tuple)):
+        total = 0.0
+        for item in value:
+            if isinstance(item, dict):
+                try:
+                    total += float(item.get('value') or 0)
+                except Exception:
+                    pass
+            else:
+                try:
+                    total += float(item or 0)
+                except Exception:
+                    pass
+        return total
+    if isinstance(value, dict):
+        try:
+            return float(value.get('value') or 0)
+        except Exception:
+            return 0.0
+    try:
+        if pd.isna(value):
+            return 0.0
+    except Exception:
+        pass
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
 def _basic_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {'rows': int(len(df))}
     mean_cols = {'frequency', 'ctr_link', 'outbound_ctr', 'cpa', 'roas', 'signal_quality'}
@@ -106,9 +139,13 @@ def _derived_for_storage(df: pd.DataFrame, level: str = 'campaign') -> pd.DataFr
         'messaging_conversations', 'purchase_value', 'ctr_link', 'outbound_ctr', 'lpv_rate',
         'atc_rate', 'checkout_rate', 'purchase_rate', 'cpa', 'cost_per_purchase', 'roas', 'signal_quality'
     ]
+    id_cols = {'date', 'account_id', 'campaign_id', 'adset_id', 'ad_id', 'level', 'breakdown_signature'}
     for col in keep:
         if col not in out.columns:
-            out[col] = 0 if col not in {'date', 'account_id', 'campaign_id', 'adset_id', 'ad_id', 'level', 'breakdown_signature'} else ''
+            out[col] = 0 if col not in id_cols else ''
+        elif col not in id_cols:
+            out[col] = out[col].apply(_metric_number_for_storage)
+    out['date'] = out['date'].apply(lambda v: v.date().isoformat() if hasattr(v, 'date') else str(v or '1970-01-01'))
     return out[keep]
 
 
