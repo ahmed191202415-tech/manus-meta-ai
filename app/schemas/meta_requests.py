@@ -3,10 +3,30 @@ from pydantic import BaseModel, Field
 
 
 class RawMetaRequest(BaseModel):
-    method: Literal["GET", "POST", "DELETE"] = "GET"
-    path: str
-    params: Dict[str, Any] = Field(default_factory=dict)
-    data: Dict[str, Any] = Field(default_factory=dict)
+    """Dynamic Meta Graph API request body.
+
+    Use this for runtime Meta data discovery and fetching. Do not include
+    graph.facebook.com or API version in path.
+    """
+    method: Literal["GET", "POST", "DELETE"] = Field(
+        "GET",
+        description="HTTP method for Meta Graph API. Usually GET for live reads.",
+    )
+    path: str = Field(
+        ...,
+        description="Meta Graph path without domain/version. Examples: act_123/campaigns, act_123/insights, 120244467443630505/adsets, 120244467443630505/ads.",
+        examples=["act_763606732391242/campaigns", "act_763606732391242/insights", "120244467443630505/adsets"],
+    )
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description='Meta query params. For campaign insights use filtering JSON like [{"field":"campaign.id","operator":"IN","value":["<campaign_id>"]}].',
+        examples=[
+            {"fields": "id,name,status,objective,updated_time", "limit": 10},
+            {"level": "campaign", "date_preset": "last_30d", "fields": "campaign_id,campaign_name,spend,impressions,reach,actions", "filtering": '[{"field":"campaign.id","operator":"IN","value":["120244467443630505"]}]'},
+        ],
+    )
+    data: Dict[str, Any] = Field(default_factory=dict, description="POST body for Meta writes; keep empty for GET reads.")
+
 
 
 class CampaignCreateRequest(BaseModel):
