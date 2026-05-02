@@ -80,11 +80,14 @@ def frame_from_insights(rows: List[Dict[str, Any]], level: str) -> pd.DataFrame:
     df["video_p95"] = df.get("video_p95_watched_actions", pd.Series(dtype=object)).apply(extract_video_action) if "video_p95_watched_actions" in df.columns else 0.0
     df["video_p100"] = df.get("video_p100_watched_actions", pd.Series(dtype=object)).apply(extract_video_action) if "video_p100_watched_actions" in df.columns else 0.0
 
-    df["result_rate"] = np.where(df["impressions"] > 0, df["results"] / df["impressions"], 0.0)
-    df["p50_rate"] = np.where(df["impressions"] > 0, df["video_p50"] / df["impressions"], 0.0)
-    df["p75_rate"] = np.where(df["impressions"] > 0, df["video_p75"] / df["impressions"], 0.0)
-    df["cpl"] = np.where(df["results"] > 0, df["spend"] / df["results"], np.nan)
-    df["click_to_result_rate"] = np.where(df["inline_link_clicks"] > 0, df["results"] / df["inline_link_clicks"], 0.0)
+    impressions_den = pd.to_numeric(df["impressions"], errors="coerce").replace(0, np.nan)
+    results_den = pd.to_numeric(df["results"], errors="coerce").replace(0, np.nan)
+    clicks_den = pd.to_numeric(df["inline_link_clicks"], errors="coerce").replace(0, np.nan)
+    df["result_rate"] = (pd.to_numeric(df["results"], errors="coerce") / impressions_den).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    df["p50_rate"] = (pd.to_numeric(df["video_p50"], errors="coerce") / impressions_den).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    df["p75_rate"] = (pd.to_numeric(df["video_p75"], errors="coerce") / impressions_den).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    df["cpl"] = (pd.to_numeric(df["spend"], errors="coerce") / results_den).replace([np.inf, -np.inf], np.nan)
+    df["click_to_result_rate"] = (pd.to_numeric(df["results"], errors="coerce") / clicks_den).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     name_col = f"{level}_name"
     id_col = f"{level}_id"
