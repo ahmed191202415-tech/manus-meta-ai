@@ -200,7 +200,7 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             daily_df,
             compare_df=compare_df,
             campaign_type="unknown",
-            question="",
+            question=body.question or "",
             level=body.level,
             db_path="exports/meta_ads_intelligence.sqlite",
         )

@@ -34,6 +34,7 @@ class AnalysisRunRequest(BaseModel):
     sort: Optional[str] = None
     top_n: int = 10
     fields: Optional[str] = None
+    question: Optional[str] = None
 
     break_even_cpl: Optional[float] = None
     revenue_per_result: Optional[float] = None
