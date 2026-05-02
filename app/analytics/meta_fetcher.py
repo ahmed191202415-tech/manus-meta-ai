@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 BASIC_FIELDS = [
     'date_start', 'date_stop', 'account_id', 'campaign_id', 'campaign_name',
     'adset_id', 'adset_name', 'ad_id', 'ad_name', 'objective',
-    'optimization_goal', 'billing_event', 'spend', 'impressions', 'reach',
+    'spend', 'impressions', 'reach',
     'frequency', 'clicks', 'inline_link_clicks', 'outbound_clicks', 'actions',
     'action_values', 'cost_per_action_type', 'cpm', 'cpc', 'ctr',
     'quality_ranking', 'engagement_rate_ranking', 'conversion_rate_ranking',

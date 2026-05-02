@@ -98,24 +98,43 @@ def _run_deep_breakdown_fetches(body, token: str, plans: list[dict]) -> list[dic
         if not breakdowns:
             continue
         try:
-            df = fetch_insights_df(
-                body.account_id,
-                token,
-                plan.get("level") or body.level,
-                ",".join(plan.get("fields") or []) if isinstance(plan.get("fields"), list) else body.fields,
-                body.date_preset,
-                body.since,
-                body.until,
-                body.filters,
-                body.sort,
-                time_increment=str(plan.get("time_increment") or 1),
-                breakdowns=breakdowns,
-                action_breakdowns=plan.get("action_breakdowns") or ["action_type"],
-            )
+            fields_value = ",".join(plan.get("fields") or []) if isinstance(plan.get("fields"), list) else (body.fields or DEEP_SAFE_FIELDS)
+            try:
+                df = fetch_insights_df(
+                    body.account_id,
+                    token,
+                    plan.get("level") or body.level,
+                    fields_value,
+                    body.date_preset,
+                    body.since,
+                    body.until,
+                    body.filters,
+                    body.sort,
+                    time_increment=str(plan.get("time_increment") or 1),
+                    breakdowns=breakdowns,
+                    action_breakdowns=plan.get("action_breakdowns") or ["action_type"],
+                )
+            except Exception:
+                df = fetch_insights_df(
+                    body.account_id,
+                    token,
+                    plan.get("level") or body.level,
+                    DEEP_SAFE_FIELDS,
+                    body.date_preset,
+                    body.since,
+                    body.until,
+                    body.filters,
+                    body.sort,
+                    time_increment=str(plan.get("time_increment") or 1),
+                    breakdowns=breakdowns,
+                    action_breakdowns=plan.get("action_breakdowns") or ["action_type"],
+                )
             results.append(_clean_json_value({"plan": plan, "summary": _summarize_deep_breakdown_df(df, breakdowns)}))
         except Exception as exc:
             results.append(_clean_json_value({"plan": plan, "error_type": type(exc).__name__, "message": str(exc)[:1000]}))
     return _clean_json_value(results)
+
+DEEP_SAFE_FIELDS = "date_start,date_stop,account_id,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,objective,spend,impressions,reach,frequency,inline_link_clicks,outbound_clicks,actions,action_values,cost_per_action_type,cpm,cpc,ctr,quality_ranking,engagement_rate_ranking,conversion_rate_ranking"
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
