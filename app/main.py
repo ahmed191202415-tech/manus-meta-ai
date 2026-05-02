@@ -51,7 +51,6 @@ def openapi_gpt_schema():
     """
     allowed_paths = {
         "/health",
-        "/meta/request",
         "/accounts",
         "/analysis/run",
         "/analysis_dashboard/build",
@@ -78,7 +77,6 @@ def openapi_gpt_schema():
     filtered_paths = {}
     operation_ids = {
         ("/health", "get"): ("health", "Health", "Server health"),
-        ("/meta/request", "post"): ("meta_request", "Raw Meta Request", "Meta response"),
         ("/accounts", "get"): ("list_accounts", "List Accounts", "Accounts list"),
         ("/analysis/run", "post"): ("analysis_run", "Analysis Run", "Analysis result"),
         ("/analysis_dashboard/build", "post"): ("analysis_dashboard_build", "Build Analysis Dashboard", "HTML dashboard file result"),

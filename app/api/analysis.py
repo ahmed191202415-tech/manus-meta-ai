@@ -24,6 +24,7 @@ from app.analytics.report_builder import build_dynamic_report_ar
 from app.analytics.storage_cache import cached_raw_insights, cache_coverage
 from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
+from app.core.meta_client import meta_call, normalize_account_id
 
 
 
@@ -163,6 +164,76 @@ def _strict_campaign_df(df, campaign_id: str | None):
         return df
     return df[df['campaign_id'].astype(str) == str(campaign_id)].copy()
 
+
+def _build_campaign_filter(campaign_id: str | None) -> str | None:
+    if not campaign_id:
+        return None
+    import json
+    return json.dumps([{"field": "campaign.id", "operator": "IN", "value": [str(campaign_id)]}])
+
+
+def _campaign_sort_key(item: dict) -> str:
+    return str(item.get("updated_time") or item.get("created_time") or item.get("start_time") or "")
+
+
+def _resolve_account_and_campaign(body: AnalysisRunRequest, token: str) -> dict:
+    """Resolve missing account/campaign for natural prompts like 'حلل آخر كامبين'.
+
+    It only uses account/campaign list endpoints, never campaign{insights} fields.
+    Bounded by small limits to avoid Meta rate/limit pressure.
+    """
+    account_id = body.account_id
+    campaign_id = body.campaign_id or _campaign_id_from_filters(body.filters)
+    campaign_name = (body.campaign_name or "").strip().lower() if body.campaign_name else ""
+    selected_campaign = None
+    selected_account = None
+
+    if account_id:
+        account_id = normalize_account_id(account_id)
+        selected_account = {"id": account_id}
+
+    accounts = []
+    if not account_id:
+        payload = meta_call("GET", "me/adaccounts", token, params={"fields": "id,name,account_id,account_status,currency,timezone_name", "limit": 25})
+        accounts = payload.get("data") or []
+    else:
+        accounts = [selected_account]
+
+    best = None
+    for acc in accounts[:10]:
+        acc_id = normalize_account_id(acc.get("id") or acc.get("account_id") or "")
+        if not acc_id:
+            continue
+        params = {"fields": "id,name,status,effective_status,objective,created_time,updated_time,start_time,stop_time", "limit": 50}
+        try:
+            camps = meta_call("GET", f"{acc_id}/campaigns", token, params=params).get("data") or []
+        except Exception:
+            continue
+        for camp in camps:
+            if campaign_id and str(camp.get("id")) != str(campaign_id):
+                continue
+            if campaign_name and campaign_name not in str(camp.get("name") or "").lower():
+                continue
+            status_text = " ".join(str(camp.get(k) or "") for k in ["status", "effective_status"]).upper()
+            active_bonus = "ACTIVE" in status_text
+            score = ("1" if active_bonus else "0", _campaign_sort_key(camp), str(camp.get("id") or ""))
+            cand = {"score": score, "account": acc, "account_id": acc_id, "campaign": camp}
+            if best is None or cand["score"] > best["score"]:
+                best = cand
+    if best:
+        account_id = best["account_id"]
+        selected_account = best["account"]
+        selected_campaign = best["campaign"]
+        campaign_id = str(selected_campaign.get("id") or campaign_id or "") or None
+    if not account_id:
+        raise HTTPException(status_code=400, detail="No ad account could be resolved. Please authenticate Meta or provide account_id.")
+    if campaign_id and not body.filters:
+        body.filters = _build_campaign_filter(campaign_id)
+    if campaign_id and not body.campaign_id:
+        body.campaign_id = campaign_id
+    body.account_id = account_id
+    return {"account_id": account_id, "campaign_id": campaign_id, "account": selected_account, "campaign": selected_campaign}
+
 DEEP_SAFE_FIELDS = "date_start,date_stop,account_id,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,objective,spend,impressions,reach,frequency,inline_link_clicks,outbound_clicks,actions,action_values,cost_per_action_type,cpm,cpc,ctr,quality_ranking,engagement_rate_ranking,conversion_rate_ranking"
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -171,8 +242,9 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 @router.post("/run")
 async def analysis_run(body: AnalysisRunRequest, request: Request):
     token = await resolve_access_token(request)
+    resolved_scope = _resolve_account_and_campaign(body, token)
 
-    cache_meta = {"source": "meta_api", "cache_checked": False, "cache_hit": False}
+    cache_meta = {"source": "meta_api", "cache_checked": False, "cache_hit": False, "resolved_scope": resolved_scope}
     campaign_id_for_cache = _campaign_id_from_filters(body.filters)
     cache_df = cached_raw_insights(body.account_id, body.level, body.since, body.until, campaign_id=campaign_id_for_cache, date_preset=body.date_preset)
     coverage = cache_coverage(cache_df)

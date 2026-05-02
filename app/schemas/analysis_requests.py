@@ -3,7 +3,9 @@ from pydantic import BaseModel
 
 
 class AnalysisRunRequest(BaseModel):
-    account_id: str
+    account_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
     access_token: Optional[str] = None
     analysis_type: Literal[
         "summary_kpis",
