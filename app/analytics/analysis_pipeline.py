@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pandas as pd
+import numpy as np
 
 from app.analytics.analysis_storage import connect, prepare_raw_for_storage, save_run, upsert_df, save_relationship_edges, save_diagnostics
 from app.analytics.semantic_metrics import expand_semantic_metrics
