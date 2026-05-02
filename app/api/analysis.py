@@ -22,6 +22,7 @@ from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.analysis_pipeline import analyze_dataframe
 from app.analytics.report_builder import build_dynamic_report_ar
 from app.analytics.storage_cache import cached_raw_insights, cache_coverage
+from app.analytics.data_access_layer import get_analysis_dataset, strict_scope_df
 from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
 from app.core.meta_client import meta_call, normalize_account_id
@@ -244,28 +245,22 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
     token = await resolve_access_token(request)
     resolved_scope = _resolve_account_and_campaign(body, token)
 
-    cache_meta = {"source": "meta_api", "cache_checked": False, "cache_hit": False, "resolved_scope": resolved_scope}
-    campaign_id_for_cache = _campaign_id_from_filters(body.filters)
-    cache_df = cached_raw_insights(body.account_id, body.level, body.since, body.until, campaign_id=campaign_id_for_cache, date_preset=body.date_preset)
-    coverage = cache_coverage(cache_df)
-    cache_meta.update({"cache_checked": True, "coverage": coverage})
-    if coverage.get("hit"):
-        current_df = cache_df
-        cache_meta.update({"source": "supabase_cache", "cache_hit": True})
-    else:
-        current_df = fetch_insights_df(
-            body.account_id,
-            token,
-            body.level,
-            body.fields,
-            body.date_preset,
-            body.since,
-            body.until,
-            body.filters,
-            body.sort,
-        )
-
-    current_df = _strict_campaign_df(current_df, campaign_id_for_cache)
+    campaign_id_for_cache = _campaign_id_from_filters(body.filters) or body.campaign_id
+    current_df, data_audit = get_analysis_dataset(
+        account_id=body.account_id,
+        token=token,
+        level=body.level,
+        fields=body.fields,
+        date_preset=body.date_preset,
+        since=body.since,
+        until=body.until,
+        filters=body.filters,
+        sort=body.sort,
+        campaign_id=campaign_id_for_cache,
+        prefer_cache=True,
+    )
+    cache_meta = dict(data_audit)
+    cache_meta["resolved_scope"] = resolved_scope
 
     compare_since = body.compare_since
     compare_until = body.compare_until
@@ -291,7 +286,7 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             body.sort,
         )
 
-    compare_df = _strict_campaign_df(compare_df, campaign_id_for_cache)
+    compare_df = strict_scope_df(compare_df, campaign_id_for_cache)
 
     if body.analysis_type == "summary_kpis":
         return {"analysis_type": body.analysis_type, "result": summarize_df(current_df)}

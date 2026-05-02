@@ -1,0 +1,904 @@
+{
+  "total_files": 119,
+  "routes": [
+    {
+      "file": "app\\api\\accounts.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/accounts"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\ads.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/ads"
+        },
+        {
+          "method": "POST",
+          "path": "/ads"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\adsets.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/adsets"
+        },
+        {
+          "method": "POST",
+          "path": "/adsets"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\analysis.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/run"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\analysis_dashboard.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/build"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\analysis_docx.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/build"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\audiences.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/custom_audiences"
+        },
+        {
+          "method": "POST",
+          "path": "/custom_audiences"
+        },
+        {
+          "method": "POST",
+          "path": "/custom_audiences/{audience_id}/users"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\auth_meta.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/login"
+        },
+        {
+          "method": "GET",
+          "path": "/callback"
+        },
+        {
+          "method": "GET",
+          "path": "/me"
+        },
+        {
+          "method": "POST",
+          "path": "/logout"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\campaigns.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/campaigns"
+        },
+        {
+          "method": "POST",
+          "path": "/campaigns"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\campaign_analysis.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/campaign"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\creatives.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/adcreatives"
+        },
+        {
+          "method": "POST",
+          "path": "/adcreatives"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\dashboard.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/save"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\dashboard_builder.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/build"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\health.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/health"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\insights.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/insights"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\leadgen.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/leadgen_forms"
+        },
+        {
+          "method": "GET",
+          "path": "/leads"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\media.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/adimages"
+        },
+        {
+          "method": "GET",
+          "path": "/advideos"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\oauth_gpt.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/authorize"
+        },
+        {
+          "method": "POST",
+          "path": "/token"
+        },
+        {
+          "method": "GET",
+          "path": "/continue"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\pages.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/pages"
+        },
+        {
+          "method": "GET",
+          "path": "/page_posts"
+        },
+        {
+          "method": "POST",
+          "path": "/page_posts"
+        },
+        {
+          "method": "DELETE",
+          "path": "/page_posts/{post_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/page_comments"
+        },
+        {
+          "method": "POST",
+          "path": "/page_comments/{comment_id}/reply"
+        },
+        {
+          "method": "POST",
+          "path": "/page_comments/{comment_id}/hide"
+        },
+        {
+          "method": "DELETE",
+          "path": "/page_comments/{comment_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/objects/{object_id}/delete"
+        },
+        {
+          "method": "GET",
+          "path": "/page_insights"
+        },
+        {
+          "method": "GET",
+          "path": "/instagram_accounts"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\pixels.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/pixels"
+        },
+        {
+          "method": "POST",
+          "path": "/pixels"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\reports.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/save_excel"
+        },
+        {
+          "method": "POST",
+          "path": "/save_pdf"
+        },
+        {
+          "method": "POST",
+          "path": "/save_pptx"
+        },
+        {
+          "method": "POST",
+          "path": "/save_docx"
+        },
+        {
+          "method": "POST",
+          "path": "/save_html_dashboard"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\sync.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/meta"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\tenant_portal.py",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/session/email"
+        },
+        {
+          "method": "POST",
+          "path": "/session/logout"
+        },
+        {
+          "method": "PUT",
+          "path": "/meta-app"
+        },
+        {
+          "method": "GET",
+          "path": "/admin"
+        },
+        {
+          "method": "POST",
+          "path": "/admin/session/login"
+        },
+        {
+          "method": "POST",
+          "path": "/admin/session/logout"
+        },
+        {
+          "method": "GET",
+          "path": "/admin/access"
+        },
+        {
+          "method": "POST",
+          "path": "/admin/access"
+        },
+        {
+          "method": "POST",
+          "path": "/admin/access/status"
+        },
+        {
+          "method": "DELETE",
+          "path": "/admin/access"
+        },
+        {
+          "method": "GET",
+          "path": "/admin/access/invite-url"
+        }
+      ]
+    },
+    {
+      "file": "app\\api\\webhooks.py",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/meta"
+        },
+        {
+          "method": "POST",
+          "path": "/meta"
+        },
+        {
+          "method": "GET",
+          "path": "/rules"
+        },
+        {
+          "method": "POST",
+          "path": "/rules"
+        },
+        {
+          "method": "DELETE",
+          "path": "/rules"
+        }
+      ]
+    }
+  ],
+  "analysis_files": [],
+  "schema_files": [
+    {
+      "path": "supabase\\intelligence_schema.sql",
+      "size": 6342,
+      "imports": [],
+      "functions": [],
+      "classes": [],
+      "routes": [],
+      "tool_risks": [
+        "Supabase",
+        "raw_insights_daily",
+        "relationship"
+      ]
+    },
+    {
+      "path": "supabase\\knowledge_rules_seed.sql",
+      "size": 5346,
+      "imports": [],
+      "functions": [],
+      "classes": [],
+      "routes": [],
+      "tool_risks": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "supabase\\multi_tenant_schema.sql",
+      "size": 2485,
+      "imports": [],
+      "functions": [],
+      "classes": [],
+      "routes": [],
+      "tool_risks": []
+    },
+    {
+      "path": "app\\analytics\\analysis_schema.py",
+      "size": 2130,
+      "imports": [
+        "__future__",
+        "dataclasses",
+        "typing"
+      ],
+      "functions": [
+        "normalized_campaign_type",
+        "to_dict"
+      ],
+      "classes": [
+        "AnalysisRequest",
+        "SkippedSection",
+        "RelationshipEdge",
+        "DiagnosticResult",
+        "PipelineResult"
+      ],
+      "routes": [],
+      "tool_risks": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\schemas\\analysis_requests.py",
+      "size": 1292,
+      "imports": [
+        "typing",
+        "pydantic"
+      ],
+      "functions": [],
+      "classes": [
+        "AnalysisRunRequest"
+      ],
+      "routes": [],
+      "tool_risks": [
+        "date_preset"
+      ]
+    },
+    {
+      "path": "app\\schemas\\meta_requests.py",
+      "size": 3755,
+      "imports": [
+        "typing",
+        "pydantic"
+      ],
+      "functions": [],
+      "classes": [
+        "RawMetaRequest",
+        "CampaignCreateRequest",
+        "AdSetCreateRequest",
+        "CreativeCreateRequest",
+        "AdCreateRequest",
+        "CustomAudienceCreateRequest",
+        "PixelCreateRequest",
+        "AudienceUsersRequest"
+      ],
+      "routes": [],
+      "tool_risks": [
+        "/insights",
+        "date_preset",
+        "last_30d",
+        "campaign.id"
+      ]
+    },
+    {
+      "path": "app\\schemas\\page_requests.py",
+      "size": 814,
+      "imports": [
+        "typing",
+        "pydantic"
+      ],
+      "functions": [],
+      "classes": [
+        "PagePostCreateRequest",
+        "CommentReplyRequest",
+        "CommentHideRequest",
+        "ObjectDeleteRequest",
+        "CommentRuleRequest"
+      ],
+      "routes": [],
+      "tool_risks": []
+    },
+    {
+      "path": "app\\schemas\\report_requests.py",
+      "size": 1680,
+      "imports": [
+        "typing",
+        "pydantic"
+      ],
+      "functions": [],
+      "classes": [
+        "ExcelSheetSpec",
+        "SaveExcelReportRequest",
+        "PdfSectionSpec",
+        "SavePdfReportRequest",
+        "PptSlideSpec",
+        "SavePptxReportRequest",
+        "SaveDocxReportRequest",
+        "SaveHtmlDashboardRequest"
+      ],
+      "routes": [],
+      "tool_risks": []
+    },
+    {
+      "path": "app\\schemas\\tenant_requests.py",
+      "size": 1071,
+      "imports": [
+        "pydantic"
+      ],
+      "functions": [],
+      "classes": [
+        "TenantRegisterRequest",
+        "TenantLoginRequest",
+        "TenantMetaAppRequest",
+        "TenantPageSelectionRequest",
+        "TenantInviteRequest",
+        "TenantEmailAccessRequest",
+        "TenantAccessStatusRequest"
+      ],
+      "routes": [],
+      "tool_risks": []
+    }
+  ],
+  "risk_hits": [
+    {
+      "path": "INTELLIGENCE_LAYER_README.md",
+      "hits": [
+        "Supabase",
+        "analysis/run",
+        "relationship"
+      ]
+    },
+    {
+      "path": "PRODUCTION.md",
+      "hits": [
+        "/insights",
+        "Supabase"
+      ]
+    },
+    {
+      "path": "PROJECT_SYSTEM_AUDIT.json",
+      "hits": [
+        "/insights",
+        "campaign{insights}",
+        "fetch_all",
+        "max_pages",
+        "date_preset",
+        "last_30d",
+        "campaign.id",
+        "Supabase",
+        "raw_insights_daily",
+        "analysis/run",
+        "relationship",
+        "statistical_profile"
+      ]
+    },
+    {
+      "path": "run_meta_ads_intelligence.py",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "test_campaign_analysis_flow.py",
+      "hits": [
+        "date_preset"
+      ]
+    },
+    {
+      "path": "test_meta_ads_pipeline.py",
+      "hits": [
+        "raw_insights_daily"
+      ]
+    },
+    {
+      "path": "app\\config.py",
+      "hits": [
+        "max_pages",
+        "date_preset"
+      ]
+    },
+    {
+      "path": "app\\main.py",
+      "hits": [
+        "analysis/run"
+      ]
+    },
+    {
+      "path": "supabase\\intelligence_schema.sql",
+      "hits": [
+        "Supabase",
+        "raw_insights_daily",
+        "relationship"
+      ]
+    },
+    {
+      "path": "supabase\\knowledge_rules_seed.sql",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\analysis_pipeline.py",
+      "hits": [
+        "Supabase",
+        "raw_insights_daily",
+        "relationship",
+        "statistical_profile"
+      ]
+    },
+    {
+      "path": "app\\analytics\\analysis_schema.py",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\analysis_storage.py",
+      "hits": [
+        "raw_insights_daily",
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\intelligent_diagnostics.py",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\local_knowledge_feed.py",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\preprocessing.py",
+      "hits": [
+        "/insights",
+        "max_pages",
+        "date_preset"
+      ]
+    },
+    {
+      "path": "app\\analytics\\relationship_engine.py",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\report_builder.py",
+      "hits": [
+        "relationship",
+        "statistical_profile"
+      ]
+    },
+    {
+      "path": "app\\analytics\\seed_knowledge_rules.py",
+      "hits": [
+        "Supabase"
+      ]
+    },
+    {
+      "path": "app\\analytics\\semantic_metrics.py",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\statistical_skills_layer.py",
+      "hits": [
+        "statistical_profile"
+      ]
+    },
+    {
+      "path": "app\\analytics\\storage_cache.py",
+      "hits": [
+        "date_preset",
+        "Supabase",
+        "raw_insights_daily"
+      ]
+    },
+    {
+      "path": "app\\analytics\\supabase_storage.py",
+      "hits": [
+        "Supabase",
+        "raw_insights_daily",
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\api\\accounts.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\ads.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\adsets.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\analysis.py",
+      "hits": [
+        "campaign{insights}",
+        "date_preset",
+        "campaign.id",
+        "Supabase",
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\api\\analysis_dashboard.py",
+      "hits": [
+        "date_preset",
+        "last_30d"
+      ]
+    },
+    {
+      "path": "app\\api\\analysis_docx.py",
+      "hits": [
+        "date_preset",
+        "last_30d"
+      ]
+    },
+    {
+      "path": "app\\api\\audiences.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\campaigns.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\campaign_analysis.py",
+      "hits": [
+        "date_preset",
+        "campaign.id"
+      ]
+    },
+    {
+      "path": "app\\api\\creatives.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\health.py",
+      "hits": [
+        "Supabase",
+        "raw_insights_daily",
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\api\\insights.py",
+      "hits": [
+        "/insights",
+        "fetch_all",
+        "max_pages",
+        "date_preset",
+        "last_30d"
+      ]
+    },
+    {
+      "path": "app\\api\\leadgen.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\media.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\meta_raw.py",
+      "hits": [
+        "campaign.id"
+      ]
+    },
+    {
+      "path": "app\\api\\pages.py",
+      "hits": [
+        "/insights",
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\pixels.py",
+      "hits": [
+        "fetch_all",
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\api\\sync.py",
+      "hits": [
+        "date_preset",
+        "campaign.id",
+        "Supabase",
+        "relationship",
+        "statistical_profile"
+      ]
+    },
+    {
+      "path": "app\\core\\oauth_store.py",
+      "hits": [
+        "Supabase"
+      ]
+    },
+    {
+      "path": "app\\core\\pagination.py",
+      "hits": [
+        "max_pages"
+      ]
+    },
+    {
+      "path": "app\\core\\token_router.py",
+      "hits": [
+        "/insights"
+      ]
+    },
+    {
+      "path": "app\\schemas\\analysis_requests.py",
+      "hits": [
+        "date_preset"
+      ]
+    },
+    {
+      "path": "app\\schemas\\meta_requests.py",
+      "hits": [
+        "/insights",
+        "date_preset",
+        "last_30d",
+        "campaign.id"
+      ]
+    },
+    {
+      "path": "app\\analytics\\knowledge_base\\README.md",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\knowledge_base\\rules_catalog_seed.json",
+      "hits": [
+        "relationship"
+      ]
+    },
+    {
+      "path": "app\\analytics\\knowledge_base\\generated\\local_meta_ads_intelligence_feed.json",
+      "hits": [
+        "relationship"
+      ]
+    }
+  ]
+}
