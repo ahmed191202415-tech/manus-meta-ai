@@ -20,6 +20,7 @@ from app.analytics.report_builder import build_dynamic_report_ar, build_skipped_
 from app.analytics.baseline_engine import compute_internal_baselines
 from app.analytics import supabase_storage
 from app.analytics.meta_fetcher import recommend_breakdowns
+from app.analytics.local_knowledge_feed import load_local_feed, feed_patterns, feed_principles
 
 
 def load_export(path: str | Path) -> pd.DataFrame:
@@ -149,6 +150,65 @@ def _derived_for_storage(df: pd.DataFrame, level: str = 'campaign') -> pd.DataFr
             out[col] = out[col].apply(_metric_number_for_storage)
     out['date'] = out['date'].apply(lambda v: v.date().isoformat() if hasattr(v, 'date') else str(v or '1970-01-01'))
     return out[keep]
+
+
+def _feed_diagnostics(current: pd.DataFrame, campaign_type: str, level: str) -> list[dict[str, Any]]:
+    """Apply deterministic patterns distilled from local research files."""
+    if current is None or current.empty:
+        return []
+    def total(col: str) -> float:
+        if col not in current.columns:
+            return 0.0
+        return float(pd.to_numeric(current[col], errors='coerce').fillna(0).sum())
+    def mean(col: str) -> float:
+        if col not in current.columns:
+            return 0.0
+        return float(pd.to_numeric(current[col], errors='coerce').replace([float('inf'), float('-inf')], 0).fillna(0).mean())
+    spend = total('spend')
+    results = total('results')
+    impressions = total('impressions')
+    link_clicks = total('link_clicks') or total('inline_link_clicks')
+    outbound = total('outbound_clicks_count')
+    lpv_rate = mean('lpv_rate')
+    ctr = mean('link_ctr_calc') or (link_clicks / impressions if impressions else 0.0)
+    cpm = mean('cpm')
+    frequency = mean('frequency')
+    diagnostics: list[dict[str, Any]] = []
+    for pat in feed_patterns():
+        key = pat.get('key')
+        fire = False
+        evidence = {'spend': spend, 'results': results, 'ctr': ctr, 'cpm': cpm, 'frequency': frequency, 'outbound_clicks': outbound, 'lpv_rate': lpv_rate}
+        if key == 'message_campaign_not_website' and (campaign_type == 'messages' or total('messaging_conversations') > 0):
+            fire = True
+        elif key == 'click_lpv_gap' and outbound > 0 and lpv_rate < 0.45:
+            fire = True
+        elif key == 'clicks_without_signal' and link_clicks > 0 and results == 0:
+            fire = True
+        elif key == 'auction_pressure_cpm_ctr' and cpm > 0 and ctr > 0 and cpm >= mean('cpm') and ctr < 0.01:
+            fire = True
+        elif key == 'budget_scale_efficiency' and spend > 0 and results > 0:
+            fire = True
+        elif key == 'fatigue_frequency_ctr_cpa' and frequency >= 2 and ctr < 0.01:
+            fire = True
+        elif key == 'creative_attention_drop' and frequency >= 1.5 and ctr < 0.01:
+            fire = True
+        elif key == 'tracking_signal_gap' and link_clicks > 0 and total('purchase_value') == 0 and campaign_type in {'sales','unknown'}:
+            fire = True
+        if fire:
+            diagnostics.append({
+                'scenario': key,
+                'family': pat.get('family') or 'local_feed',
+                'severity': 'medium',
+                'confidence': 'medium',
+                'entity_level': level,
+                'diagnosis_ar': pat.get('meaning_ar'),
+                'decision_ar': pat.get('action_ar'),
+                'recommended_action': pat.get('action_ar'),
+                'next_metric': pat.get('next_metric'),
+                'evidence': evidence,
+                'source': 'local_research_feed',
+            })
+    return diagnostics
 
 
 def _decision_for_relation(relation_type: str) -> tuple[str, str]:
@@ -348,6 +408,8 @@ def analyze_dataframe(
     skipped = build_skipped_sections(current, campaign_type)
     metrics = _basic_metrics(current)
     diagnostics = diagnostics_bundle.get('top_diagnostics', []) or []
+    local_feed_diagnostics = _feed_diagnostics(current, campaign_type, level)
+    diagnostics = diagnostics + [d for d in local_feed_diagnostics if d.get('scenario') not in {x.get('scenario') for x in diagnostics}]
     if not diagnostics and relationships:
         diagnostics = _relationship_diagnostics(relationships, level)
     human_insights = diagnostics_bundle.get('human_insights', []) or []
@@ -372,6 +434,7 @@ def analyze_dataframe(
         'deep_fetch_plans': deep_fetch_plans,
         'skipped_sections': skipped + diagnostics_bundle.get('missing_notes', []),
         'objective_notes': diagnostics_bundle.get('objective_notes', []),
+        'local_feed': {'version': load_local_feed().get('feed_version'), 'patterns_applied': len(local_feed_diagnostics), 'principles': feed_principles()},
         'storage_errors': [],
     }
     result['report_markdown'] = build_dynamic_report_ar(result, campaign_type=campaign_type, question=question)

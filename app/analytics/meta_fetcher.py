@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from app.analytics.local_knowledge_feed import feed_breakdown_triggers
 
 BASIC_FIELDS = [
     'date_start', 'date_stop', 'account_id', 'campaign_id', 'campaign_name',

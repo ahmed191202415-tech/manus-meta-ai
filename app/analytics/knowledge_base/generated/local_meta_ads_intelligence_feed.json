@@ -1,0 +1,280 @@
+{
+  "feed_version": "2026-05-02-local-research-feed-v1",
+  "source_files": [
+    "D:\\manus_local\\agent_storage\\META_ADS_RESEARCH_MASTER_ARABIC_FIXED.txt",
+    "D:\\manus_local\\agent_storage\\meta_ads_full_research_pack.md",
+    "D:\\manus_local\\agent_storage\\META_ADS_ANALYTICS_LAYER_STATISTICS_ROADMAP.md",
+    "D:\\manus_local\\agent_storage\\META_ADS_FINAL_FEED_BUILD\\FINAL_FEED_META_ADS_INTELLIGENCE_CLEAN.md",
+    "D:\\manus_local\\agent_storage\\meta_ads_full_research_sources"
+  ],
+  "metric_aliases": {
+    "intent_clicks": [
+      "inline_link_clicks",
+      "link_clicks",
+      "outbound_clicks_count",
+      "clicks"
+    ],
+    "post_click_arrival": [
+      "landing_page_views",
+      "lpv_rate",
+      "outbound_clicks_count"
+    ],
+    "commerce_intent": [
+      "add_to_cart",
+      "initiate_checkout",
+      "purchases",
+      "purchase_value",
+      "roas_calc"
+    ],
+    "message_intent": [
+      "messaging_conversations",
+      "cost_per_messaging_conversation"
+    ],
+    "lead_intent": [
+      "leads",
+      "cost_per_lead"
+    ],
+    "creative_attention": [
+      "thumbstop_rate",
+      "video_p25",
+      "hold_rate_50",
+      "hold_rate_75",
+      "ctr_link",
+      "frequency"
+    ],
+    "auction_quality": [
+      "cpm",
+      "ctr_link",
+      "quality_ranking",
+      "engagement_rate_ranking",
+      "conversion_rate_ranking"
+    ],
+    "signal_quality": [
+      "signal_quality",
+      "purchases",
+      "purchase_value",
+      "outbound_clicks_count"
+    ],
+    "scale_efficiency": [
+      "spend",
+      "results",
+      "cpa",
+      "roas_calc",
+      "frequency"
+    ]
+  },
+  "diagnostic_patterns": [
+    {
+      "key": "fatigue_frequency_ctr_cpa",
+      "family": "creative_fatigue",
+      "if": "frequency high/up + ctr_link down/weak + cpa up/weak",
+      "meaning_ar": "إجهاد محتوى أو تشبع جمهور: التكرار يزيد بينما التفاعل أو تكلفة النتيجة تتدهور.",
+      "action_ar": "اختبر Hook/Creative جديد، قلل التشبع، ولا تزود الميزانية قبل استعادة التفاعل.",
+      "next_metric": "ctr_link"
+    },
+    {
+      "key": "auction_pressure_cpm_ctr",
+      "family": "auction_delivery",
+      "if": "cpm high/up + ctr_link down/weak",
+      "meaning_ar": "ضغط مزاد أو جودة إعلان/جمهور أضعف: التكلفة ترتفع والتفاعل لا يواكبها.",
+      "action_ar": "اختبر جمهور ومواضع وكرياتيف، وافحص quality/engagement/conversion ranking.",
+      "next_metric": "cpm"
+    },
+    {
+      "key": "click_lpv_gap",
+      "family": "post_click",
+      "if": "outbound_clicks_count present + lpv_rate low",
+      "meaning_ar": "تسريب بعد الضغط: المستخدم يخرج من Meta لكن لا يصل كفاية للصفحة.",
+      "action_ar": "افحص سرعة الصفحة والـ redirect والتتبع وتجربة الموبايل حسب الجهاز/الموضع.",
+      "next_metric": "lpv_rate"
+    },
+    {
+      "key": "clicks_without_signal",
+      "family": "message_match",
+      "if": "ctr_link acceptable/high + signal_quality low",
+      "meaning_ar": "ضغطات أو فضول بلا نية كافية، أو عدم تطابق بين الوعد وما بعد الضغط.",
+      "action_ar": "اجعل الوعد الإعلاني أوضح، قلل clickbait، وراقب النتائج بدل الضغطات فقط.",
+      "next_metric": "signal_quality"
+    },
+    {
+      "key": "message_campaign_not_website",
+      "family": "anti_hallucination",
+      "if": "messaging_conversations present",
+      "meaning_ar": "حملة الرسائل تُقيّم ببداية المحادثات وجودتها لا بسلة شراء أو صفحة هبوط مفترضة.",
+      "action_ar": "حلل CTA وجودة الرسالة وسرعة الرد وتكلفة بدء المحادثة.",
+      "next_metric": "messaging_conversations"
+    },
+    {
+      "key": "budget_scale_efficiency",
+      "family": "budget",
+      "if": "spend up + results up but cpa worse/flat efficiency unclear",
+      "meaning_ar": "الإنفاق يشتري نتائج، لكن يجب قياس العائد الحدّي قبل التوسع.",
+      "action_ar": "وسع تدريجيًا، وانقل الميزانية للشرائح/المواضع/الأجهزة الأقل تكلفة للنتيجة.",
+      "next_metric": "cost_per_result"
+    },
+    {
+      "key": "creative_attention_drop",
+      "family": "creative_content",
+      "if": "thumbstop/hold rates weak or frequency high",
+      "meaning_ar": "ضعف في أول الرسالة أو استمرارها؛ المشكلة في المحتوى لا الميزانية فقط.",
+      "action_ar": "غيّر أول 1-3 ثواني، زاوية الرسالة، الإثبات المبكر، والصورة المصغرة.",
+      "next_metric": "hold_rate_50"
+    },
+    {
+      "key": "tracking_signal_gap",
+      "family": "tracking",
+      "if": "purchase/value low or missing while clicks/results exist",
+      "meaning_ar": "قد يكون هناك نقص تتبع أو CAPI/Pixel/deduplication لا يعطي Meta إشارة كافية.",
+      "action_ar": "راجع Pixel وCAPI وevent_id وdeduplication وEvent Match Quality.",
+      "next_metric": "signal_quality"
+    }
+  ],
+  "relationship_templates": [
+    {
+      "type": "binary",
+      "metrics": [
+        "frequency",
+        "ctr_link"
+      ],
+      "name": "frequency_vs_ctr",
+      "interpretation_ar": "قياس إجهاد المحتوى/التشبع."
+    },
+    {
+      "type": "binary",
+      "metrics": [
+        "cpm",
+        "ctr_link"
+      ],
+      "name": "auction_vs_ctr",
+      "interpretation_ar": "قياس ضغط المزاد مقابل جاذبية الإعلان."
+    },
+    {
+      "type": "binary",
+      "metrics": [
+        "outbound_ctr",
+        "lpv_rate"
+      ],
+      "name": "click_to_landing",
+      "interpretation_ar": "قياس التسريب بعد الضغط."
+    },
+    {
+      "type": "binary",
+      "metrics": [
+        "spend",
+        "results"
+      ],
+      "name": "spend_vs_results",
+      "interpretation_ar": "قياس هل الإنفاق يزيد النتائج."
+    },
+    {
+      "type": "ternary",
+      "metrics": [
+        "spend",
+        "link_clicks",
+        "results"
+      ],
+      "name": "spend_clicks_results_triangle",
+      "interpretation_ar": "هل الإنفاق يشتري نية حقيقية أم تفاعل فقط."
+    },
+    {
+      "type": "ternary",
+      "metrics": [
+        "frequency",
+        "cpm",
+        "ctr_link"
+      ],
+      "name": "frequency_cpm_ctr_triangle",
+      "interpretation_ar": "إجهاد محتوى/مزاد/تفاعل."
+    },
+    {
+      "type": "ternary",
+      "metrics": [
+        "outbound_clicks_count",
+        "landing_page_views",
+        "results"
+      ],
+      "name": "click_lpv_result_triangle",
+      "interpretation_ar": "سلسلة بعد الضغط حتى النتيجة."
+    }
+  ],
+  "breakdown_triggers": [
+    {
+      "keywords_ar": [
+        "موضع",
+        "مواضع",
+        "placement",
+        "reels",
+        "feed"
+      ],
+      "breakdowns": [
+        "publisher_platform",
+        "platform_position"
+      ],
+      "reason": "user asked for placement detail"
+    },
+    {
+      "keywords_ar": [
+        "جهاز",
+        "أجهزة",
+        "اجهزة",
+        "device",
+        "android",
+        "iphone",
+        "mobile"
+      ],
+      "breakdowns": [
+        "impression_device"
+      ],
+      "reason": "user asked for device detail"
+    },
+    {
+      "keywords_ar": [
+        "جمهور",
+        "سن",
+        "عمر",
+        "نوع",
+        "جنس",
+        "age",
+        "gender"
+      ],
+      "breakdowns": [
+        "age",
+        "gender"
+      ],
+      "reason": "user asked for audience detail"
+    },
+    {
+      "keywords_ar": [
+        "دولة",
+        "دول",
+        "منطقة",
+        "بلد",
+        "country",
+        "location"
+      ],
+      "breakdowns": [
+        "country"
+      ],
+      "reason": "user asked for location detail"
+    },
+    {
+      "keywords_ar": [
+        "ساعة",
+        "وقت",
+        "أوقات",
+        "hour"
+      ],
+      "breakdowns": [
+        "hourly_stats_aggregated_by_advertiser_time_zone"
+      ],
+      "reason": "user asked for hourly detail"
+    }
+  ],
+  "reporting_principles": [
+    "لا تحكم من Metric منفرد؛ اربط CPM/CTR/Frequency/CPA/Results معًا.",
+    "لا تعرض website funnel لحملة رسائل إلا بوجود outbound/LPV/website events.",
+    "افصل محتوى الإعلان عن صفحة الهبوط وعن التتبع.",
+    "عند سؤال المستخدم عن جمهور/جهاز/موضع نفذ سحب breakdown فعلي وليس اقتراح فقط.",
+    "كل تشخيص يجب أن يذكر الدليل، المعنى، الإجراء التالي، والـ next metric."
+  ]
+}
