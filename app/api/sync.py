@@ -8,7 +8,7 @@ from app.analytics.preprocessing import fetch_insights_df
 from app.analytics.semantic_metrics import expand_semantic_metrics
 from app.analytics.statistical_skills_layer import add_statistical_features, build_statistical_profile
 from app.analytics.analysis_storage import prepare_raw_for_storage
-from app.analytics.analysis_pipeline import _prepare_derived_storage
+from app.analytics.analysis_pipeline import _derived_for_storage
 from app.analytics import supabase_storage
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -41,7 +41,9 @@ async def sync_meta_cache(payload: dict, request: Request):
     )
     enriched = add_statistical_features(expand_semantic_metrics(df))
     raw_storage = prepare_raw_for_storage(df, level=level, breakdown_signature="scheduled_basic")
-    derived = _prepare_derived_storage(enriched, level=level, breakdown_signature="scheduled_basic")
+    derived = _derived_for_storage(enriched, level=level)
+    if "breakdown_signature" in derived.columns:
+        derived["breakdown_signature"] = "scheduled_basic"
     profile = build_statistical_profile(enriched, level=level)
     errors=[]
     try:
@@ -51,7 +53,7 @@ async def sync_meta_cache(payload: dict, request: Request):
                 raw_df=df,
                 raw_storage_df=raw_storage,
                 derived_df=derived,
-                baselines_df=None,
+                baselines_df=__import__("pandas").DataFrame(),
                 relationships=[],
                 diagnostics=[],
                 result={"sync": True, "statistical_profile": profile, "question": question},
