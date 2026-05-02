@@ -75,11 +75,11 @@ def save_intelligence_run(
             compare_since,
             compare_until,
             int(result.get("diagnostics_count", 0)),
-            json.dumps(result, ensure_ascii=False),
+            json.dumps(result, ensure_ascii=False, default=str),
         ),
     )
     run_id = int(cur.lastrowid)
-    for hit in result.get("top_diagnostics", []):
+    for hit in result.get("diagnostics", result.get("top_diagnostics", [])) or []:
         cur.execute(
             """
             INSERT INTO diagnostic_events(
@@ -96,7 +96,7 @@ def save_intelligence_run(
                 hit.get("entity_id"),
                 hit.get("entity_name"),
                 hit.get("diagnosis_ar"),
-                json.dumps(hit.get("evidence", {}), ensure_ascii=False),
+                json.dumps(hit.get("evidence", {}), ensure_ascii=False, default=str),
                 hit.get("recommended_action_ar"),
             ),
         )

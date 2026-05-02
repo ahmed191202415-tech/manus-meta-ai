@@ -204,20 +204,26 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             level=body.level,
             db_path="exports/meta_ads_intelligence.sqlite",
         )
-        legacy_run_id = save_intelligence_run(
-            body.account_id,
-            body.level,
-            body.since,
-            body.until,
-            compare_since,
-            compare_until,
-            result,
-        )
+        storage_warning = None
+        legacy_run_id = None
+        try:
+            legacy_run_id = save_intelligence_run(
+                body.account_id,
+                body.level,
+                body.since,
+                body.until,
+                compare_since,
+                compare_until,
+                result,
+            )
+        except Exception as exc:
+            storage_warning = {"stage": "legacy_intelligence_storage", "error_type": type(exc).__name__, "message": str(exc)}
         return {
             "analysis_type": body.analysis_type,
             "result": result,
             "run_id": result.get("run_id"),
             "legacy_run_id": legacy_run_id,
+            "storage_warning": storage_warning,
             "source": "meta_api_live_fetch",
             "db_path": "exports/meta_ads_intelligence.sqlite",
             "compare_range": {"since": compare_since, "until": compare_until},
