@@ -81,8 +81,11 @@ def _summarize_deep_breakdown_df(df, breakdowns):
         clicks=("_clicks", "sum"),
         results=("_results", "sum"),
     ).reset_index()
-    g["ctr"] = g["clicks"] / g["impressions"].replace(0, pd.NA)
-    g["cost_per_result"] = g["spend"] / g["results"].replace(0, pd.NA)
+    import numpy as np
+    impressions_den = pd.to_numeric(g["impressions"], errors="coerce").replace(0, np.nan)
+    results_den = pd.to_numeric(g["results"], errors="coerce").replace(0, np.nan)
+    g["ctr"] = (pd.to_numeric(g["clicks"], errors="coerce") / impressions_den).replace([np.inf, -np.inf], np.nan).fillna(0)
+    g["cost_per_result"] = (pd.to_numeric(g["spend"], errors="coerce") / results_den).replace([np.inf, -np.inf], np.nan).fillna(0)
     g = g.sort_values(["results", "spend"], ascending=[False, False]).head(10).fillna(0)
     return _clean_json_value({
         "rows": int(len(df)),
