@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 class AnalysisRunRequest(BaseModel):
     account_id: Optional[str] = None
+    account_name: Optional[str] = None
     campaign_id: Optional[str] = None
     campaign_name: Optional[str] = None
     access_token: Optional[str] = None

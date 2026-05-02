@@ -177,39 +177,73 @@ def _campaign_sort_key(item: dict) -> str:
     return str(item.get("updated_time") or item.get("created_time") or item.get("start_time") or "")
 
 
-def _resolve_account_and_campaign(body: AnalysisRunRequest, token: str) -> dict:
-    """Resolve missing account/campaign for natural prompts like 'حلل آخر كامبين'.
+def _scope_intent_from_question(question: str | None) -> str:
+    q = (question or "").lower()
+    account_words = ["حساب", "الحساب", "اكونت", "الأكونت", "الاكونت", "account", "ad account"]
+    campaign_words = ["حملة", "الحملة", "كامبين", "campaign", "آخر كامبين", "اخر كامبين", "latest campaign"]
+    ad_words = ["إعلان", "اعلان", "adset", "أدست", "ادست", "ad ", " ad"]
+    has_campaign = any(w in q for w in campaign_words)
+    has_account = any(w in q for w in account_words)
+    has_ad = any(w in q for w in ad_words)
+    if has_campaign:
+        return "campaign"
+    if has_account:
+        return "account"
+    if has_ad:
+        return "ad"
+    return "account"
 
-    It only uses account/campaign list endpoints, never campaign{insights} fields.
-    Bounded by small limits to avoid Meta rate/limit pressure.
-    """
+
+def _question_mentions_level(question: str | None) -> bool:
+    q = (question or "").lower()
+    return any(w in q for w in ["adset", "أدست", "ادست", "إعلان", "اعلان", "مستوى الإعلان", "مستوى الاعلان"])
+
+
+def _resolve_account_and_campaign(body: AnalysisRunRequest, token: str) -> dict:
+    """Resolve scope without converting account requests into campaign requests."""
+    intent = _scope_intent_from_question(body.question)
     account_id = body.account_id
+    account_name = (getattr(body, 'account_name', None) or "").strip().lower()
     campaign_id = body.campaign_id or _campaign_id_from_filters(body.filters)
     campaign_name = (body.campaign_name or "").strip().lower() if body.campaign_name else ""
-    selected_campaign = None
+
+    if campaign_id or campaign_name:
+        intent = "campaign"
+
     selected_account = None
+    selected_campaign = None
 
     if account_id:
         account_id = normalize_account_id(account_id)
         selected_account = {"id": account_id}
-
-    accounts = []
-    if not account_id:
+    else:
         payload = meta_call("GET", "me/adaccounts", token, params={"fields": "id,name,account_id,account_status,currency,timezone_name", "limit": 25})
         accounts = payload.get("data") or []
-    else:
-        accounts = [selected_account]
+        if account_name:
+            matched = [a for a in accounts if account_name in str(a.get("name") or "").lower()]
+            if matched:
+                accounts = matched
+        if not accounts:
+            raise HTTPException(status_code=400, detail="No ad account could be resolved. Please authenticate Meta or provide account_id.")
+        selected_account = accounts[0]
+        account_id = normalize_account_id(selected_account.get("id") or selected_account.get("account_id") or "")
 
-    best = None
-    for acc in accounts[:10]:
-        acc_id = normalize_account_id(acc.get("id") or acc.get("account_id") or "")
-        if not acc_id:
-            continue
+    if not account_id:
+        raise HTTPException(status_code=400, detail="No valid ad account id could be resolved.")
+
+    if intent == "account":
+        body.account_id = account_id
+        body.campaign_id = None
+        body.campaign_name = None
+        body.filters = None
+        if not _question_mentions_level(body.question):
+            body.level = "campaign"
+        return {"scope": "account", "intent": intent, "account_id": account_id, "campaign_id": None, "account": selected_account, "campaign": None}
+
+    if intent == "campaign":
         params = {"fields": "id,name,status,effective_status,objective,created_time,updated_time,start_time,stop_time", "limit": 50}
-        try:
-            camps = meta_call("GET", f"{acc_id}/campaigns", token, params=params).get("data") or []
-        except Exception:
-            continue
+        camps = meta_call("GET", f"{account_id}/campaigns", token, params=params).get("data") or []
+        best = None
         for camp in camps:
             if campaign_id and str(camp.get("id")) != str(campaign_id):
                 continue
@@ -218,22 +252,21 @@ def _resolve_account_and_campaign(body: AnalysisRunRequest, token: str) -> dict:
             status_text = " ".join(str(camp.get(k) or "") for k in ["status", "effective_status"]).upper()
             active_bonus = "ACTIVE" in status_text
             score = ("1" if active_bonus else "0", _campaign_sort_key(camp), str(camp.get("id") or ""))
-            cand = {"score": score, "account": acc, "account_id": acc_id, "campaign": camp}
-            if best is None or cand["score"] > best["score"]:
-                best = cand
-    if best:
-        account_id = best["account_id"]
-        selected_account = best["account"]
-        selected_campaign = best["campaign"]
-        campaign_id = str(selected_campaign.get("id") or campaign_id or "") or None
-    if not account_id:
-        raise HTTPException(status_code=400, detail="No ad account could be resolved. Please authenticate Meta or provide account_id.")
-    if campaign_id and not body.filters:
-        body.filters = _build_campaign_filter(campaign_id)
-    if campaign_id and not body.campaign_id:
+            if best is None or score > best["score"]:
+                best = {"score": score, "campaign": camp}
+        if best:
+            selected_campaign = best["campaign"]
+            campaign_id = str(selected_campaign.get("id") or campaign_id or "") or None
+        if not campaign_id:
+            raise HTTPException(status_code=404, detail="No campaign matched the request.")
+        body.account_id = account_id
         body.campaign_id = campaign_id
+        body.filters = _build_campaign_filter(campaign_id)
+        return {"scope": "campaign", "intent": intent, "account_id": account_id, "campaign_id": campaign_id, "account": selected_account, "campaign": selected_campaign}
+
+    # Ad/adset requests without a campaign stay account-scoped unless campaign_id/name is supplied.
     body.account_id = account_id
-    return {"account_id": account_id, "campaign_id": campaign_id, "account": selected_account, "campaign": selected_campaign}
+    return {"scope": "account", "intent": intent, "account_id": account_id, "campaign_id": None, "account": selected_account, "campaign": None}
 
 DEEP_SAFE_FIELDS = "date_start,date_stop,account_id,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,objective,spend,impressions,reach,frequency,inline_link_clicks,outbound_clicks,actions,action_values,cost_per_action_type,cpm,cpc,ctr,quality_ranking,engagement_rate_ranking,conversion_rate_ranking"
 
