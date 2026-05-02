@@ -155,6 +155,14 @@ def _campaign_id_from_filters(filters: str | None) -> str | None:
         return None
     return None
 
+
+def _strict_campaign_df(df, campaign_id: str | None):
+    if not campaign_id or df is None or getattr(df, 'empty', True):
+        return df
+    if 'campaign_id' not in df.columns:
+        return df
+    return df[df['campaign_id'].astype(str) == str(campaign_id)].copy()
+
 DEEP_SAFE_FIELDS = "date_start,date_stop,account_id,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,objective,spend,impressions,reach,frequency,inline_link_clicks,outbound_clicks,actions,action_values,cost_per_action_type,cpm,cpc,ctr,quality_ranking,engagement_rate_ranking,conversion_rate_ranking"
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -166,7 +174,7 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
 
     cache_meta = {"source": "meta_api", "cache_checked": False, "cache_hit": False}
     campaign_id_for_cache = _campaign_id_from_filters(body.filters)
-    cache_df = cached_raw_insights(body.account_id, body.level, body.since, body.until, campaign_id=campaign_id_for_cache)
+    cache_df = cached_raw_insights(body.account_id, body.level, body.since, body.until, campaign_id=campaign_id_for_cache, date_preset=body.date_preset)
     coverage = cache_coverage(cache_df)
     cache_meta.update({"cache_checked": True, "coverage": coverage})
     if coverage.get("hit"):
@@ -184,6 +192,8 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             body.filters,
             body.sort,
         )
+
+    current_df = _strict_campaign_df(current_df, campaign_id_for_cache)
 
     compare_since = body.compare_since
     compare_until = body.compare_until
@@ -208,6 +218,8 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             body.filters,
             body.sort,
         )
+
+    compare_df = _strict_campaign_df(compare_df, campaign_id_for_cache)
 
     if body.analysis_type == "summary_kpis":
         return {"analysis_type": body.analysis_type, "result": summarize_df(current_df)}

@@ -25,7 +25,7 @@ class AnalysisRunRequest(BaseModel):
         "intelligence_diagnostics"
     ]
     level: Literal["campaign", "adset", "ad"] = "campaign"
-    date_preset: Optional[str] = None
+    date_preset: Optional[str] = "last_7d"
     since: Optional[str] = None
     until: Optional[str] = None
     compare_since: Optional[str] = None
