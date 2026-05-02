@@ -192,7 +192,15 @@ def _metric_number(value: Any) -> float:
 
 def prepare_raw_for_storage(df: pd.DataFrame, level: str = "campaign", breakdown_signature: str = "") -> pd.DataFrame:
     out = df.copy() if df is not None else pd.DataFrame()
-    for col in ["date", "account_id", "campaign_id", "adset_id", "ad_id", "objective", "optimization_goal", "billing_event"]:
+    if "date" not in out.columns:
+        if "date_start" in out.columns:
+            out["date"] = out["date_start"]
+        elif "date_stop" in out.columns:
+            out["date"] = out["date_stop"]
+        else:
+            out["date"] = "1970-01-01"
+    out["date"] = out["date"].replace("", "1970-01-01").fillna("1970-01-01")
+    for col in ["account_id", "campaign_id", "adset_id", "ad_id", "objective", "optimization_goal", "billing_event"]:
         if col not in out.columns:
             out[col] = ""
     for col in ["spend", "impressions", "reach", "frequency", "clicks", "inline_link_clicks", "outbound_clicks"]:

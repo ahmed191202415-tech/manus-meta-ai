@@ -81,7 +81,15 @@ def infer_campaign_type_from_metrics(df: pd.DataFrame, fallback: str = 'unknown'
 
 def _derived_for_storage(df: pd.DataFrame, level: str = 'campaign') -> pd.DataFrame:
     out = df.copy()
-    for col in ['date', 'account_id', 'campaign_id', 'adset_id', 'ad_id']:
+    if 'date' not in out.columns:
+        if 'date_start' in out.columns:
+            out['date'] = out['date_start']
+        elif 'date_stop' in out.columns:
+            out['date'] = out['date_stop']
+        else:
+            out['date'] = '1970-01-01'
+    out['date'] = out['date'].replace('', '1970-01-01').fillna('1970-01-01')
+    for col in ['account_id', 'campaign_id', 'adset_id', 'ad_id']:
         if col not in out.columns:
             out[col] = ''
     out['level'] = level
