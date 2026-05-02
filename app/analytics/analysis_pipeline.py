@@ -18,6 +18,7 @@ from app.analytics.relationship_engine import discover_relationship_edges
 from app.analytics.report_builder import build_dynamic_report_ar, build_skipped_sections
 from app.analytics.baseline_engine import compute_internal_baselines
 from app.analytics import supabase_storage
+from app.analytics.meta_fetcher import recommend_breakdowns
 
 
 def load_export(path: str | Path) -> pd.DataFrame:
@@ -149,6 +150,97 @@ def _derived_for_storage(df: pd.DataFrame, level: str = 'campaign') -> pd.DataFr
     return out[keep]
 
 
+def _decision_for_relation(relation_type: str) -> tuple[str, str]:
+    mapping = {
+        'frequency_vs_ctr': ('إجهاد محتوى محتمل', 'راقب CTR والتكرار؛ جرّب زاوية/بداية جديدة قبل رفع الميزانية.'),
+        'frequency_vs_outbound': ('تشبع أو ضعف نية بعد التكرار', 'اختبر جمهورًا أوسع أو رسالة مختلفة وراقب outbound CTR.'),
+        'frequency_vs_cpa': ('التكرار يرفع تكلفة النتيجة', 'لا توسع الإنفاق قبل تقليل التشبع أو تجديد المحتوى.'),
+        'auction_vs_ctr': ('ضغط مزاد مع تفاعل أضعف', 'راجع جودة الإعلان والجمهور والمواضع قبل زيادة الميزانية.'),
+        'click_to_landing': ('تسريب بعد الضغط', 'افحص سرعة الصفحة/التتبع/ملاءمة الوجهة وراقب LPV rate.'),
+        'click_intent_vs_signal': ('ضغطات بنية ضعيفة', 'راجع وعد الإعلان والجمهور وراقب signal quality.'),
+        'spend_vs_results': ('العلاقة بين الإنفاق والنتائج', 'راقب هل زيادة الإنفاق تولّد نتائج بنفس الكفاءة أم تبدأ في الهدر.'),
+        'spend_vs_cpa': ('زيادة الإنفاق مرتبطة بتكلفة أعلى', 'اختبر سقف توسع تدريجي وراقب CPA.'),
+        'roas_vs_spend': ('تغير العائد مع الإنفاق', 'لا توسع قبل التأكد من ثبات ROAS أو قيمة النتيجة.'),
+    }
+    return mapping.get(relation_type, ('علاقة رقمية مؤثرة', 'راقب المقياسين معًا ولا تحكم من رقم منفرد.'))
+
+
+def _relationship_diagnostics(relationships: list[dict[str, Any]], level: str) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for edge in relationships or []:
+        title, action = _decision_for_relation(str(edge.get('relation_type') or ''))
+        diagnostics.append({
+            'scenario': edge.get('relation_type') or 'relationship_signal',
+            'family': 'relationships_synthesis',
+            'severity': 'high' if edge.get('confidence') == 'high' else 'medium',
+            'confidence': edge.get('confidence') or 'medium',
+            'entity_level': level,
+            'diagnosis_ar': f"{title}: {edge.get('explanation_ar')}",
+            'decision_ar': action,
+            'recommended_action': action,
+            'next_metric': edge.get('target_metric'),
+            'evidence': edge.get('evidence', {}),
+        })
+    return diagnostics
+
+
+def _relationship_synthesis(relationships: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for edge in (relationships or [])[:5]:
+        title, action = _decision_for_relation(str(edge.get('relation_type') or ''))
+        items.append({
+            'type': edge.get('relation_type'),
+            'level': edge.get('confidence') or 'medium',
+            'title': title,
+            'synthesis': edge.get('explanation_ar'),
+            'root_cause': title,
+            'action': action,
+            'signals': {
+                'source_metric': edge.get('source_metric'),
+                'target_metric': edge.get('target_metric'),
+                'weight': edge.get('weight'),
+            },
+        })
+    return items
+
+
+def _content_path_insights(current: pd.DataFrame, campaign_type: str) -> list[dict[str, Any]]:
+    if current is None or current.empty:
+        return []
+    def total(col: str) -> float:
+        if col not in current.columns:
+            return 0.0
+        return float(pd.to_numeric(current[col], errors='coerce').fillna(0).sum())
+    def mean(col: str) -> float:
+        if col not in current.columns:
+            return 0.0
+        return float(pd.to_numeric(current[col], errors='coerce').fillna(0).mean())
+    insights: list[dict[str, Any]] = []
+    link_clicks = total('link_clicks') or total('inline_link_clicks')
+    outbound_clicks = total('outbound_clicks_count') or total('outbound_clicks')
+    results = total('results')
+    impressions = total('impressions')
+    ctr = (link_clicks / impressions) if impressions else mean('ctr_link')
+    frequency = mean('frequency')
+    if campaign_type == 'messages' and results > 0:
+        insights.append({
+            'type': 'message_intent_path',
+            'title': 'مسار الرسائل مستقل عن صفحة الهبوط',
+            'synthesis': f'الحملة تبدو رسائل/تواصل؛ تم تقييم نية المحادثة من النتائج لا من شراء أو صفحة هبوط. النتائج المرصودة: {results:.0f}.',
+            'action': 'حلل نص الإعلان والرسالة التي دفعت للتواصل، وراقب تكلفة بدء المحادثة وجودة الردود بدل فرض مسار شراء.',
+            'signals': {'results': results, 'link_clicks': link_clicks, 'frequency': frequency, 'ctr_estimate': ctr},
+        })
+    if link_clicks > 0 and results == 0:
+        insights.append({
+            'type': 'curiosity_without_result',
+            'title': 'ضغطات بلا نتيجة ظاهرة',
+            'synthesis': 'يوجد تفاعل/ضغطات لكن لا توجد نتيجة مرصودة؛ هذا قد يعني فضول بلا نية أو فجوة بعد الضغط أو نقص تتبع.',
+            'action': 'راجع وعد الإعلان والجمهور والتتبع، وراقب signal_quality أو تكلفة النتيجة.',
+            'signals': {'link_clicks': link_clicks, 'outbound_clicks': outbound_clicks, 'results': results},
+        })
+    return insights
+
+
 def analyze_dataframe(
     df: pd.DataFrame,
     compare_df: pd.DataFrame | None = None,
@@ -166,6 +258,16 @@ def analyze_dataframe(
     relationships = discover_relationship_edges(current)
     skipped = build_skipped_sections(current, campaign_type)
     metrics = _basic_metrics(current)
+    diagnostics = diagnostics_bundle.get('top_diagnostics', []) or []
+    if not diagnostics and relationships:
+        diagnostics = _relationship_diagnostics(relationships, level)
+    human_insights = diagnostics_bundle.get('human_insights', []) or []
+    content_insights = _content_path_insights(current, campaign_type)
+    multivariate_synthesis = diagnostics_bundle.get('multivariate_synthesis', []) or []
+    if not multivariate_synthesis and relationships:
+        multivariate_synthesis = _relationship_synthesis(relationships)
+    multivariate_synthesis = content_insights + multivariate_synthesis
+    deep_fetch_plans = [p.__dict__ for p in recommend_breakdowns(question, diagnostics)]
 
     result: Dict[str, Any] = {
         'run_id': run_id,
@@ -173,10 +275,11 @@ def analyze_dataframe(
         'summary_ar': diagnostics_bundle.get('summary_ar') or 'تم تحليل البيانات عبر طبقات المقاييس والعلاقات والتشخيص.',
         'rows': int(len(current)),
         'metrics': metrics,
-        'diagnostics': diagnostics_bundle.get('top_diagnostics', []),
-        'human_insights': diagnostics_bundle.get('human_insights', []),
-        'multivariate_synthesis': diagnostics_bundle.get('multivariate_synthesis', []),
+        'diagnostics': diagnostics,
+        'human_insights': human_insights,
+        'multivariate_synthesis': multivariate_synthesis,
         'relationships': relationships,
+        'deep_fetch_plans': deep_fetch_plans,
         'skipped_sections': skipped + diagnostics_bundle.get('missing_notes', []),
         'objective_notes': diagnostics_bundle.get('objective_notes', []),
         'storage_errors': [],
