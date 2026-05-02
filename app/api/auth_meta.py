@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 import requests
 
-from app.config import META_OAUTH_REDIRECT_URI, META_OAUTH_SCOPES, PORTAL_PATH
+from app.config import META_OAUTH_REDIRECT_URI, META_OAUTH_SCOPES, PORTAL_PATH, PUBLIC_BASE_URL
 from app.core.connection_resolver import resolve_tenant_connection_state
 from app.core.auth import _clear_meta_session, _validate_meta_access_token
 from app.core.oauth_store import (
@@ -14,19 +14,33 @@ from app.core.oauth_store import (
 )
 
 router = APIRouter(prefix="/auth/meta", tags=["auth"])
+DEFAULT_PUBLIC_BASE_URL = "https://manus-meta-ai-production.up.railway.app"
+
+
+def _absolute_url(path: str) -> str:
+    if path.startswith(("http://", "https://")):
+        return path
+    base = (PUBLIC_BASE_URL or DEFAULT_PUBLIC_BASE_URL).rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    return base + path
+
+
+def _portal_url() -> str:
+    return _absolute_url(PORTAL_PATH)
 
 
 @router.get("/login")
 async def meta_login(request: Request, tenant_id: str | None = None):
     tenant_id = str(tenant_id or request.session.get("tenant_id") or "").strip()
     if not tenant_id:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+        return RedirectResponse(url=_portal_url(), status_code=302)
     if not META_OAUTH_REDIRECT_URI:
         raise HTTPException(status_code=500, detail="META_OAUTH_REDIRECT_URI is missing.")
 
     resolution = resolve_tenant_connection_state(tenant_id)
     if resolution.get("next_action") in {"show_setup", "show_email_gate", "show_blocked"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+        return RedirectResponse(url=_portal_url(), status_code=302)
 
     try:
         meta_app = get_tenant_meta_app_required(tenant_id)
@@ -55,7 +69,7 @@ async def meta_callback(
 ):
     if error:
         if request.session.get("gpt_oauth_redirect_uri") or request.session.get("tenant_id"):
-            return RedirectResponse(url=PORTAL_PATH, status_code=302)
+            return RedirectResponse(url=_portal_url(), status_code=302)
         return JSONResponse(
             status_code=400,
             content={"success": False, "error": error, "error_description": error_description}
@@ -92,7 +106,7 @@ async def meta_callback(
 
     if resp.status_code >= 400 or "access_token" not in data:
         if request.session.get("gpt_oauth_redirect_uri") or request.session.get("tenant_id"):
-            return RedirectResponse(url=PORTAL_PATH, status_code=302)
+            return RedirectResponse(url=_portal_url(), status_code=302)
         return JSONResponse(status_code=400, content={"success": False, "meta_response": data})
 
     me_resp = requests.get(
@@ -107,7 +121,7 @@ async def meta_callback(
 
     if not meta_user_id:
         if request.session.get("gpt_oauth_redirect_uri") or request.session.get("tenant_id"):
-            return RedirectResponse(url=PORTAL_PATH, status_code=302)
+            return RedirectResponse(url=_portal_url(), status_code=302)
         return JSONResponse(status_code=400, content={"success": False, "meta_response": me_data})
 
     granted_scopes = data.get("granted_scopes")
