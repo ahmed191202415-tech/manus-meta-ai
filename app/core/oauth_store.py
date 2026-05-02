@@ -434,6 +434,22 @@ def get_meta_connection(meta_user_id: str, tenant_id: str | None = None):
     return _get_single("meta_connections", params=params)
 
 
+def get_latest_meta_connection():
+    """Return newest saved Meta connection directly from meta_connections.
+
+    Used as GPT fallback when no OAuth bearer/session is supplied.
+    This avoids relying on tenant_accounts shape/status columns.
+    """
+    return _get_single(
+        "meta_connections",
+        params={
+            "select": "*",
+            "limit": "1",
+            "order": "updated_at.desc",
+        },
+    )
+
+
 def get_active_meta_connection_for_tenant(tenant_id: str):
     return _get_single(
         "meta_connections",
