@@ -78,7 +78,7 @@ def openapi_gpt_schema():
     schema["servers"] = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
     schema.setdefault("components", {})
     schema["components"].setdefault("securitySchemes", {})
-    schema["components"]["GPTMetaOAuth"] = {
+    schema["components"]["securitySchemes"]["GPTMetaOAuth"] = {
         "type": "oauth2",
         "flows": {
             "authorizationCode": {
