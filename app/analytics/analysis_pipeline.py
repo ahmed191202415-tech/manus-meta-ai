@@ -71,8 +71,8 @@ def _metric_number_for_storage(value: Any) -> float:
 
 def _basic_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {'rows': int(len(df))}
-    mean_cols = {'frequency', 'ctr_link', 'outbound_ctr', 'cpa', 'roas', 'signal_quality'}
-    for col in ['spend', 'impressions', 'reach', 'frequency', 'ctr_link', 'outbound_ctr', 'cpa', 'roas', 'signal_quality']:
+    mean_cols = {'frequency', 'ctr_link', 'outbound_ctr', 'cpa', 'roas', 'signal_quality', 'cost_per_result', 'cost_per_message', 'click_to_message_rate', 'message_start_rate', 'result_rate_per_1000_reach', 'engagement_rate_calc'}
+    for col in ['spend', 'impressions', 'reach', 'frequency', 'ctr_link', 'outbound_ctr', 'cpa', 'roas', 'signal_quality', 'results', 'link_clicks', 'messaging_conversations', 'cost_per_result', 'cost_per_message', 'click_to_message_rate', 'message_start_rate', 'result_rate_per_1000_reach', 'engagement_rate_calc']:
         if col in df.columns:
             series = pd.to_numeric(df[col], errors='coerce').fillna(0)
             metrics[col] = float(series.mean() if col in mean_cols else series.sum())
@@ -161,6 +161,16 @@ def _decision_for_relation(relation_type: str) -> tuple[str, str]:
         'spend_vs_results': ('العلاقة بين الإنفاق والنتائج', 'راقب هل زيادة الإنفاق تولّد نتائج بنفس الكفاءة أم تبدأ في الهدر.'),
         'spend_vs_cpa': ('زيادة الإنفاق مرتبطة بتكلفة أعلى', 'اختبر سقف توسع تدريجي وراقب CPA.'),
         'roas_vs_spend': ('تغير العائد مع الإنفاق', 'لا توسع قبل التأكد من ثبات ROAS أو قيمة النتيجة.'),
+        'spend_vs_reach': ('الميزانية تفتح وصولًا إضافيًا', 'قيّم هل الوصول الإضافي يتحول إلى نتائج أو مجرد انتشار.'),
+        'spend_vs_impressions': ('الميزانية تشتري ظهورًا', 'قارن الظهور بالضغطات والنتائج قبل زيادة الميزانية.'),
+        'spend_vs_clicks': ('الميزانية تشتري ضغطات', 'اختبر جودة الضغطات وليس كميتها فقط.'),
+        'clicks_vs_results': ('الضغطات مرتبطة بالنتائج', 'استخرج أفضل إعلانات/رسائل صنعت النية ووسعها بحذر.'),
+        'inline_clicks_vs_results': ('ضغطات الرابط مرتبطة بالنتائج', 'ركز على زاوية الإعلان التي تولد ضغطات ذات نية.'),
+        'outbound_clicks_vs_results': ('الخروج من الإعلان مرتبط بالنتائج', 'راجع الوجهة أو مسار الرسائل لتثبيت هذا المسار.'),
+        'spend_clicks_results_triangle': ('مثلث الإنفاق والضغطات والنتائج', 'حلل هل الإنفاق يشتري نية حقيقية أم تفاعلًا سطحيًا.'),
+        'frequency_vs_results': ('التكرار لا يضر النتائج حاليًا', 'راقبه عند التوسع لأن الإشارة قد تنقلب لتشبع.'),
+        'impressions_vs_results': ('الظهور مرتبط بالنتائج', 'اختبر هل زيادة الظهور ما زالت تولد نتائج بنفس النسبة.'),
+        'reach_vs_results': ('الوصول مرتبط بالنتائج', 'راقب جودة شرائح الجمهور وليس الحجم فقط.'),
     }
     return mapping.get(relation_type, ('علاقة رقمية مؤثرة', 'راقب المقياسين معًا ولا تحكم من رقم منفرد.'))
 
@@ -241,6 +251,84 @@ def _content_path_insights(current: pd.DataFrame, campaign_type: str) -> list[di
     return insights
 
 
+
+def _top_bottom_entities(df: pd.DataFrame, level: str, metric: str = 'budget_signal_score', limit: int = 3) -> dict[str, Any]:
+    if df is None or df.empty or metric not in df.columns:
+        return {'top': [], 'bottom': []}
+    id_col = f'{level}_id'
+    name_col = f'{level}_name'
+    if id_col not in df.columns:
+        id_col = 'ad_id' if 'ad_id' in df.columns else 'campaign_id' if 'campaign_id' in df.columns else ''
+    if name_col not in df.columns:
+        name_col = 'ad_name' if 'ad_name' in df.columns else 'campaign_name' if 'campaign_name' in df.columns else id_col
+    if not id_col:
+        return {'top': [], 'bottom': []}
+    cols = [id_col, name_col, metric, 'spend', 'results', 'link_clicks', 'impressions', 'reach']
+    cols = [c for c in cols if c in df.columns]
+    tmp = df[cols].copy()
+    tmp[metric] = pd.to_numeric(tmp[metric], errors='coerce').fillna(0)
+    tmp = tmp.sort_values(metric, ascending=False)
+    def rows(frame):
+        out=[]
+        for _, r in frame.iterrows():
+            out.append({str(k): (float(v) if isinstance(v, (int, float, np.number)) else str(v)) for k,v in r.to_dict().items()})
+        return out
+    return {'top': rows(tmp.head(limit)), 'bottom': rows(tmp.tail(limit).sort_values(metric))}
+
+
+def _portfolio_intelligence_insights(current: pd.DataFrame, campaign_type: str, level: str, relationships: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if current is None or current.empty:
+        return []
+    def total(col: str) -> float:
+        if col not in current.columns:
+            return 0.0
+        return float(pd.to_numeric(current[col], errors='coerce').fillna(0).sum())
+    def mean(col: str) -> float:
+        if col not in current.columns:
+            return 0.0
+        return float(pd.to_numeric(current[col], errors='coerce').replace([np.inf, -np.inf], np.nan).fillna(0).mean())
+    spend=total('spend'); results=total('results'); clicks=total('link_clicks'); impressions=total('impressions'); reach=total('reach')
+    cpr = spend / results if results else 0
+    ctr = clicks / impressions if impressions else mean('ctr_link')
+    result_per_1000_reach = results / reach * 1000 if reach else 0
+    top_bottom = _top_bottom_entities(current, level, 'budget_signal_score')
+    out=[]
+    out.append({
+        'type':'executive_scorecard',
+        'title':'بطاقة قرار تنفيذية للحملة',
+        'synthesis': f'الحملة صرفت {spend:.2f} وحققت {results:.0f} نتيجة مع CTR تقديري {ctr:.4f} وتكلفة نتيجة {cpr:.2f}.',
+        'action':'استخدم العلاقات لاختيار أين تزود الميزانية: زود فقط على الإعلانات التي تجمع بين ضغطات ونتائج وليس وصول فقط.',
+        'signals': {'spend':spend,'results':results,'cost_per_result':cpr,'ctr':ctr,'result_per_1000_reach':result_per_1000_reach}
+    })
+    if top_bottom.get('top'):
+        out.append({
+            'type':'winner_loser_map',
+            'title':'خريطة أفضل وأسوأ وحدات حسب كفاءة الميزانية',
+            'synthesis':'تم ترتيب الوحدات حسب النتائج مقابل الإنفاق لتحديد أين يمكن التوسيع وأين يجب الإيقاف/إعادة الصياغة.',
+            'action':'انقل ميزانية تدريجية من أضعف الوحدات إلى أفضلها، ثم اختبر مواضع/أجهزة قبل توسع كبير.',
+            'signals': top_bottom
+        })
+    if campaign_type == 'messages':
+        click_to_msg = mean('click_to_message_rate') or (results / clicks if clicks else 0)
+        out.append({
+            'type':'message_quality_layer',
+            'title':'طبقة جودة الرسائل بعد الضغط',
+            'synthesis': f'كمية الرسائل يجب تقييمها مع جودة المحادثة. معدل التحول من الضغط إلى نتيجة/رسالة تقديريًا {click_to_msg:.3f}.',
+            'action':'اربط التحليل لاحقًا بجودة الردود/الكلمات المفتاحية داخل الرسائل، وليس بعدد الرسائل فقط.',
+            'signals': {'click_to_message_rate':click_to_msg,'messages_or_results':results,'link_clicks':clicks}
+        })
+    strong = [r for r in relationships if abs(float(r.get('weight') or 0)) >= 0.65]
+    if strong:
+        out.append({
+            'type':'relationship_cluster',
+            'title':'عنقود العلاقات الأقوى',
+            'synthesis': 'أقوى العلاقات تشير إلى المسار المسيطر في الحملة: ' + '، '.join([str(r.get('relation_type')) for r in strong[:5]]),
+            'action':'لا تتخذ قرارًا من KPI منفرد؛ استخدم هذا العنقود لتحديد هل المشكلة في الميزانية أو الضغطات أو جودة النتيجة.',
+            'signals': {'strong_relationships': strong[:5]}
+        })
+    return out
+
+
 def analyze_dataframe(
     df: pd.DataFrame,
     compare_df: pd.DataFrame | None = None,
@@ -263,10 +351,11 @@ def analyze_dataframe(
         diagnostics = _relationship_diagnostics(relationships, level)
     human_insights = diagnostics_bundle.get('human_insights', []) or []
     content_insights = _content_path_insights(current, campaign_type)
+    portfolio_insights = _portfolio_intelligence_insights(current, campaign_type, level, relationships)
     multivariate_synthesis = diagnostics_bundle.get('multivariate_synthesis', []) or []
     if not multivariate_synthesis and relationships:
         multivariate_synthesis = _relationship_synthesis(relationships)
-    multivariate_synthesis = content_insights + multivariate_synthesis
+    multivariate_synthesis = content_insights + portfolio_insights + multivariate_synthesis
     deep_fetch_plans = [p.__dict__ for p in recommend_breakdowns(question, diagnostics)]
 
     result: Dict[str, Any] = {
@@ -307,7 +396,7 @@ def analyze_dataframe(
                 level=level,
                 period='',
                 phase=result['phase'],
-                completed_modules=['semantic_metrics', 'relationships', 'diagnostics', 'report'],
+                completed_modules=['semantic_metrics', 'relationships', 'diagnostics', 'portfolio_intelligence', 'report'],
                 skipped_modules=result['skipped_sections'],
                 errors=[],
             )

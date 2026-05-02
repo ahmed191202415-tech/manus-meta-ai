@@ -64,6 +64,12 @@ def recommend_breakdowns(question: str = '', diagnostics: Optional[List[Dict]] =
         plans.append(build_deep_fetch_plan('user asked for demographic detail', 'age_gender'))
     if any(word in q for word in ['ساعة', 'ساعات', 'وقت', 'أوقات', 'اوقات', 'hour']):
         plans.append(build_deep_fetch_plan('user asked for hourly detail', 'hour'))
+    if any(word in q for word in ['جمهور', 'audience', 'شريحة', 'شرائح']):
+        plans.append(build_deep_fetch_plan('user asked for audience detail', 'age_gender'))
+        plans.append(build_deep_fetch_plan('user asked for location detail', 'country'))
+    if any(word in q for word in ['ميزانية', 'budget', 'صرف', 'انفاق', 'إنفاق', 'توسع', 'scale']):
+        plans.append(build_deep_fetch_plan('budget detail needs placement/device split', 'placement'))
+        plans.append(build_deep_fetch_plan('budget detail needs device split', 'device'))
     for d in diagnostics:
         fam = str(d.get('family') or d.get('scenario') or d.get('code') or '').lower()
         if 'saturation' in fam or 'تشبع' in fam:
