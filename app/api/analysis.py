@@ -20,8 +20,73 @@ from app.analytics.profitability import build_break_even_analysis
 from app.analytics.audit_framework import build_audit_snapshot
 from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.analysis_pipeline import analyze_dataframe
+from app.analytics.report_builder import build_dynamic_report_ar
 from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
+
+
+def _num(df, col: str):
+    import pandas as pd
+    if col not in df.columns:
+        return pd.Series([0] * len(df), index=df.index, dtype="float64")
+    return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+
+def _summarize_deep_breakdown_df(df, breakdowns):
+    import pandas as pd
+    if df is None or df.empty or not breakdowns:
+        return {"rows": 0, "breakdowns": breakdowns, "top_segments": []}
+    group_cols = [c for c in breakdowns if c in df.columns]
+    if not group_cols:
+        return {"rows": int(len(df)), "breakdowns": breakdowns, "top_segments": [], "note": "Meta did not return requested breakdown columns"}
+    work = df.copy()
+    work["_spend"] = _num(work, "spend")
+    work["_impressions"] = _num(work, "impressions")
+    work["_reach"] = _num(work, "reach")
+    work["_clicks"] = _num(work, "inline_link_clicks") + _num(work, "link_clicks")
+    work["_results"] = _num(work, "results")
+    g = work.groupby(group_cols, dropna=False).agg(
+        spend=("_spend", "sum"),
+        impressions=("_impressions", "sum"),
+        reach=("_reach", "sum"),
+        clicks=("_clicks", "sum"),
+        results=("_results", "sum"),
+    ).reset_index()
+    g["ctr"] = g["clicks"] / g["impressions"].replace(0, pd.NA)
+    g["cost_per_result"] = g["spend"] / g["results"].replace(0, pd.NA)
+    g = g.sort_values(["results", "spend"], ascending=[False, False]).head(10).fillna(0)
+    return {
+        "rows": int(len(df)),
+        "breakdowns": group_cols,
+        "top_segments": g.to_dict(orient="records"),
+    }
+
+
+def _run_deep_breakdown_fetches(body, token: str, plans: list[dict]) -> list[dict]:
+    results = []
+    for plan in plans or []:
+        breakdowns = plan.get("breakdowns") or []
+        if not breakdowns:
+            continue
+        try:
+            df = fetch_insights_df(
+                body.account_id,
+                token,
+                plan.get("level") or body.level,
+                ",".join(plan.get("fields") or []) if isinstance(plan.get("fields"), list) else body.fields,
+                body.date_preset,
+                body.since,
+                body.until,
+                body.filters,
+                body.sort,
+                time_increment=str(plan.get("time_increment") or 1),
+                breakdowns=breakdowns,
+                action_breakdowns=plan.get("action_breakdowns") or ["action_type"],
+            )
+            results.append({"plan": plan, "summary": _summarize_deep_breakdown_df(df, breakdowns)})
+        except Exception as exc:
+            results.append({"plan": plan, "error_type": type(exc).__name__, "message": str(exc)[:1000]})
+    return results
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -204,6 +269,10 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             level=body.level,
             db_path="exports/meta_ads_intelligence.sqlite",
         )
+        deep_results = _run_deep_breakdown_fetches(body, token, result.get("deep_fetch_plans") or [])
+        if deep_results:
+            result["deep_breakdown_results"] = deep_results
+            result["report_markdown"] = build_dynamic_report_ar(result, campaign_type=result.get("campaign_type") or "unknown", question=body.question or "")
         storage_warning = None
         legacy_run_id = None
         try:

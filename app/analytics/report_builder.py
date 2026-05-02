@@ -53,6 +53,8 @@ def build_dynamic_report_ar(result: Dict[str, Any], campaign_type: str = 'unknow
     synthesis = result.get('multivariate_synthesis', []) or []
     relationships = result.get('relationships', []) or []
     skipped = result.get('skipped_sections', []) or []
+    deep_breakdowns = result.get('deep_breakdown_results', []) or []
+    deep_plans = result.get('deep_fetch_plans', []) or []
 
     lines: List[str] = ['# تقرير Meta Ads Intelligence', '']
     if question:
@@ -109,6 +111,28 @@ def build_dynamic_report_ar(result: Dict[str, Any], campaign_type: str = 'unknow
             lines.append(f"- **{item.get('title') or item.get('type','تركيب')}**: {item.get('meaning') or item.get('diagnosis') or item.get('explanation','')}")
             if item.get('action'):
                 lines.append(f"  - الإجراء: {item.get('action')}")
+        lines.append('')
+
+
+    if deep_breakdowns:
+        lines.append('## نتائج التحليل الأعمق حسب التقسيمات')
+        for item in deep_breakdowns[:5]:
+            plan = item.get('plan', {}) or {}
+            summary = item.get('summary', {}) or {}
+            if item.get('message'):
+                lines.append(f"- **{plan.get('reason','deep breakdown')}**: لم يكتمل السحب العميق — {item.get('message')}")
+                continue
+            bds = ', '.join(summary.get('breakdowns', []) or plan.get('breakdowns', []) or [])
+            lines.append(f"- **{plan.get('reason','deep breakdown')}** ({bds}) — صفوف: {summary.get('rows', 0)}")
+            for seg in (summary.get('top_segments') or [])[:3]:
+                seg_name = ' / '.join(str(seg.get(k,'')) for k in (summary.get('breakdowns') or []) if k in seg)
+                lines.append(f"  - {seg_name}: spend={_fmt_num(seg.get('spend',0))}, results={_fmt_num(seg.get('results',0))}, clicks={_fmt_num(seg.get('clicks',0))}, ctr={_fmt_pct(seg.get('ctr',0))}")
+        lines.append('')
+    elif deep_plans:
+        lines.append('## التحليل الأعمق المقترح')
+        for plan in deep_plans[:5]:
+            bds = ', '.join(plan.get('breakdowns', []) or [])
+            lines.append(f"- {plan.get('reason','deep breakdown')}: اسحب breakdowns = {bds}")
         lines.append('')
 
     if skipped:

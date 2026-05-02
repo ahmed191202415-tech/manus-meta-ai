@@ -128,6 +128,8 @@ def fetch_insights_df(
     filters: Optional[str],
     sort: Optional[str],
     time_increment: Optional[str] = None,
+    breakdowns: Optional[List[str]] = None,
+    action_breakdowns: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     account_id = normalize_account_id(account_id)
 
@@ -153,6 +155,10 @@ def fetch_insights_df(
         params["sort"] = sort
     if time_increment:
         params["time_increment"] = time_increment
+    if breakdowns:
+        params["breakdowns"] = breakdowns
+    if action_breakdowns:
+        params["action_breakdowns"] = action_breakdowns
 
     payload = meta_get_all_pages(f"{account_id}/insights", access_token, params=params, max_pages=ANALYSIS_MAX_PAGES)
     return frame_from_insights(payload.get("data", []), level)
