@@ -43,24 +43,17 @@ app = FastAPI(
 
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
+    """Compact ChatGPT Actions schema.
+
+    Keep the GPT smart and dynamic by exposing the raw Meta request tool plus only
+    the core analysis/report/page helpers. The backend can still have more routes.
+    """
     allowed_paths = {
         "/health",
         "/meta/request",
         "/accounts",
         "/insights",
-        "/campaigns",
-        "/adsets",
-        "/ads",
-        "/adcreatives",
-        "/adimages",
-        "/advideos",
-        "/pages",
-        "/page_posts",
-        "/page_comments",
-        "/page_comments/{comment_id}/reply",
-        "/page_comments/{comment_id}/hide",
         "/analysis/run",
-        "/analysis/campaign",
         "/analysis_dashboard/build",
         "/analysis_docx/build",
         "/reports/save_excel",
@@ -68,36 +61,92 @@ def openapi_gpt_schema():
         "/reports/save_pptx",
         "/reports/save_docx",
         "/reports/save_html_dashboard",
+        "/pages",
+        "/page_posts",
+        "/page_comments",
+        "/page_comments/{comment_id}/reply",
+        "/page_comments/{comment_id}/hide",
     }
     schema = deepcopy(app.openapi())
     schema["info"] = {
-        "title": "Manus Meta AI GPT",
+        "title": "Manus Meta Server Lite",
         "version": "1.0.0",
-        "description": "Reduced schema for ChatGPT Actions with stable Manus Meta AI, Meta OAuth, analysis, reports, and page operations.",
+        "description": "Reduced schema for ChatGPT Actions with core Meta, analysis, reports, and page operations.",
     }
     schema["servers"] = [{"url": EFFECTIVE_PUBLIC_BASE_URL}]
-    schema.setdefault("components", {})
-    schema["components"].setdefault("securitySchemes", {})
-    schema["components"]["securitySchemes"]["GPTMetaOAuth"] = {
-        "type": "oauth2",
-        "flows": {
-            "authorizationCode": {
-                "authorizationUrl": f"{EFFECTIVE_PUBLIC_BASE_URL}/oauth/authorize",
-                "tokenUrl": f"{EFFECTIVE_PUBLIC_BASE_URL}/oauth/token",
-                "scopes": {},
-            }
-        },
-    }
+
     filtered_paths = {}
+    operation_ids = {
+        ("/health", "get"): ("health", "Health", "Server health"),
+        ("/meta/request", "post"): ("meta_request", "Raw Meta Request", "Meta response"),
+        ("/accounts", "get"): ("list_accounts", "List Accounts", "Accounts list"),
+        ("/insights", "get"): ("get_insights", "Get Insights", "Insights response"),
+        ("/analysis/run", "post"): ("analysis_run", "Analysis Run", "Analysis result"),
+        ("/analysis_dashboard/build", "post"): ("analysis_dashboard_build", "Build Analysis Dashboard", "HTML dashboard file result"),
+        ("/analysis_docx/build", "post"): ("analysis_docx_build", "Build Analysis DOCX", "DOCX report file result"),
+        ("/reports/save_excel", "post"): ("save_excel_report", "Save Excel Report", "Excel file result"),
+        ("/reports/save_pdf", "post"): ("save_pdf_report", "Save PDF Report", "PDF file result"),
+        ("/reports/save_pptx", "post"): ("save_pptx_report", "Save PPTX Report", "PPTX file result"),
+        ("/reports/save_docx", "post"): ("save_docx_report", "Save DOCX Report", "DOCX file result"),
+        ("/reports/save_html_dashboard", "post"): ("save_html_dashboard", "Save HTML Dashboard", "HTML dashboard result"),
+        ("/pages", "get"): ("list_pages", "List Pages", "Pages list"),
+        ("/page_posts", "get"): ("list_page_posts", "List Page Posts", "Page posts list"),
+        ("/page_posts", "post"): ("create_page_post", "Create Page Post", "Create page post result"),
+        ("/page_comments", "get"): ("list_page_comments", "List Page Comments", "Page comments list"),
+        ("/page_comments/{comment_id}/reply", "post"): ("reply_to_comment", "Reply To Comment", "Reply result"),
+        ("/page_comments/{comment_id}/hide", "post"): ("hide_comment", "Hide Comment", "Hide comment result"),
+    }
     for path, value in schema.get("paths", {}).items():
         if path not in allowed_paths:
             continue
-        if path != "/health":
-            for operation in value.values():
-                if isinstance(operation, dict):
-                    operation["security"] = [{"GPTMetaOAuth": []}]
-        filtered_paths[path] = value
+        path_item = deepcopy(value)
+        for method, operation in list(path_item.items()):
+            if not isinstance(operation, dict):
+                continue
+            op_id, summary, response_desc = operation_ids.get((path, method), (operation.get("operationId") or f"{method}_{path}", operation.get("summary") or path, "Successful Response"))
+            operation["operationId"] = op_id
+            operation["summary"] = summary
+            operation.pop("description", None)
+            operation.pop("tags", None)
+            operation.pop("security", None)
+            responses = operation.setdefault("responses", {})
+            responses["200"] = {"description": response_desc}
+            responses.pop("422", None)
+        filtered_paths[path] = path_item
     schema["paths"] = filtered_paths
+
+    # Compact components: keep only schemas referenced by the Lite paths and make
+    # RawMetaRequest simple so ChatGPT keeps using it dynamically.
+    components = schema.setdefault("components", {})
+    schemas = components.get("schemas", {})
+    keep = {
+        "RawMetaRequest",
+        "AnalysisRunRequest",
+        "AnalysisDashboardRequest",
+        "AnalysisDocxRequest",
+        "SaveExcelReportRequest",
+        "ExcelSheetSpec",
+        "SavePdfReportRequest",
+        "PdfSectionSpec",
+        "SavePptxReportRequest",
+        "PptSlideSpec",
+        "SaveDocxReportRequest",
+        "SaveHtmlDashboardRequest",
+        "PagePostCreateRequest",
+        "CommentReplyRequest",
+        "CommentHideRequest",
+    }
+    components["schemas"] = {k: v for k, v in schemas.items() if k in keep}
+    components["schemas"]["RawMetaRequest"] = {
+        "type": "object",
+        "properties": {
+            "method": {"type": "string", "enum": ["GET", "POST", "DELETE"], "default": "GET"},
+            "path": {"type": "string"},
+            "params": {"type": "object", "additionalProperties": True, "default": {}},
+            "data": {"type": "object", "additionalProperties": True, "default": {}},
+        },
+        "required": ["path"],
+    }
     return schema
 
 app.add_middleware(
