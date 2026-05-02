@@ -8,6 +8,7 @@ from app.config import ALLOW_ORIGINS, PUBLIC_BASE_URL, SESSION_SECRET
 from app.api.health import router as health_router
 from app.api.reports import router as reports_router
 from app.api.analysis import router as analysis_router
+from app.api.sync import router as sync_router
 from app.api.meta_raw import router as meta_router
 from app.api.accounts import router as accounts_router
 from app.api.insights import router as insights_router
@@ -167,6 +168,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(reports_router)
 app.include_router(analysis_router)
+app.include_router(sync_router)
 app.include_router(meta_router)
 app.include_router(accounts_router)
 app.include_router(insights_router)
