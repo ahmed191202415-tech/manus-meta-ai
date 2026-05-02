@@ -25,6 +25,35 @@ from app.analytics.intelligence_storage import save_intelligence_run
 from app.core.auth import resolve_access_token
 
 
+
+def _clean_json_value(value):
+    import math
+    try:
+        import pandas as pd
+        import numpy as np
+        if value is pd.NA:
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.isoformat()
+        if isinstance(value, np.generic):
+            value = value.item()
+    except Exception:
+        pass
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {str(k): _clean_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean_json_value(v) for v in value]
+    if hasattr(value, 'isoformat') and not isinstance(value, (str, bytes)):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return value
+
 def _num(df, col: str):
     import pandas as pd
     if col not in df.columns:
@@ -55,11 +84,11 @@ def _summarize_deep_breakdown_df(df, breakdowns):
     g["ctr"] = g["clicks"] / g["impressions"].replace(0, pd.NA)
     g["cost_per_result"] = g["spend"] / g["results"].replace(0, pd.NA)
     g = g.sort_values(["results", "spend"], ascending=[False, False]).head(10).fillna(0)
-    return {
+    return _clean_json_value({
         "rows": int(len(df)),
         "breakdowns": group_cols,
         "top_segments": g.to_dict(orient="records"),
-    }
+    })
 
 
 def _run_deep_breakdown_fetches(body, token: str, plans: list[dict]) -> list[dict]:
@@ -83,10 +112,10 @@ def _run_deep_breakdown_fetches(body, token: str, plans: list[dict]) -> list[dic
                 breakdowns=breakdowns,
                 action_breakdowns=plan.get("action_breakdowns") or ["action_type"],
             )
-            results.append({"plan": plan, "summary": _summarize_deep_breakdown_df(df, breakdowns)})
+            results.append(_clean_json_value({"plan": plan, "summary": _summarize_deep_breakdown_df(df, breakdowns)}))
         except Exception as exc:
-            results.append({"plan": plan, "error_type": type(exc).__name__, "message": str(exc)[:1000]})
-    return results
+            results.append(_clean_json_value({"plan": plan, "error_type": type(exc).__name__, "message": str(exc)[:1000]}))
+    return _clean_json_value(results)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
