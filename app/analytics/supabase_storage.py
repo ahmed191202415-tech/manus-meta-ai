@@ -66,10 +66,28 @@ def _json_obj(value: Any) -> Any:
 def _clean(value: Any) -> Any:
     if value is None:
         return None
-    if isinstance(value, float) and pd.isna(value):
-        return None
+    try:
+        if pd.isna(value) and not isinstance(value, (list, dict, tuple)):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, dict):
+        return {str(k): _clean(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean(v) for v in value]
+    if isinstance(value, float):
+        try:
+            if pd.isna(value) or value in (float('inf'), float('-inf')):
+                return None
+        except Exception:
+            pass
     if isinstance(value, pd.Timestamp):
         return value.date().isoformat()
+    if hasattr(value, 'item'):
+        try:
+            return _clean(value.item())
+        except Exception:
+            pass
     if hasattr(value, 'isoformat'):
         try:
             return value.isoformat()
@@ -97,7 +115,7 @@ def _df_records(df: pd.DataFrame, json_cols: Iterable[str] = ()) -> List[Dict[st
 def _post(table: str, rows: List[Dict[str, Any]], on_conflict: str | None = None) -> None:
     if not rows:
         return
-    response = requests.post(_endpoint(table, on_conflict=on_conflict), headers=_headers(), data=json.dumps(rows, ensure_ascii=False, default=str), timeout=90)
+    response = requests.post(_endpoint(table, on_conflict=on_conflict), headers=_headers(), data=json.dumps(_clean(rows), ensure_ascii=False, default=str, allow_nan=False), timeout=90)
     if response.status_code >= 400:
         raise RuntimeError(f'Supabase insert failed for {table}: {response.status_code} {response.text[:1000]}')
 

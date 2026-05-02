@@ -127,13 +127,67 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return con
 
 
+def _sanitize_json(value: Any) -> Any:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value) and not isinstance(value, (list, dict, tuple)):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, dict):
+        return {str(k): _sanitize_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json(v) for v in value]
+    if hasattr(value, 'item'):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return value
+
+
 def _json_safe(value: Any) -> str:
     if isinstance(value, str):
         return value
     try:
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(_sanitize_json(value), ensure_ascii=False, default=str, allow_nan=False)
     except Exception:
-        return str(value)
+        return json.dumps(str(value), ensure_ascii=False)
+
+
+def _metric_number(value: Any) -> float:
+    """Convert Meta scalar/list action metric to a numeric value for storage."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (list, tuple)):
+        total = 0.0
+        for item in value:
+            if isinstance(item, dict):
+                try:
+                    total += float(item.get('value') or 0)
+                except Exception:
+                    pass
+            else:
+                try:
+                    total += float(item or 0)
+                except Exception:
+                    pass
+        return total
+    if isinstance(value, dict):
+        try:
+            return float(value.get('value') or 0)
+        except Exception:
+            return 0.0
+    try:
+        if pd.isna(value):
+            return 0.0
+    except Exception:
+        pass
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
 
 
 def prepare_raw_for_storage(df: pd.DataFrame, level: str = "campaign", breakdown_signature: str = "") -> pd.DataFrame:
@@ -144,13 +198,14 @@ def prepare_raw_for_storage(df: pd.DataFrame, level: str = "campaign", breakdown
     for col in ["spend", "impressions", "reach", "frequency", "clicks", "inline_link_clicks", "outbound_clicks"]:
         if col not in out.columns:
             out[col] = 0
+        out[col] = out[col].apply(_metric_number)
     for col in ["actions", "action_values", "cost_per_action_type"]:
         if col not in out.columns:
             out[col] = "[]"
         out[col] = out[col].apply(_json_safe)
     out["level"] = level
     out["breakdown_signature"] = breakdown_signature
-    out["raw_json"] = df.apply(lambda r: json.dumps(r.to_dict(), ensure_ascii=False, default=str), axis=1) if len(out) else ""
+    out["raw_json"] = df.apply(lambda r: json.dumps(_sanitize_json(r.to_dict()), ensure_ascii=False, default=str, allow_nan=False), axis=1) if len(out) else ""
     cols = [
         "date", "account_id", "campaign_id", "adset_id", "ad_id", "level", "objective", "optimization_goal", "billing_event",
         "breakdown_signature", "spend", "impressions", "reach", "frequency", "clicks", "inline_link_clicks", "outbound_clicks",
@@ -165,7 +220,10 @@ def upsert_df(con: sqlite3.Connection, table: str, df: pd.DataFrame) -> None:
     placeholders = ",".join(["?"] * len(df.columns))
     cols = ",".join(df.columns)
     sql = f"INSERT OR REPLACE INTO {table} ({cols}) VALUES ({placeholders})"
-    con.executemany(sql, df.where(pd.notnull(df), None).itertuples(index=False, name=None))
+    safe_rows = []
+    for row in df.itertuples(index=False, name=None):
+        safe_rows.append(tuple(_json_safe(v) if isinstance(v, (list, dict, tuple)) else _sanitize_json(v) for v in row))
+    con.executemany(sql, safe_rows)
     con.commit()
 
 
