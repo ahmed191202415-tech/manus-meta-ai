@@ -36,6 +36,19 @@ create table if not exists public.meta_connections (
   primary key (tenant_id, meta_user_id)
 );
 
+create table if not exists public.google_connections (
+  tenant_id text primary key references public.tenant_accounts(tenant_id) on delete cascade,
+  google_user_email text,
+  access_token text not null,
+  refresh_token text,
+  expires_at timestamptz,
+  scopes text,
+  selected_ga4_property_id text,
+  selected_ga4_property_name text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 create table if not exists public.oauth_codes (
   code text primary key,
   tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
@@ -54,6 +67,9 @@ create table if not exists public.app_tokens (
 create index if not exists idx_meta_connections_tenant_updated_at
   on public.meta_connections (tenant_id, updated_at desc);
 
+create index if not exists idx_google_connections_tenant_updated_at
+  on public.google_connections (tenant_id, updated_at desc);
+
 create index if not exists idx_app_tokens_tenant_meta_user
   on public.app_tokens (tenant_id, meta_user_id);
 
@@ -63,3 +79,11 @@ alter table public.tenant_accounts add column if not exists disabled_at timestam
 alter table public.tenant_accounts add column if not exists deleted_at timestamptz;
 alter table public.tenant_accounts add column if not exists subscription_started_at timestamptz;
 alter table public.tenant_accounts add column if not exists access_expires_at timestamptz;
+
+alter table public.google_connections add column if not exists google_user_email text;
+alter table public.google_connections add column if not exists access_token text;
+alter table public.google_connections add column if not exists refresh_token text;
+alter table public.google_connections add column if not exists expires_at timestamptz;
+alter table public.google_connections add column if not exists scopes text;
+alter table public.google_connections add column if not exists selected_ga4_property_id text;
+alter table public.google_connections add column if not exists selected_ga4_property_name text;

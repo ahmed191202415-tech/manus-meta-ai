@@ -10,6 +10,7 @@ This project is currently prepared for:
 
 ## Required env vars
 
+- `ENVIRONMENT=production`
 - `PUBLIC_BASE_URL`
 - `SESSION_SECRET`
 - `SUPABASE_URL`
@@ -18,6 +19,7 @@ This project is currently prepared for:
 - `GPT_OAUTH_CLIENT_SECRET`
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
+- `ALLOW_ORIGINS` with your exact frontend/domain origins, not `*`
 
 Optional:
 
@@ -25,6 +27,10 @@ Optional:
 - `META_APP_ID`
 - `META_APP_SECRET`
 - `META_OAUTH_REDIRECT_URI`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REDIRECT_URI`
+- `GOOGLE_OAUTH_SCOPES`
 
 ## Required SQL
 

@@ -27,7 +27,7 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 @router.post("/run")
 async def analysis_run(body: AnalysisRunRequest, request: Request):
-    token = await resolve_access_token(request)
+    token = body.access_token.strip() if body.access_token else await resolve_access_token(request)
 
     current_df = fetch_insights_df(
         body.account_id,
