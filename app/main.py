@@ -28,6 +28,8 @@ from app.api.analysis_docx import router as analysis_docx_router
 from app.api.auth_meta import router as auth_meta_router
 from app.api.oauth_gpt import router as oauth_gpt_router
 from app.api.tenant_portal import router as tenant_portal_router
+from app.api.auth_google import router as auth_google_router
+from app.api.ga4 import router as ga4_router
 
 openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
 
@@ -59,6 +61,8 @@ def openapi_gpt_schema():
         "/analysis/run",
         "/analysis_dashboard/build",
         "/analysis_docx/build",
+        "/ga4/properties",
+        "/ga4/select_property",
         "/reports/save_excel",
         "/reports/save_pdf",
         "/reports/save_pptx",
@@ -117,3 +121,5 @@ app.include_router(analysis_docx_router)
 app.include_router(auth_meta_router)
 app.include_router(oauth_gpt_router)
 app.include_router(tenant_portal_router)
+app.include_router(auth_google_router)
+app.include_router(ga4_router)

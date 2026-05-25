@@ -25,6 +25,16 @@ META_OAUTH_SCOPES = os.getenv(
     "META_OAUTH_SCOPES",
     "ads_management,ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement"
 )
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    f"{PUBLIC_BASE_URL}/auth/google/callback" if PUBLIC_BASE_URL else "",
+)
+GOOGLE_OAUTH_SCOPES = os.getenv(
+    "GOOGLE_OAUTH_SCOPES",
+    "https://www.googleapis.com/auth/analytics.readonly",
+)
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-production")
 PORTAL_PATH = os.getenv("PORTAL_PATH", "/portal")
 PORTAL_INVITE_SALT = os.getenv("PORTAL_INVITE_SALT", "portal-invite")

@@ -496,6 +496,71 @@ def set_selected_page(
     return rows[0] if rows else None
 
 
+def save_google_connection(tenant_id: str, payload: dict):
+    clean_tenant_id = _clean(tenant_id)
+    existing = get_active_google_connection_for_tenant(clean_tenant_id)
+    refresh_token = _clean(payload.get("refresh_token")) or _clean((existing or {}).get("refresh_token"))
+    body = {
+        "tenant_id": clean_tenant_id,
+        "google_user_email": _clean(payload.get("google_user_email")),
+        "access_token": _clean(payload.get("access_token")),
+        "refresh_token": refresh_token,
+        "expires_at": payload.get("expires_at"),
+        "scopes": _clean(payload.get("scopes")),
+        "selected_ga4_property_id": _clean((existing or {}).get("selected_ga4_property_id")),
+        "selected_ga4_property_name": _clean((existing or {}).get("selected_ga4_property_name")),
+        "updated_at": _dt(datetime.now(timezone.utc)),
+    }
+    params = {"on_conflict": "tenant_id"}
+    rows = _post("google_connections", body, params=params, prefer="resolution=merge-duplicates,return=representation") or []
+    return rows[0] if rows else body
+
+
+def get_active_google_connection_for_tenant(tenant_id: str):
+    return _get_single(
+        "google_connections",
+        params={
+            "tenant_id": f"eq.{_clean(tenant_id)}",
+            "select": "*",
+            "limit": "1",
+        },
+    )
+
+
+def update_google_tokens(tenant_id: str, payload: dict):
+    body = {
+        "access_token": _clean(payload.get("access_token")),
+        "expires_at": payload.get("expires_at"),
+        "updated_at": _dt(datetime.now(timezone.utc)),
+    }
+    refresh_token = _clean(payload.get("refresh_token"))
+    if refresh_token:
+        body["refresh_token"] = refresh_token
+    rows = _patch(
+        "google_connections",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}"},
+        payload=body,
+    ) or []
+    return rows[0] if rows else None
+
+
+def update_selected_ga4_property(tenant_id: str, property_id: str, property_name: str | None = None):
+    rows = _patch(
+        "google_connections",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}"},
+        payload={
+            "selected_ga4_property_id": _clean(property_id),
+            "selected_ga4_property_name": _clean(property_name),
+            "updated_at": _dt(datetime.now(timezone.utc)),
+        },
+    ) or []
+    return rows[0] if rows else None
+
+
+def purge_google_connection(tenant_id: str):
+    return _delete("google_connections", {"tenant_id": f"eq.{_clean(tenant_id)}"})
+
+
 def delete_meta_connection(meta_user_id: str, tenant_id: str | None = None):
     params = {"meta_user_id": f"eq.{_clean(meta_user_id)}"}
     if tenant_id:
