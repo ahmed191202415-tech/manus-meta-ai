@@ -8,7 +8,6 @@ from app.core.oauth_store import (
     get_app_token_data,
     get_tenant_account_by_id,
     get_tenant_meta_app,
-    get_latest_meta_connection,
     is_account_expired,
     purge_meta_connection,
 )
@@ -67,40 +66,18 @@ def _resolve_valid_saved_token(
     return access_token
 
 
-def _resolve_default_saved_connection(request: Request) -> str | None:
-    """Fallback for GPT Actions when ChatGPT does not send OAuth bearer token.
-
-    Uses the newest saved Meta connection directly from meta_connections so it
-    works even when tenant_accounts is empty/old or ChatGPT omits bearer auth.
-    """
+def _safe_get_app_token_data(bearer: str) -> dict | None:
     try:
-        connection = get_latest_meta_connection()
-        if not connection or not connection.get("meta_access_token"):
-            return None
-        tenant_id = connection.get("tenant_id")
-        meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
-        app_secret = meta_app.get("meta_app_secret") if meta_app else None
-        set_current_meta_app_secret(app_secret)
-        if tenant_id:
-            request.session["tenant_id"] = tenant_id
-        request.session["meta_access_token"] = connection["meta_access_token"]
-        request.session["meta_user_id"] = connection.get("meta_user_id")
-        request.session["meta_user"] = {
-            "id": connection.get("meta_user_id"),
-            "name": connection.get("meta_user_name"),
-        }
-        return _resolve_valid_saved_token(
-            request,
-            connection["meta_access_token"],
-            connection.get("meta_user_id"),
-            tenant_id,
-            app_secret=app_secret,
-        )
-    except HTTPException:
-        raise
+        return get_app_token_data(bearer)
     except Exception:
         return None
-    return None
+
+
+def _safe_find_meta_connection_by_access_token(bearer: str) -> dict | None:
+    try:
+        return find_meta_connection_by_access_token(bearer)
+    except Exception:
+        return None
 
 
 async def resolve_access_token(request: Request) -> str:
@@ -126,7 +103,7 @@ async def resolve_access_token(request: Request) -> str:
         if not bearer:
             raise HTTPException(status_code=401, detail="Empty bearer token")
 
-        app_token_data = get_app_token_data(bearer)
+        app_token_data = _safe_get_app_token_data(bearer)
         if app_token_data:
             meta_access_token = app_token_data.get("meta_access_token")
             if meta_access_token:
@@ -140,7 +117,7 @@ async def resolve_access_token(request: Request) -> str:
                     app_secret=app_secret,
                 )
 
-        direct_conn = find_meta_connection_by_access_token(bearer)
+        direct_conn = _safe_find_meta_connection_by_access_token(bearer)
         if direct_conn:
             tenant_id = direct_conn.get("tenant_id")
             meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
@@ -183,10 +160,6 @@ async def resolve_access_token(request: Request) -> str:
                 tenant_id,
                 app_secret=app_secret,
             )
-
-    default_token = _resolve_default_saved_connection(request)
-    if default_token:
-        return default_token
 
     raise HTTPException(
         status_code=401,

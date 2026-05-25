@@ -10,6 +10,7 @@ This project is currently prepared for:
 
 ## Required env vars
 
+- `ENVIRONMENT=production`
 - `PUBLIC_BASE_URL`
 - `SESSION_SECRET`
 - `SUPABASE_URL`
@@ -18,6 +19,7 @@ This project is currently prepared for:
 - `GPT_OAUTH_CLIENT_SECRET`
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
+- `ALLOW_ORIGINS` with your exact frontend/domain origins, not `*`
 
 Optional:
 

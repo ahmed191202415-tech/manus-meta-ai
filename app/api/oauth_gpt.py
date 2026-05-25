@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
-import os
 
-from app.config import PORTAL_PATH
+from app.config import GPT_OAUTH_CLIENT_ID, GPT_OAUTH_CLIENT_SECRET, PORTAL_PATH
 from app.core.connection_resolver import resolve_tenant_connection_state
 from app.core.auth import _clear_meta_session, _validate_meta_access_token
 from app.core.oauth_store import (
@@ -15,9 +14,6 @@ from app.core.oauth_store import (
 )
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
-
-GPT_OAUTH_CLIENT_ID = os.getenv("GPT_OAUTH_CLIENT_ID", "gpt_client_1")
-GPT_OAUTH_CLIENT_SECRET = os.getenv("GPT_OAUTH_CLIENT_SECRET", "super_secret_gpt_client_key")
 
 
 @router.get("/authorize")
