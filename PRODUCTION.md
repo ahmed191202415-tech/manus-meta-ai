@@ -27,6 +27,7 @@ Optional:
 - `META_APP_ID`
 - `META_APP_SECRET`
 - `META_OAUTH_REDIRECT_URI`
+- `META_TEST_ACCESS_TOKEN` for temporary testing only; do not use it for multi-client production.
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`

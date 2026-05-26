@@ -1,5 +1,6 @@
 from fastapi import HTTPException, Request
 
+from app.config import META_TEST_ACCESS_TOKEN
 from app.core.meta_client import meta_call
 from app.core.meta_context import set_current_meta_app_secret
 from app.core.oauth_store import (
@@ -160,6 +161,10 @@ async def resolve_access_token(request: Request) -> str:
                 tenant_id,
                 app_secret=app_secret,
             )
+
+    if META_TEST_ACCESS_TOKEN:
+        set_current_meta_app_secret(None)
+        return META_TEST_ACCESS_TOKEN
 
     raise HTTPException(
         status_code=401,
