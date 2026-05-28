@@ -10,6 +10,7 @@ from app.core.oauth_store import (
 )
 
 GA4_ADMIN_ACCOUNT_SUMMARIES_URL = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
+GA4_DATA_BASE_URL = "https://analyticsdata.googleapis.com/v1beta"
 
 
 def _parse_dt(value: str | None):
@@ -51,7 +52,17 @@ def get_google_credentials_for_tenant(tenant_id: str) -> dict:
 
 
 def _auth_headers(access_token: str) -> dict:
-    return {"Authorization": f"Bearer {access_token}"}
+    return {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+
+def resolve_ga4_property_id(tenant_id: str, property_id: str | None = None) -> str:
+    if property_id:
+        return str(property_id).replace("properties/", "").strip()
+    connection = get_google_connection_or_401(tenant_id)
+    selected = str(connection.get("selected_ga4_property_id") or "").replace("properties/", "").strip()
+    if not selected:
+        raise HTTPException(status_code=400, detail="GA4 property not selected. Pass property_id or select a property first.")
+    return selected
 
 
 def list_ga4_properties(tenant_id: str) -> list[dict]:
@@ -86,17 +97,135 @@ def list_ga4_properties(tenant_id: str) -> list[dict]:
     return properties
 
 
-def run_ga4_report(*args, **kwargs):
-    raise HTTPException(status_code=501, detail="GA4 report execution will be added in Phase 2.")
+def _dimension(name: str) -> dict:
+    return {"name": name}
 
 
-def run_ga4_funnel_report(*args, **kwargs):
-    raise HTTPException(status_code=501, detail="GA4 funnel reports will be added in Phase 2.")
+def _metric(name: str) -> dict:
+    return {"name": name}
 
 
-def run_ga4_realtime_report(*args, **kwargs):
-    raise HTTPException(status_code=501, detail="GA4 realtime reports will be added in Phase 2.")
+def _date_range(start_date: str, end_date: str) -> dict:
+    return {"startDate": start_date, "endDate": end_date}
 
 
-def get_ga4_metadata(*args, **kwargs):
-    raise HTTPException(status_code=501, detail="GA4 metadata will be added in Phase 2.")
+def run_ga4_report(
+    tenant_id: str,
+    property_id: str | None,
+    dimensions: list[str],
+    metrics: list[str],
+    start_date: str = "30daysAgo",
+    end_date: str = "today",
+    limit: int = 100,
+    filters: dict | None = None,
+    order_by: list[dict] | None = None,
+) -> dict:
+    resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
+    credentials = get_google_credentials_for_tenant(tenant_id)
+    body = {
+        "dateRanges": [_date_range(start_date, end_date)],
+        "dimensions": [_dimension(item) for item in dimensions],
+        "metrics": [_metric(item) for item in metrics],
+        "limit": str(min(max(int(limit or 100), 1), 1000)),
+    }
+    if filters:
+        if filters.get("dimensionFilter"):
+            body["dimensionFilter"] = filters["dimensionFilter"]
+        if filters.get("metricFilter"):
+            body["metricFilter"] = filters["metricFilter"]
+    if order_by:
+        body["orderBys"] = order_by
+    response = requests.post(
+        f"{GA4_DATA_BASE_URL}/properties/{resolved_property_id}:runReport",
+        headers=_auth_headers(credentials["access_token"]),
+        json=body,
+        timeout=45,
+    )
+    data = response.json()
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail={"message": "GA4 report failed.", "google_response": data})
+    data["property_id"] = resolved_property_id
+    data["date_range"] = {"start_date": start_date, "end_date": end_date}
+    return data
+
+
+def run_ga4_funnel_report(
+    tenant_id: str,
+    property_id: str | None,
+    steps: list[dict],
+    start_date: str = "30daysAgo",
+    end_date: str = "today",
+) -> dict:
+    if not steps:
+        raise HTTPException(status_code=400, detail="At least one funnel step is required.")
+    resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
+    credentials = get_google_credentials_for_tenant(tenant_id)
+    body = {
+        "dateRanges": [_date_range(start_date, end_date)],
+        "funnel": {
+            "steps": [
+                {
+                    "name": step["name"],
+                    "filterExpression": {
+                        "funnelEventFilter": {
+                            "eventName": step["event_name"],
+                        }
+                    },
+                }
+                for step in steps
+            ]
+        },
+    }
+    response = requests.post(
+        f"https://analyticsdata.googleapis.com/v1alpha/properties/{resolved_property_id}:runFunnelReport",
+        headers=_auth_headers(credentials["access_token"]),
+        json=body,
+        timeout=45,
+    )
+    data = response.json()
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail={"message": "GA4 funnel report failed.", "google_response": data})
+    data["property_id"] = resolved_property_id
+    return data
+
+
+def run_ga4_realtime_report(
+    tenant_id: str,
+    property_id: str | None,
+    dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    limit: int = 100,
+) -> dict:
+    resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
+    credentials = get_google_credentials_for_tenant(tenant_id)
+    body = {
+        "dimensions": [_dimension(item) for item in (dimensions or ["country", "deviceCategory"])],
+        "metrics": [_metric(item) for item in (metrics or ["activeUsers"])],
+        "limit": str(min(max(int(limit or 100), 1), 1000)),
+    }
+    response = requests.post(
+        f"{GA4_DATA_BASE_URL}/properties/{resolved_property_id}:runRealtimeReport",
+        headers=_auth_headers(credentials["access_token"]),
+        json=body,
+        timeout=45,
+    )
+    data = response.json()
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail={"message": "GA4 realtime report failed.", "google_response": data})
+    data["property_id"] = resolved_property_id
+    return data
+
+
+def get_ga4_metadata(tenant_id: str, property_id: str | None = None) -> dict:
+    resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
+    credentials = get_google_credentials_for_tenant(tenant_id)
+    response = requests.get(
+        f"{GA4_DATA_BASE_URL}/properties/{resolved_property_id}/metadata",
+        headers=_auth_headers(credentials["access_token"]),
+        timeout=45,
+    )
+    data = response.json()
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail={"message": "GA4 metadata failed.", "google_response": data})
+    data["property_id"] = resolved_property_id
+    return data

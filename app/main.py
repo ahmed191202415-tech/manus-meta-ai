@@ -30,6 +30,8 @@ from app.api.oauth_gpt import router as oauth_gpt_router
 from app.api.tenant_portal import router as tenant_portal_router
 from app.api.auth_google import router as auth_google_router
 from app.api.ga4 import router as ga4_router
+from app.api.website_analysis import router as website_analysis_router
+from app.api.journey import router as journey_router
 from app.api.legal import router as legal_router
 
 openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
@@ -64,6 +66,25 @@ def openapi_gpt_schema():
         "/analysis_docx/build",
         "/ga4/properties",
         "/ga4/select_property",
+        "/ga4/report",
+        "/ga4/custom_report",
+        "/ga4/funnel",
+        "/ga4/realtime",
+        "/ga4/metadata",
+        "/ga4/events",
+        "/ga4/landing_pages",
+        "/ga4/traffic_sources",
+        "/ga4/devices",
+        "/website/analyze",
+        "/website/tracking_audit",
+        "/website/landing_pages_audit",
+        "/website/traffic_quality",
+        "/website/device_analysis",
+        "/website/conversion_analysis",
+        "/journey/analyze",
+        "/journey/tracking_integrity",
+        "/journey/ad_to_site_matching",
+        "/journey/decision",
         "/reports/save_excel",
         "/reports/save_pdf",
         "/reports/save_pptx",
@@ -124,4 +145,6 @@ app.include_router(oauth_gpt_router)
 app.include_router(tenant_portal_router)
 app.include_router(auth_google_router)
 app.include_router(ga4_router)
+app.include_router(website_analysis_router)
+app.include_router(journey_router)
 app.include_router(legal_router)
