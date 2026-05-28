@@ -33,3 +33,23 @@ def test_clarity_metrics_and_signals_detect_frustration():
 
 def test_clarity_empty_error_body_is_descriptive():
     assert _response_payload(DummyResponse()) == {"raw_text": "", "empty_body": True}
+
+
+def test_clarity_actual_export_field_names_are_normalized():
+    rows = normalize_clarity_export(
+        {
+            "raw": [
+                {
+                    "metricName": "DeadClickCount",
+                    "information": [
+                        {"sessionsCount": "3", "pagesViews": "1", "subTotal": "2", "Url": "https://beon.chat/"}
+                    ],
+                }
+            ]
+        }
+    )
+    summary = summarize_clarity_metrics(rows)
+    assert rows[0]["URL"] == "https://beon.chat/"
+    assert rows[0]["totalSessionCount"] == "3"
+    assert summary["clarity_sessions"] == 3
+    assert summary["frustration_events"] == 2
