@@ -52,6 +52,10 @@ class JourneyAnalysisRequest(BaseModel):
     tenant_id: str | None = None
     meta_account_id: str
     ga4_property_id: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    adset_id: str | None = None
+    ad_id: str | None = None
     start_date: str = "30daysAgo"
     end_date: str = "today"
     date_preset: str | None = "last_30d"

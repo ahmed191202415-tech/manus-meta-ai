@@ -15,6 +15,7 @@ from app.core.meta_client import meta_call, normalize_account_id
 from app.core.pagination import meta_get_all_pages
 from app.core.tenant_resolver import resolve_tenant_id_for_google
 from app.schemas.ga4_requests import JourneyAnalysisRequest, MetaTrackingAuditRequest
+from app.api.insights import _build_insights_filters
 
 router = APIRouter(prefix="/journey", tags=["journey"])
 
@@ -24,15 +25,16 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
     token = await resolve_access_token(request)
     data_errors = []
     try:
+        filters = _journey_meta_filters(body)
         meta_df = fetch_insights_df(
             body.meta_account_id,
             token,
-            body.level,
+            _resolve_meta_level(body),
             None,
             body.date_preset,
             None,
             None,
-            None,
+            filters,
             None,
         )
         meta_rows = meta_df.head(body.limit).to_dict(orient="records") if not meta_df.empty else []
@@ -47,7 +49,10 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
     tracking_quality = build_tracking_quality(True, bool(body.ga4_property_id), ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"])
     website_signals = build_website_signals(website_summary, tracking_quality, ga4_reports["landing"], ga4_reports["traffic"], ga4_reports["devices"])
     try:
-        creative_rows = _fetch_meta_ads_with_creatives(body.meta_account_id, token, body.limit)
+        creative_rows = _filter_meta_creative_rows(
+            _fetch_meta_ads_with_creatives(body.meta_account_id, token, body.limit),
+            body,
+        )
         link_audit = audit_meta_tracking_links(creative_rows, ga4_reports["landing"])
     except Exception as exc:
         link_audit = {
@@ -71,6 +76,14 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         "meta_account_id": body.meta_account_id,
         "ga4_property_id": body.ga4_property_id,
         "date_range": {"start_date": body.start_date, "end_date": body.end_date, "date_preset": body.date_preset},
+        "meta_filter": {
+            "campaign_id": body.campaign_id,
+            "campaign_name": body.campaign_name,
+            "adset_id": body.adset_id,
+            "ad_id": body.ad_id,
+            "level": _resolve_meta_level(body),
+        },
+        "ga4_filter_limits": _ga4_filter_limits(body),
         "matching": matching,
         "tracking_link_audit": link_audit,
         "summary_metrics": metrics,
@@ -222,6 +235,45 @@ def _fetch_meta_ads_with_creatives(account_id: str, token: str, limit: int) -> l
             "adset_name": adset.get("name") or row.get("adset_name"),
         })
     return normalized
+
+
+def _journey_meta_filters(body: JourneyAnalysisRequest) -> str | None:
+    filters = _build_insights_filters(None, body.campaign_id, body.campaign_name, body.adset_id, body.ad_id)
+    return None if not filters else __import__("json").dumps(filters, ensure_ascii=False)
+
+
+def _resolve_meta_level(body: JourneyAnalysisRequest) -> str:
+    if body.ad_id:
+        return "ad"
+    if body.adset_id:
+        return "adset"
+    return body.level
+
+
+def _filter_meta_creative_rows(rows: list[dict], body: JourneyAnalysisRequest) -> list[dict]:
+    result = []
+    for row in rows:
+        if body.campaign_id and str(row.get("campaign_id") or "").strip() != str(body.campaign_id).strip():
+            continue
+        if body.campaign_name and str(body.campaign_name).lower() not in str(row.get("campaign_name") or "").lower():
+            continue
+        if body.adset_id and str(row.get("adset_id") or "").strip() != str(body.adset_id).strip():
+            continue
+        if body.ad_id and str(row.get("id") or row.get("ad_id") or "").strip() != str(body.ad_id).strip():
+            continue
+        result.append(row)
+    return result
+
+
+def _ga4_filter_limits(body: JourneyAnalysisRequest) -> list[str]:
+    limits = []
+    if body.ad_id:
+        limits.append("GA4 cannot filter by ad_id unless ad_id is sent in UTM or saved as a GA4 custom dimension.")
+    if body.adset_id:
+        limits.append("GA4 cannot filter by adset_id unless adset_id is sent in UTM or saved as a GA4 custom dimension.")
+    if body.campaign_id:
+        limits.append("GA4 campaign filtering is reliable only when campaign_id or utm_campaign is present in collected traffic.")
+    return limits
 
 
 def _safe_error(exc: Exception) -> str:
