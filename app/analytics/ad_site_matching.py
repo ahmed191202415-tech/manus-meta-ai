@@ -12,6 +12,21 @@ def build_ad_site_matching(meta_rows: list[dict], ga4_rows: list[dict], link_aud
         matched_on.append("landing_page")
         confidence = "medium" if confidence == "unavailable" else confidence
 
+    ga4_ad_contents = {
+        str(row.get("sessionManualAdContent") or row.get("manualAdContent") or "").lower()
+        for row in ga4_rows
+        if row.get("sessionManualAdContent") or row.get("manualAdContent")
+    }
+    meta_ad_ids = {
+        str(row.get("ad_id") or row.get("id") or "").lower()
+        for row in meta_rows
+        if row.get("ad_id") or row.get("id")
+    }
+    matched_ad_ids = sorted(meta_ad_ids.intersection(ga4_ad_contents))
+    if matched_ad_ids:
+        matched_on.append("sessionManualAdContent")
+        confidence = "high"
+
     ga_campaigns = {str(row.get("sessionCampaignName") or "").lower() for row in ga4_rows}
     meta_campaigns = {str(row.get("campaign_name") or "").lower() for row in meta_rows}
     if meta_campaigns and ga_campaigns and meta_campaigns.intersection(ga_campaigns):
@@ -33,6 +48,7 @@ def build_ad_site_matching(meta_rows: list[dict], ga4_rows: list[dict], link_aud
     return {
         "matching_confidence": confidence,
         "matched_on": matched_on,
+        "matched_ad_ids": matched_ad_ids,
         "limits": limits,
         "tracking_link_score": link_audit.get("tracking_link_score"),
     }

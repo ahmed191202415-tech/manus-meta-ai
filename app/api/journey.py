@@ -155,7 +155,7 @@ def _ga4_journey_reports(tenant_id: str, property_id: str | None, start_date: st
     errors = []
     traffic = _safe_ga4_rows(
         errors, "traffic", tenant_id, property_id,
-        ["sessionSourceMedium", "sessionCampaignName"],
+        ["sessionSourceMedium", "sessionCampaignName", "sessionManualAdContent"],
         ["sessions", "activeUsers", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
         start_date, end_date, limit,
     )
@@ -268,7 +268,7 @@ def _filter_meta_creative_rows(rows: list[dict], body: JourneyAnalysisRequest) -
 def _ga4_filter_limits(body: JourneyAnalysisRequest) -> list[str]:
     limits = []
     if body.ad_id:
-        limits.append("GA4 cannot filter by ad_id unless ad_id is sent in UTM or saved as a GA4 custom dimension.")
+        limits.append("GA4 ad-level filtering is reliable when sessionManualAdContent contains the Meta ad_id, usually from utm_content.")
     if body.adset_id:
         limits.append("GA4 cannot filter by adset_id unless adset_id is sent in UTM or saved as a GA4 custom dimension.")
     if body.campaign_id:
