@@ -63,3 +63,27 @@ async def save_journey_html_report(body: IntelligenceReportRequest):
 @router.post("/save_journey_excel")
 async def save_journey_excel_report(body: IntelligenceReportRequest):
     return save_excel_report_local(journey_payload_to_excel_request(body.payload, body.file_name))
+
+
+@router.post("/save_website_pdf")
+async def save_website_pdf_report(body: IntelligenceReportRequest):
+    html_request = website_payload_to_html_request(body.payload, body.file_name)
+    return save_pdf_report_local(html_request)
+
+
+@router.post("/save_website_docx")
+async def save_website_docx_report(body: IntelligenceReportRequest):
+    html_request = website_payload_to_html_request(body.payload, body.file_name)
+    return save_docx_report_local(html_request)
+
+
+@router.post("/save_journey_pdf")
+async def save_journey_pdf_report(body: IntelligenceReportRequest):
+    html_request = journey_payload_to_html_request(body.payload, body.file_name)
+    return save_pdf_report_local(html_request)
+
+
+@router.post("/save_journey_docx")
+async def save_journey_docx_report(body: IntelligenceReportRequest):
+    html_request = journey_payload_to_html_request(body.payload, body.file_name)
+    return save_docx_report_local(html_request)

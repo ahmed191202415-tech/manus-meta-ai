@@ -527,6 +527,17 @@ def get_active_google_connection_for_tenant(tenant_id: str):
     )
 
 
+def get_latest_google_connection():
+    return _get_single(
+        "google_connections",
+        params={
+            "select": "*",
+            "limit": "1",
+            "order": "updated_at.desc",
+        },
+    )
+
+
 def update_google_tokens(tenant_id: str, payload: dict):
     body = {
         "access_token": _clean(payload.get("access_token")),

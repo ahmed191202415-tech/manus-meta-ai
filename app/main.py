@@ -57,7 +57,6 @@ def openapi_gpt_schema():
         "/ga4/properties",
         "/ga4/select_property",
         "/ga4/custom_report",
-        "/ga4/realtime",
         "/ga4/events",
         "/ga4/landing_pages",
         "/ga4/traffic_sources",
@@ -71,10 +70,11 @@ def openapi_gpt_schema():
         "/journey/analyze",
         "/journey/tracking_integrity",
         "/journey/ad_to_site_matching",
+        "/journey/utm_audit",
         "/journey/decision",
         "/reports/save_excel",
-        "/reports/save_html_dashboard",
         "/reports/save_website_html",
+        "/reports/save_website_docx",
         "/reports/save_journey_html",
     }
     allowed_methods = {

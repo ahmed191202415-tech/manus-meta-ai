@@ -57,3 +57,12 @@ class JourneyAnalysisRequest(BaseModel):
     date_preset: str | None = "last_30d"
     level: Literal["campaign", "adset", "ad"] = "campaign"
     limit: int = Field(default=100, ge=1, le=1000)
+
+
+class MetaTrackingAuditRequest(BaseModel):
+    tenant_id: str | None = None
+    meta_account_id: str
+    ga4_property_id: str | None = None
+    start_date: str = "30daysAgo"
+    end_date: str = "today"
+    limit: int = Field(default=100, ge=1, le=1000)

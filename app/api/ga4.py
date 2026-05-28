@@ -16,6 +16,7 @@ from app.core.oauth_store import (
     get_active_google_connection_for_tenant,
     update_selected_ga4_property,
 )
+from app.core.tenant_resolver import resolve_tenant_id_for_google
 from app.schemas.ga4_requests import (
     GA4CustomReportRequest,
     GA4DateRangeRequest,
@@ -27,10 +28,7 @@ router = APIRouter(prefix="/ga4", tags=["ga4"])
 
 
 def _resolve_tenant_id(request: Request, tenant_id: str | None = None) -> str:
-    resolved = str(tenant_id or request.session.get("tenant_id") or "").strip()
-    if not resolved:
-        raise HTTPException(status_code=401, detail="Tenant is required for GA4 requests.")
-    return resolved
+    return resolve_tenant_id_for_google(request, tenant_id)
 
 
 def _get_google_connection_or_storage_error(tenant_id: str) -> dict | None:

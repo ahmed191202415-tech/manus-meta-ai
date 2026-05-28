@@ -8,6 +8,7 @@ from app.core.connection_resolver import resolve_tenant_connection_state
 from app.core.oauth_store import (
     delete_access_email,
     ensure_allowed_tenant_by_email,
+    get_active_google_connection_for_tenant,
     get_tenant_status,
     list_tenant_accounts,
     normalize_email,
@@ -549,6 +550,88 @@ async def portal_home(request: Request, email: str | None = None):
     status["email"] = request.session.get("user_email") or tenant_id
     has_pending_gpt_oauth = bool(request.session.get("gpt_oauth_redirect_uri"))
     return HTMLResponse(_portal_html(status, META_OAUTH_REDIRECT_URI, has_pending_gpt_oauth=has_pending_gpt_oauth))
+
+
+@router.get("/client", response_class=HTMLResponse)
+async def client_dashboard(request: Request, email: str | None = None):
+    if email and not request.session.get("tenant_id"):
+        try:
+            record = ensure_allowed_tenant_by_email(email)
+            request.session["tenant_id"] = record["tenant_id"]
+            request.session["user_email"] = record["email"]
+        except ValueError:
+            return HTMLResponse(_email_gate_html(email=email or ""))
+
+    tenant_id = str(request.session.get("tenant_id") or "").strip()
+    if not tenant_id:
+        return HTMLResponse(_email_gate_html(email=email or ""))
+
+    meta_status = get_tenant_status(tenant_id)
+    google_connection = get_active_google_connection_for_tenant(tenant_id)
+    selected_property_id = (google_connection or {}).get("selected_ga4_property_id") or ""
+    selected_property_name = (google_connection or {}).get("selected_ga4_property_name") or ""
+    user_email = request.session.get("user_email") or tenant_id
+    schema_url = f"{PUBLIC_BASE_URL}/openapi-gpt.json" if PUBLIC_BASE_URL else "/openapi-gpt.json"
+    body = f"""
+    <section class="card">
+      <h1>لوحة ربط العميل</h1>
+      <p>من هنا العميل يربط Meta و Google Analytics، يختار GA4 Property، وينسخ رابط GPT Schema.</p>
+      <p class="muted">Tenant ID: <strong>{tenant_id}</strong></p>
+    </section>
+    <section class="summary">
+      <div class="mini"><strong>Meta</strong><span>{'متصل' if meta_status.get('meta_connection', {}).get('connected') else 'غير متصل'}</span></div>
+      <div class="mini"><strong>Google</strong><span>{'متصل' if google_connection else 'غير متصل'}</span></div>
+      <div class="mini"><strong>GA4 Property</strong><span>{selected_property_name or selected_property_id or 'لم يتم الاختيار'}</span></div>
+    </section>
+    <section class="card">
+      <h2>1. ربط Meta</h2>
+      <a class="button" href="/auth/meta/login">Connect Meta</a>
+    </section>
+    <section class="card">
+      <h2>2. ربط Google Analytics</h2>
+      <a class="button" href="/auth/google/login?tenant_id={tenant_id}">Connect Google</a>
+      <p class="muted">بعد الربط افتح خصائص GA4 من الرابط التالي.</p>
+      <a class="button" href="/ga4/properties?tenant_id={tenant_id}">Show GA4 Properties</a>
+    </section>
+    <section class="card">
+      <h2>3. اختيار GA4 Property</h2>
+      <p class="muted">لو عندك Property ID اكتبه هنا مرة واحدة.</p>
+      <label for="property_id">Property ID</label>
+      <input id="property_id" placeholder="529884683" value="{selected_property_id}" />
+      <label for="property_name">Property Name</label>
+      <input id="property_name" placeholder="Website name" value="{selected_property_name}" />
+      <button onclick="selectProperty()">Save GA4 Property</button>
+    </section>
+    <section class="card">
+      <h2>4. إعداد GPT</h2>
+      <p>ضع هذا الرابط في GPT Actions:</p>
+      <pre>{schema_url}</pre>
+      <button onclick="copySchema()">Copy Schema URL</button>
+    </section>
+    <script>
+      async function selectProperty() {{
+        const property_id = document.getElementById("property_id").value;
+        const property_name = document.getElementById("property_name").value;
+        const response = await fetch("/ga4/select_property", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          credentials: "include",
+          body: JSON.stringify({{ tenant_id: "{tenant_id}", property_id, property_name }})
+        }});
+        if (!response.ok) {{
+          alert(await response.text());
+          return;
+        }}
+        alert("تم حفظ GA4 Property");
+        window.location.reload();
+      }}
+      async function copySchema() {{
+        await navigator.clipboard.writeText("{schema_url}");
+        alert("تم نسخ رابط Schema");
+      }}
+    </script>
+    """
+    return HTMLResponse(_page_shell(f"Client Dashboard - {user_email}", body))
 
 
 @router.post("/session/email")

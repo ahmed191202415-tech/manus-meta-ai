@@ -5,17 +5,14 @@ from app.analytics.tracking_quality import build_tracking_quality
 from app.analytics.website_metrics import summarize_website_metrics, top_entities
 from app.analytics.website_signals import build_website_signals
 from app.core.ga4_client import resolve_ga4_property_id, run_ga4_report
+from app.core.tenant_resolver import resolve_tenant_id_for_google
 from app.schemas.ga4_requests import WebsiteAnalysisRequest
 
 router = APIRouter(prefix="/website", tags=["website-analysis"])
 
 
 def _resolve_tenant_id(request: Request, tenant_id: str | None = None) -> str:
-    resolved = str(tenant_id or request.session.get("tenant_id") or "").strip()
-    if not resolved:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Tenant is required for website analysis.")
-    return resolved
+    return resolve_tenant_id_for_google(request, tenant_id)
 
 
 def _fetch_standard_reports(tenant_id: str, property_id: str | None, start_date: str, end_date: str, limit: int) -> dict:
