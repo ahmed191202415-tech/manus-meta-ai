@@ -1,5 +1,6 @@
 from app.analytics.clarity_metrics import normalize_clarity_export, summarize_clarity_metrics
 from app.analytics.clarity_signals import build_clarity_signals
+from app.api.clarity import _compact_clarity_response
 from app.core.clarity_client import _response_payload
 
 
@@ -53,3 +54,15 @@ def test_clarity_actual_export_field_names_are_normalized():
     assert rows[0]["totalSessionCount"] == "3"
     assert summary["clarity_sessions"] == 3
     assert summary["frustration_events"] == 2
+
+
+def test_clarity_compact_response_omits_raw_by_default():
+    response = _compact_clarity_response(
+        {"tenant_id": "t", "dimensions": ["URL"], "raw": [{"large": True}]},
+        [{"URL": "/a", "totalSessionCount": 5}, {"URL": "/b", "totalSessionCount": 2}],
+        1,
+        False,
+    )
+    assert "raw" not in response
+    assert "rows" not in response
+    assert len(response["sample_rows"]) == 1

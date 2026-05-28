@@ -28,15 +28,15 @@ async def clarity_summary(body: ClarityRequest, request: Request):
     tenant_id = _resolve_optional_tenant(request, body.tenant_id)
     payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.num_of_days, body.dimensions)
     rows = normalize_clarity_export(payload)
-    return {**payload, "rows": rows, "summary_metrics": summarize_clarity_metrics(rows)}
+    return _compact_clarity_response(payload, rows, body.row_limit, body.include_raw)
 
 
 @router.post("/pages")
 async def clarity_pages(body: ClarityRequest, request: Request):
     tenant_id = _resolve_optional_tenant(request, body.tenant_id)
-    payload = run_clarity_live_insights(tenant_id, body.num_of_days, ["URL"])
+    payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.num_of_days, ["URL"])
     rows = normalize_clarity_export(payload)
-    return {**payload, "rows": rows, "top_pages": top_clarity_entities(rows, "URL")}
+    return _compact_clarity_response(payload, rows, body.row_limit, body.include_raw)
 
 
 @router.post("/behavior_audit")
@@ -48,14 +48,24 @@ async def clarity_behavior_audit(body: ClarityBehaviorAuditRequest, request: Req
     if body.focus_url:
         rows = [row for row in rows if body.focus_url in str(row.get("URL") or "")]
     summary = summarize_clarity_metrics(rows)
-    return {
-        **payload,
+    response = {
+        "tenant_id": payload.get("tenant_id"),
+        "project_name": payload.get("project_name"),
+        "num_of_days": payload.get("num_of_days"),
+        "dimensions": payload.get("dimensions"),
+        "fallback_used": payload.get("fallback_used"),
+        "fallback_errors": payload.get("fallback_errors", []),
         "focus_url": body.focus_url,
-        "rows": rows,
         "summary_metrics": summary,
         "signals": build_clarity_signals(summary, rows),
-        "top_pages": top_clarity_entities(rows, "URL"),
+        "top_pages": top_clarity_entities(rows, "URL", body.row_limit),
+        "sample_rows": rows[: body.row_limit],
+        "row_count": len(rows),
     }
+    if body.include_raw:
+        response["raw"] = payload.get("raw")
+        response["rows"] = rows
+    return response
 
 
 def _resolve_optional_tenant(request: Request, tenant_id: str | None = None) -> str | None:
@@ -72,3 +82,22 @@ def _resolve_required_tenant(request: Request, tenant_id: str | None = None) -> 
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Tenant is required before connecting Clarity.")
     return resolved
+
+
+def _compact_clarity_response(payload: dict, rows: list[dict], row_limit: int, include_raw: bool) -> dict:
+    response = {
+        "tenant_id": payload.get("tenant_id"),
+        "project_name": payload.get("project_name"),
+        "num_of_days": payload.get("num_of_days"),
+        "dimensions": payload.get("dimensions"),
+        "fallback_used": payload.get("fallback_used"),
+        "fallback_errors": payload.get("fallback_errors", []),
+        "summary_metrics": summarize_clarity_metrics(rows),
+        "top_pages": top_clarity_entities(rows, "URL", row_limit),
+        "sample_rows": rows[:row_limit],
+        "row_count": len(rows),
+    }
+    if include_raw:
+        response["raw"] = payload.get("raw")
+        response["rows"] = rows
+    return response
