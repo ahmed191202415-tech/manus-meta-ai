@@ -56,6 +56,7 @@ class JourneyAnalysisRequest(BaseModel):
     campaign_name: str | None = None
     adset_id: str | None = None
     ad_id: str | None = None
+    auto_select_latest_campaign: bool = True
     start_date: str = "30daysAgo"
     end_date: str = "today"
     date_preset: str | None = "last_30d"

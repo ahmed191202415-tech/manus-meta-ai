@@ -24,14 +24,16 @@ router = APIRouter(prefix="/journey", tags=["journey"])
 async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
     token = await resolve_access_token(request)
     data_errors = []
+    inferred_scope = _infer_journey_scope(body, token)
+    effective_body = body.model_copy(update=inferred_scope.get("filters", {}))
     try:
-        filters = _journey_meta_filters(body)
+        filters = _journey_meta_filters(effective_body)
         meta_df = fetch_insights_df(
-            body.meta_account_id,
+            effective_body.meta_account_id,
             token,
-            _resolve_meta_level(body),
+            _resolve_meta_level(effective_body),
             None,
-            body.date_preset,
+            effective_body.date_preset,
             None,
             None,
             filters,
@@ -42,16 +44,16 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         meta_rows = []
         data_errors.append({"source": "meta_insights", "message": _safe_error(exc)})
 
-    tenant_id = resolve_tenant_id_for_google(request, body.tenant_id)
-    ga4_reports = _ga4_journey_reports(tenant_id, body.ga4_property_id, body.start_date, body.end_date, body.limit)
+    tenant_id = resolve_tenant_id_for_google(request, effective_body.tenant_id)
+    ga4_reports = _ga4_journey_reports(tenant_id, effective_body.ga4_property_id, effective_body.start_date, effective_body.end_date, effective_body.limit)
     data_errors.extend(ga4_reports.get("_errors", []))
     website_summary = summarize_website_metrics(ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"], ga4_reports["devices"])
     tracking_quality = build_tracking_quality(True, bool(body.ga4_property_id), ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"])
     website_signals = build_website_signals(website_summary, tracking_quality, ga4_reports["landing"], ga4_reports["traffic"], ga4_reports["devices"])
     try:
         creative_rows = _filter_meta_creative_rows(
-            _fetch_meta_ads_with_creatives(body.meta_account_id, token, body.limit),
-            body,
+            _fetch_meta_ads_with_creatives(effective_body.meta_account_id, token, effective_body.limit),
+            effective_body,
         )
         link_audit = audit_meta_tracking_links(creative_rows, ga4_reports["landing"])
     except Exception as exc:
@@ -68,23 +70,27 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         data_errors.append({"source": "meta_creatives", "message": _safe_error(exc)})
 
     matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
+    matched_entities = _build_matched_entities(meta_rows, creative_rows if "creative_rows" in locals() else [], ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
     return {
         "mode": "meta_ga4_journey",
         "tenant_id": tenant_id,
-        "meta_account_id": body.meta_account_id,
-        "ga4_property_id": body.ga4_property_id,
-        "date_range": {"start_date": body.start_date, "end_date": body.end_date, "date_preset": body.date_preset},
+        "meta_account_id": effective_body.meta_account_id,
+        "ga4_property_id": effective_body.ga4_property_id,
+        "date_range": {"start_date": effective_body.start_date, "end_date": effective_body.end_date, "date_preset": effective_body.date_preset},
         "meta_filter": {
-            "campaign_id": body.campaign_id,
-            "campaign_name": body.campaign_name,
-            "adset_id": body.adset_id,
-            "ad_id": body.ad_id,
-            "level": _resolve_meta_level(body),
+            "campaign_id": effective_body.campaign_id,
+            "campaign_name": effective_body.campaign_name,
+            "adset_id": effective_body.adset_id,
+            "ad_id": effective_body.ad_id,
+            "level": _resolve_meta_level(effective_body),
+            "auto_selected": inferred_scope.get("auto_selected", False),
+            "auto_selection_reason": inferred_scope.get("reason"),
         },
-        "ga4_filter_limits": _ga4_filter_limits(body),
+        "ga4_filter_limits": _ga4_filter_limits(effective_body),
         "matching": matching,
+        "matched_entities": matched_entities,
         "tracking_link_audit": link_audit,
         "summary_metrics": metrics,
         "tracking_quality": tracking_quality,
@@ -263,6 +269,103 @@ def _filter_meta_creative_rows(rows: list[dict], body: JourneyAnalysisRequest) -
             continue
         result.append(row)
     return result
+
+
+def _infer_journey_scope(body: JourneyAnalysisRequest, token: str) -> dict:
+    if body.campaign_id or body.campaign_name or body.adset_id or body.ad_id or not body.auto_select_latest_campaign:
+        return {"filters": {}, "auto_selected": False, "reason": None}
+    campaign = _latest_meta_campaign(body.meta_account_id, token)
+    if not campaign:
+        return {"filters": {}, "auto_selected": False, "reason": "No campaign could be auto-selected."}
+    return {
+        "filters": {
+            "campaign_id": campaign.get("id"),
+            "campaign_name": campaign.get("name"),
+        },
+        "auto_selected": True,
+        "reason": "No campaign/ad/adset filter was provided, so the most recently updated or created campaign was selected.",
+        "campaign": campaign,
+    }
+
+
+def _latest_meta_campaign(account_id: str, token: str) -> dict | None:
+    account_id = normalize_account_id(account_id)
+    fields = "id,name,status,effective_status,created_time,updated_time,start_time"
+    try:
+        payload = meta_get_all_pages(
+            f"{account_id}/campaigns",
+            token,
+            params={"fields": fields, "limit": 100},
+            max_pages=2,
+        )
+        campaigns = payload.get("data", [])
+    except Exception:
+        try:
+            campaigns = meta_call("GET", f"{account_id}/campaigns", token, params={"fields": fields, "limit": 100}).get("data", [])
+        except Exception:
+            campaigns = []
+    if not campaigns:
+        return None
+    return sorted(
+        campaigns,
+        key=lambda item: str(item.get("updated_time") or item.get("created_time") or item.get("start_time") or ""),
+        reverse=True,
+    )[0]
+
+
+def _build_matched_entities(meta_rows: list[dict], creative_rows: list[dict], ga4_rows: list[dict]) -> dict:
+    ad_lookup = {}
+    for row in creative_rows:
+        ad_id = str(row.get("id") or row.get("ad_id") or "").strip()
+        if not ad_id:
+            continue
+        ad_lookup[ad_id] = {
+            "campaign_id": row.get("campaign_id"),
+            "campaign_name": row.get("campaign_name"),
+            "adset_id": row.get("adset_id"),
+            "adset_name": row.get("adset_name"),
+            "ad_id": ad_id,
+            "ad_name": row.get("name") or row.get("ad_name"),
+        }
+
+    ga4_by_ad = {}
+    for row in ga4_rows:
+        ad_id = str(row.get("sessionManualAdContent") or row.get("manualAdContent") or "").strip()
+        if not ad_id:
+            continue
+        current = ga4_by_ad.setdefault(ad_id, {"sessions": 0.0, "activeUsers": 0.0, "engagedSessions": 0.0})
+        for metric in list(current.keys()):
+            try:
+                current[metric] += float(row.get(metric) or 0)
+            except (TypeError, ValueError):
+                pass
+
+    ads = []
+    for ad_id, metrics in ga4_by_ad.items():
+        entity = ad_lookup.get(ad_id, {"ad_id": ad_id})
+        ads.append({**entity, "ga4_metrics": metrics})
+
+    campaign_lookup = {}
+    adset_lookup = {}
+    for row in meta_rows + creative_rows:
+        if row.get("campaign_id"):
+            campaign_lookup[str(row.get("campaign_id"))] = {
+                "campaign_id": row.get("campaign_id"),
+                "campaign_name": row.get("campaign_name"),
+            }
+        if row.get("adset_id"):
+            adset_lookup[str(row.get("adset_id"))] = {
+                "campaign_id": row.get("campaign_id"),
+                "campaign_name": row.get("campaign_name"),
+                "adset_id": row.get("adset_id"),
+                "adset_name": row.get("adset_name"),
+            }
+
+    return {
+        "campaigns": list(campaign_lookup.values()),
+        "adsets": list(adset_lookup.values()),
+        "ads": sorted(ads, key=lambda item: item.get("ga4_metrics", {}).get("sessions", 0), reverse=True),
+    }
 
 
 def _ga4_filter_limits(body: JourneyAnalysisRequest) -> list[str]:
