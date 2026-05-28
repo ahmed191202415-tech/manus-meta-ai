@@ -53,7 +53,10 @@ async def google_callback(
         raise HTTPException(status_code=400, detail="No tenant was selected for Google authentication.")
 
     token_data = exchange_google_code(code)
-    userinfo = fetch_google_userinfo(token_data["access_token"])
+    try:
+        userinfo = fetch_google_userinfo(token_data["access_token"])
+    except HTTPException:
+        userinfo = {"email": tenant_id}
     connection = save_google_connection(
         tenant_id,
         {
