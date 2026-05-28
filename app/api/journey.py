@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 
 from app.analytics.ad_site_matching import build_ad_site_matching
+from app.analytics.clarity_ad_matching import build_clarity_ad_behavior
 from app.analytics.clarity_metrics import normalize_clarity_export, summarize_clarity_metrics
 from app.analytics.clarity_signals import build_clarity_signals
 from app.analytics.ga4_preprocessing import normalize_ga4_report
@@ -76,7 +77,7 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
     matched_entities = _build_matched_entities(meta_rows, creative_rows if "creative_rows" in locals() else [], ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
-    clarity = _optional_clarity_behavior(effective_body, tenant_id, data_errors)
+    clarity = _optional_clarity_behavior(effective_body, tenant_id, matched_entities, link_audit, data_errors)
     return {
         "mode": "meta_ga4_journey",
         "tenant_id": tenant_id,
@@ -384,11 +385,17 @@ def _ga4_filter_limits(body: JourneyAnalysisRequest) -> list[str]:
     return limits
 
 
-def _optional_clarity_behavior(body: JourneyAnalysisRequest, tenant_id: str, data_errors: list[dict]) -> dict | None:
+def _optional_clarity_behavior(
+    body: JourneyAnalysisRequest,
+    tenant_id: str,
+    matched_entities: dict,
+    link_audit: dict,
+    data_errors: list[dict],
+) -> dict | None:
     if not body.include_clarity:
         return None
     try:
-        payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.clarity_num_of_days, ["URL", "Device"])
+        payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.clarity_num_of_days, ["Campaign", "URL", "Device"])
         rows = normalize_clarity_export(payload)
         summary = summarize_clarity_metrics(rows)
         return {
@@ -399,6 +406,8 @@ def _optional_clarity_behavior(body: JourneyAnalysisRequest, tenant_id: str, dat
             "fallback_errors": payload.get("fallback_errors", []),
             "summary_metrics": summary,
             "signals": build_clarity_signals(summary, rows),
+            "ad_behavior": build_clarity_ad_behavior(matched_entities, link_audit, rows),
+            "linking_note": "Clarity Data Export exposes Campaign/Source/Medium/URL. Ad-level behavior is bridged through GA4 ad_id matching plus Clarity campaign or landing page behavior.",
         }
     except Exception as exc:
         data_errors.append({"source": "clarity", "message": _safe_error(exc)})
