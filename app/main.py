@@ -46,7 +46,6 @@ app = FastAPI(
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
     allowed_paths = {
-        "/health",
         "/meta/request",
         "/accounts",
         "/insights",
@@ -54,23 +53,11 @@ def openapi_gpt_schema():
         "/adsets",
         "/ads",
         "/adcreatives",
-        "/adimages",
-        "/advideos",
-        "/pages",
-        "/page_posts",
-        "/page_comments",
-        "/page_comments/{comment_id}/reply",
-        "/page_comments/{comment_id}/hide",
         "/analysis/run",
-        "/analysis_dashboard/build",
-        "/analysis_docx/build",
         "/ga4/properties",
         "/ga4/select_property",
-        "/ga4/report",
         "/ga4/custom_report",
-        "/ga4/funnel",
         "/ga4/realtime",
-        "/ga4/metadata",
         "/ga4/events",
         "/ga4/landing_pages",
         "/ga4/traffic_sources",
@@ -86,14 +73,15 @@ def openapi_gpt_schema():
         "/journey/ad_to_site_matching",
         "/journey/decision",
         "/reports/save_excel",
-        "/reports/save_pdf",
-        "/reports/save_pptx",
-        "/reports/save_docx",
         "/reports/save_html_dashboard",
         "/reports/save_website_html",
-        "/reports/save_website_excel",
         "/reports/save_journey_html",
-        "/reports/save_journey_excel",
+    }
+    allowed_methods = {
+        "/campaigns": {"get"},
+        "/adsets": {"get"},
+        "/ads": {"get"},
+        "/adcreatives": {"get"},
     }
     schema = deepcopy(app.openapi())
     schema["info"] = {
@@ -102,11 +90,15 @@ def openapi_gpt_schema():
         "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
-    schema["paths"] = {
-        path: value
-        for path, value in schema.get("paths", {}).items()
-        if path in allowed_paths
-    }
+    filtered_paths = {}
+    for path, value in schema.get("paths", {}).items():
+        if path not in allowed_paths:
+            continue
+        methods = allowed_methods.get(path)
+        if methods:
+            value = {method: spec for method, spec in value.items() if method in methods}
+        filtered_paths[path] = value
+    schema["paths"] = filtered_paths
     return schema
 
 app.add_middleware(
