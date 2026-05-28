@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from app.analytics.ga4_preprocessing import normalize_ga4_report
+from app.analytics.custom_report_engine import build_custom_report_output, validate_ga4_report_request
 from app.core.ga4_client import (
     get_ga4_metadata,
     list_ga4_properties,
@@ -119,6 +120,7 @@ def _with_rows(payload: dict) -> dict:
 @router.post("/custom_report")
 async def ga4_custom_report(body: GA4CustomReportRequest, request: Request):
     tenant_id = _resolve_tenant_id(request, body.tenant_id)
+    validation = validate_ga4_report_request(body.dimensions, body.metrics, body.limit)
     payload = run_ga4_report(
         tenant_id=tenant_id,
         property_id=body.property_id,
@@ -130,7 +132,8 @@ async def ga4_custom_report(body: GA4CustomReportRequest, request: Request):
         filters=body.filters,
         order_by=body.order_by,
     )
-    return _with_rows(payload)
+    normalized_rows = normalize_ga4_report(payload)
+    return build_custom_report_output(payload, normalized_rows, validation)
 
 
 @router.post("/report")

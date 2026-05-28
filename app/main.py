@@ -90,6 +90,10 @@ def openapi_gpt_schema():
         "/reports/save_pptx",
         "/reports/save_docx",
         "/reports/save_html_dashboard",
+        "/reports/save_website_html",
+        "/reports/save_website_excel",
+        "/reports/save_journey_html",
+        "/reports/save_journey_excel",
     }
     schema = deepcopy(app.openapi())
     schema["info"] = {

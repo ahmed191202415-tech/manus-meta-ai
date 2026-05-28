@@ -56,3 +56,8 @@ class SaveHtmlDashboardRequest(BaseModel):
     subtitle: Optional[str] = None
     kpis: List[dict] = Field(default_factory=list)
     sections: List[PdfSectionSpec] = Field(default_factory=list)
+
+
+class IntelligenceReportRequest(BaseModel):
+    file_name: Optional[str] = None
+    payload: dict = Field(default_factory=dict)
