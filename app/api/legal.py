@@ -45,6 +45,41 @@ def _page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(html)
 
 
+@router.get("/", response_class=HTMLResponse)
+async def home_page():
+    return _page(
+        "meta ads",
+        """
+        <h1>meta ads</h1>
+        <p>
+          meta ads is a marketing intelligence application that helps authorized users analyze
+          advertising performance, website traffic, and customer journey data.
+        </p>
+
+        <h2>What the app does</h2>
+        <ul>
+          <li>Connects to Meta Ads accounts when the user grants access.</li>
+          <li>Connects to Google Analytics 4 when the user grants read-only access.</li>
+          <li>Generates marketing reports and diagnostics for campaigns, landing pages, traffic sources, and conversions.</li>
+          <li>Helps users understand tracking quality, missing data, and performance signals.</li>
+        </ul>
+
+        <h2>Data access</h2>
+        <p>
+          The application only reads the data required to create analytics and reports for the connected user.
+          Google Analytics access uses read-only permissions.
+        </p>
+
+        <h2>Important links</h2>
+        <ul>
+          <li><a href="/privacy">Privacy Policy</a></li>
+          <li><a href="/terms">Terms of Service</a></li>
+          <li><a href="/data-deletion">Data Deletion</a></li>
+        </ul>
+        """,
+    )
+
+
 @router.get("/privacy", response_class=HTMLResponse)
 async def privacy_policy():
     return _page(
