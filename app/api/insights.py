@@ -1,5 +1,7 @@
+import json
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends
+
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import DEFAULT_PAGE_LIMIT, DEFAULT_MAX_PAGES
 from app.core.auth import resolve_access_token
@@ -20,6 +22,10 @@ async def get_insights(
     breakdowns: Optional[str] = None,
     action_breakdowns: Optional[str] = None,
     filtering: Optional[str] = None,
+    campaign_id: Optional[str] = None,
+    campaign_name: Optional[str] = None,
+    adset_id: Optional[str] = None,
+    ad_id: Optional[str] = None,
     sort: Optional[str] = None,
     fields: str = DEFAULT_INSIGHTS_FIELDS,
     limit: int = DEFAULT_PAGE_LIMIT,
@@ -46,14 +52,89 @@ async def get_insights(
         params["breakdowns"] = breakdowns
     if action_breakdowns:
         params["action_breakdowns"] = action_breakdowns
-    if filtering:
-        params["filtering"] = filtering
+    filters = _build_insights_filters(filtering, campaign_id, campaign_name, adset_id, ad_id)
+    if filters:
+        params["filtering"] = filters
     if sort:
         params["sort"] = sort
     if after:
         params["after"] = after
 
-    if fetch_all:
-        return meta_get_all_pages(f"{account_id}/insights", token, params=params, max_pages=max_pages)
+    try:
+        if fetch_all:
+            return meta_get_all_pages(f"{account_id}/insights", token, params=params, max_pages=max_pages)
+        return meta_call("GET", f"{account_id}/insights", token, params=params)
+    except HTTPException as exc:
+        if not filters:
+            raise
+        fallback_params = dict(params)
+        fallback_params.pop("filtering", None)
+        fallback_params["limit"] = max(int(limit or DEFAULT_PAGE_LIMIT), DEFAULT_PAGE_LIMIT)
+        fallback = meta_get_all_pages(f"{account_id}/insights", token, params=fallback_params, max_pages=min(max_pages, 3))
+        rows = _local_filter_rows(fallback.get("data", []), campaign_id, campaign_name, adset_id, ad_id)
+        return {
+            "data": rows[: int(limit or DEFAULT_PAGE_LIMIT)],
+            "paging": fallback.get("paging"),
+            "fallback_used": True,
+            "fallback_reason": "Meta filtering failed, so rows were fetched without filtering and filtered locally.",
+            "meta_error": exc.detail,
+        }
 
-    return meta_call("GET", f"{account_id}/insights", token, params=params)
+
+def _build_insights_filters(
+    filtering: str | None,
+    campaign_id: str | None,
+    campaign_name: str | None,
+    adset_id: str | None,
+    ad_id: str | None,
+) -> list[dict]:
+    filters = _parse_filtering(filtering)
+    if campaign_id:
+        filters.append({"field": "campaign.id", "operator": "IN", "value": [_clean(campaign_id)]})
+    if campaign_name:
+        filters.append({"field": "campaign.name", "operator": "CONTAIN", "value": _clean(campaign_name)})
+    if adset_id:
+        filters.append({"field": "adset.id", "operator": "IN", "value": [_clean(adset_id)]})
+    if ad_id:
+        filters.append({"field": "ad.id", "operator": "IN", "value": [_clean(ad_id)]})
+    return filters
+
+
+def _parse_filtering(filtering: str | None) -> list[dict]:
+    text = _clean(filtering)
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, dict):
+        return [parsed]
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    return []
+
+
+def _local_filter_rows(
+    rows: list[dict],
+    campaign_id: str | None,
+    campaign_name: str | None,
+    adset_id: str | None,
+    ad_id: str | None,
+) -> list[dict]:
+    result = []
+    for row in rows:
+        if campaign_id and _clean(row.get("campaign_id")) != _clean(campaign_id):
+            continue
+        if campaign_name and _clean(campaign_name).lower() not in _clean(row.get("campaign_name")).lower():
+            continue
+        if adset_id and _clean(row.get("adset_id")) != _clean(adset_id):
+            continue
+        if ad_id and _clean(row.get("ad_id")) != _clean(ad_id):
+            continue
+        result.append(row)
+    return result
+
+
+def _clean(value) -> str:
+    return str(value or "").strip()
