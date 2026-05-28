@@ -12,7 +12,7 @@ from app.analytics.tracking_links import audit_meta_tracking_links
 from app.analytics.website_metrics import summarize_website_metrics
 from app.analytics.website_signals import build_website_signals
 from app.core.auth import resolve_access_token
-from app.core.clarity_client import run_clarity_live_insights
+from app.core.clarity_client import run_clarity_live_insights_with_fallbacks
 from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call, normalize_account_id
 from app.core.pagination import meta_get_all_pages
@@ -388,12 +388,15 @@ def _optional_clarity_behavior(body: JourneyAnalysisRequest, tenant_id: str, dat
     if not body.include_clarity:
         return None
     try:
-        payload = run_clarity_live_insights(tenant_id, body.clarity_num_of_days, ["URL", "Device"])
+        payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.clarity_num_of_days, ["URL", "Device"])
         rows = normalize_clarity_export(payload)
         summary = summarize_clarity_metrics(rows)
         return {
             "connected": True,
             "num_of_days": payload.get("num_of_days"),
+            "dimensions": payload.get("dimensions"),
+            "fallback_used": payload.get("fallback_used"),
+            "fallback_errors": payload.get("fallback_errors", []),
             "summary_metrics": summary,
             "signals": build_clarity_signals(summary, rows),
         }

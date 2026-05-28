@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query, Request
 
 from app.analytics.clarity_metrics import normalize_clarity_export, summarize_clarity_metrics, top_clarity_entities
 from app.analytics.clarity_signals import build_clarity_signals
-from app.core.clarity_client import run_clarity_live_insights
+from app.core.clarity_client import run_clarity_live_insights, run_clarity_live_insights_with_fallbacks
 from app.core.oauth_store import get_latest_clarity_connection, purge_clarity_connection, save_clarity_connection
 from app.schemas.clarity_requests import ClarityBehaviorAuditRequest, ClarityConnectRequest, ClarityRequest
 
@@ -26,7 +26,7 @@ async def clarity_disconnect(request: Request, tenant_id: str | None = Query(def
 @router.post("/summary")
 async def clarity_summary(body: ClarityRequest, request: Request):
     tenant_id = _resolve_optional_tenant(request, body.tenant_id)
-    payload = run_clarity_live_insights(tenant_id, body.num_of_days, body.dimensions)
+    payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.num_of_days, body.dimensions)
     rows = normalize_clarity_export(payload)
     return {**payload, "rows": rows, "summary_metrics": summarize_clarity_metrics(rows)}
 
@@ -43,7 +43,7 @@ async def clarity_pages(body: ClarityRequest, request: Request):
 async def clarity_behavior_audit(body: ClarityBehaviorAuditRequest, request: Request):
     tenant_id = _resolve_optional_tenant(request, body.tenant_id)
     dimensions = body.dimensions or ["URL", "Device"]
-    payload = run_clarity_live_insights(tenant_id, body.num_of_days, dimensions)
+    payload = run_clarity_live_insights_with_fallbacks(tenant_id, body.num_of_days, dimensions)
     rows = normalize_clarity_export(payload)
     if body.focus_url:
         rows = [row for row in rows if body.focus_url in str(row.get("URL") or "")]

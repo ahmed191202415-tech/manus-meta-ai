@@ -1,5 +1,6 @@
 import requests
 from fastapi import HTTPException
+from requests import Response
 
 from app.core.oauth_store import (
     get_active_clarity_connection_for_tenant,
@@ -46,14 +47,18 @@ def run_clarity_live_insights(
         params=params,
         timeout=45,
     )
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=response.text) from exc
+    payload = _response_payload(response)
     if response.status_code >= 400:
         raise HTTPException(
             status_code=response.status_code,
-            detail={"message": "Clarity data export failed.", "clarity_response": payload},
+            detail={
+                "message": "Clarity data export failed.",
+                "status_code": response.status_code,
+                "reason": response.reason,
+                "request_params": params,
+                "clarity_response": payload,
+                "hints": _clarity_error_hints(response.status_code),
+            },
         )
     return {
         "tenant_id": connection.get("tenant_id"),
@@ -62,6 +67,59 @@ def run_clarity_live_insights(
         "dimensions": dims,
         "raw": payload,
     }
+
+
+def run_clarity_live_insights_with_fallbacks(
+    tenant_id: str | None,
+    num_of_days: int = 1,
+    dimensions: list[str] | None = None,
+) -> dict:
+    attempts = []
+    dims = dimensions or []
+    if dims:
+        attempts.append(dims[:3])
+    if dims != ["URL"]:
+        attempts.append(["URL"])
+    attempts.append([])
+
+    errors = []
+    for attempt in attempts:
+        try:
+            result = run_clarity_live_insights(tenant_id, num_of_days, attempt)
+            result["fallback_used"] = attempt != dims[:3]
+            result["attempted_dimensions"] = attempts
+            result["fallback_errors"] = errors
+            return result
+        except HTTPException as exc:
+            errors.append(exc.detail)
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "message": "Clarity data export failed for all dimension attempts.",
+            "attempted_dimensions": attempts,
+            "errors": errors,
+        },
+    )
+
+
+def _response_payload(response: Response):
+    try:
+        return response.json()
+    except ValueError:
+        text = response.text.strip()
+        return {"raw_text": text, "empty_body": not bool(text)}
+
+
+def _clarity_error_hints(status_code: int) -> list[str]:
+    if status_code == 400:
+        return ["Try fewer dimensions, for example URL only.", "numOfDays must be 1, 2, or 3."]
+    if status_code == 401:
+        return ["The Clarity API token is missing, invalid, or expired. Re-generate it from Settings > Data Export."]
+    if status_code == 403:
+        return ["The token is not authorized for this Clarity project. Generate the token as a project admin."]
+    if status_code == 429:
+        return ["Clarity allows about 10 API requests per project per day. Wait or reduce repeated calls."]
+    return ["Try a simpler request with URL only, then retry behavior audit."]
 
 
 def _validate_dimensions(dimensions: list[str]) -> list[str]:
