@@ -572,6 +572,40 @@ def purge_google_connection(tenant_id: str):
     return _delete("google_connections", {"tenant_id": f"eq.{_clean(tenant_id)}"})
 
 
+def save_clarity_connection(tenant_id: str, api_token: str, project_name: str | None = None):
+    body = {
+        "tenant_id": _clean(tenant_id),
+        "api_token": _clean(api_token),
+        "project_name": _clean(project_name),
+        "updated_at": _dt(datetime.now(timezone.utc)),
+    }
+    rows = _post(
+        "clarity_connections",
+        body,
+        params={"on_conflict": "tenant_id"},
+        prefer="resolution=merge-duplicates,return=representation",
+    ) or []
+    return rows[0] if rows else body
+
+
+def get_active_clarity_connection_for_tenant(tenant_id: str):
+    return _get_single(
+        "clarity_connections",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "select": "*", "limit": "1"},
+    )
+
+
+def get_latest_clarity_connection():
+    return _get_single(
+        "clarity_connections",
+        params={"select": "*", "limit": "1", "order": "updated_at.desc"},
+    )
+
+
+def purge_clarity_connection(tenant_id: str):
+    return _delete("clarity_connections", {"tenant_id": f"eq.{_clean(tenant_id)}"})
+
+
 def delete_meta_connection(meta_user_id: str, tenant_id: str | None = None):
     params = {"meta_user_id": f"eq.{_clean(meta_user_id)}"}
     if tenant_id:

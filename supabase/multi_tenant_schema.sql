@@ -71,6 +71,17 @@ alter table public.google_connections add column if not exists scopes text;
 alter table public.google_connections add column if not exists selected_ga4_property_id text;
 alter table public.google_connections add column if not exists selected_ga4_property_name text;
 
+create table if not exists public.clarity_connections (
+  tenant_id text primary key references public.tenant_accounts(tenant_id) on delete cascade,
+  project_name text,
+  api_token text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.clarity_connections add column if not exists project_name text;
+alter table public.clarity_connections add column if not exists api_token text;
+
 create table if not exists public.oauth_codes (
   code text primary key,
   tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
@@ -97,6 +108,9 @@ create index if not exists idx_google_connections_tenant_updated_at
 
 create index if not exists idx_google_connections_selected_property
   on public.google_connections (selected_ga4_property_id);
+
+create index if not exists idx_clarity_connections_tenant_updated_at
+  on public.clarity_connections (tenant_id, updated_at desc);
 
 create index if not exists idx_app_tokens_tenant_meta_user
   on public.app_tokens (tenant_id, meta_user_id);
@@ -145,10 +159,16 @@ create trigger trg_google_connections_updated_at
 before update on public.google_connections
 for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_clarity_connections_updated_at on public.clarity_connections;
+create trigger trg_clarity_connections_updated_at
+before update on public.clarity_connections
+for each row execute function public.set_updated_at();
+
 alter table public.tenant_accounts enable row level security;
 alter table public.tenant_meta_apps enable row level security;
 alter table public.meta_connections enable row level security;
 alter table public.google_connections enable row level security;
+alter table public.clarity_connections enable row level security;
 alter table public.oauth_codes enable row level security;
 alter table public.app_tokens enable row level security;
 

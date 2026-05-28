@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Request
 
 from app.analytics.ad_site_matching import build_ad_site_matching
+from app.analytics.clarity_metrics import normalize_clarity_export, summarize_clarity_metrics
+from app.analytics.clarity_signals import build_clarity_signals
 from app.analytics.ga4_preprocessing import normalize_ga4_report
 from app.analytics.journey_metrics import build_journey_metrics
 from app.analytics.journey_signals import build_journey_signals
@@ -10,6 +12,7 @@ from app.analytics.tracking_links import audit_meta_tracking_links
 from app.analytics.website_metrics import summarize_website_metrics
 from app.analytics.website_signals import build_website_signals
 from app.core.auth import resolve_access_token
+from app.core.clarity_client import run_clarity_live_insights
 from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call, normalize_account_id
 from app.core.pagination import meta_get_all_pages
@@ -73,6 +76,7 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
     matched_entities = _build_matched_entities(meta_rows, creative_rows if "creative_rows" in locals() else [], ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
+    clarity = _optional_clarity_behavior(effective_body, tenant_id, data_errors)
     return {
         "mode": "meta_ga4_journey",
         "tenant_id": tenant_id,
@@ -95,6 +99,7 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         "summary_metrics": metrics,
         "tracking_quality": tracking_quality,
         "website_signals": website_signals,
+        "clarity": clarity,
         "signals": signals,
         "decision_hints": [item["decision_hint"] for item in signals],
         "missing_data": matching.get("limits", []) + tracking_quality.get("missing_events", []),
@@ -377,6 +382,24 @@ def _ga4_filter_limits(body: JourneyAnalysisRequest) -> list[str]:
     if body.campaign_id:
         limits.append("GA4 campaign filtering is reliable only when campaign_id or utm_campaign is present in collected traffic.")
     return limits
+
+
+def _optional_clarity_behavior(body: JourneyAnalysisRequest, tenant_id: str, data_errors: list[dict]) -> dict | None:
+    if not body.include_clarity:
+        return None
+    try:
+        payload = run_clarity_live_insights(tenant_id, body.clarity_num_of_days, ["URL", "Device"])
+        rows = normalize_clarity_export(payload)
+        summary = summarize_clarity_metrics(rows)
+        return {
+            "connected": True,
+            "num_of_days": payload.get("num_of_days"),
+            "summary_metrics": summary,
+            "signals": build_clarity_signals(summary, rows),
+        }
+    except Exception as exc:
+        data_errors.append({"source": "clarity", "message": _safe_error(exc)})
+        return {"connected": False, "summary_metrics": {}, "signals": []}
 
 
 def _safe_error(exc: Exception) -> str:

@@ -57,6 +57,8 @@ class JourneyAnalysisRequest(BaseModel):
     adset_id: str | None = None
     ad_id: str | None = None
     auto_select_latest_campaign: bool = True
+    include_clarity: bool = True
+    clarity_num_of_days: int = Field(default=1, ge=1, le=3)
     start_date: str = "30daysAgo"
     end_date: str = "today"
     date_preset: str | None = "last_30d"

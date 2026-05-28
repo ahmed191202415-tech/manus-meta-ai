@@ -9,6 +9,7 @@ from app.core.oauth_store import (
     delete_access_email,
     ensure_allowed_tenant_by_email,
     get_active_google_connection_for_tenant,
+    get_active_clarity_connection_for_tenant,
     get_tenant_status,
     list_tenant_accounts,
     normalize_email,
@@ -568,6 +569,7 @@ async def client_dashboard(request: Request, email: str | None = None):
 
     meta_status = get_tenant_status(tenant_id)
     google_connection = get_active_google_connection_for_tenant(tenant_id)
+    clarity_connection = get_active_clarity_connection_for_tenant(tenant_id)
     selected_property_id = (google_connection or {}).get("selected_ga4_property_id") or ""
     selected_property_name = (google_connection or {}).get("selected_ga4_property_name") or ""
     user_email = request.session.get("user_email") or tenant_id
@@ -581,6 +583,7 @@ async def client_dashboard(request: Request, email: str | None = None):
     <section class="summary">
       <div class="mini"><strong>Meta</strong><span>{'متصل' if meta_status.get('meta_connection', {}).get('connected') else 'غير متصل'}</span></div>
       <div class="mini"><strong>Google</strong><span>{'متصل' if google_connection else 'غير متصل'}</span></div>
+      <div class="mini"><strong>Clarity</strong><span>{'متصل' if clarity_connection else 'غير متصل'}</span></div>
       <div class="mini"><strong>GA4 Property</strong><span>{selected_property_name or selected_property_id or 'لم يتم الاختيار'}</span></div>
     </section>
     <section class="card">
@@ -603,7 +606,16 @@ async def client_dashboard(request: Request, email: str | None = None):
       <button onclick="selectProperty()">Save GA4 Property</button>
     </section>
     <section class="card">
-      <h2>4. إعداد GPT</h2>
+      <h2>4. ربط Microsoft Clarity</h2>
+      <p class="muted">هات API Token من Clarity Settings ثم Data Export.</p>
+      <label for="clarity_project_name">Project Name</label>
+      <input id="clarity_project_name" placeholder="Project name" value="{(clarity_connection or {}).get('project_name') or ''}" />
+      <label for="clarity_token">Clarity API Token</label>
+      <input id="clarity_token" type="password" placeholder="Paste Clarity API token" />
+      <button onclick="saveClarity()">Save Clarity Token</button>
+    </section>
+    <section class="card">
+      <h2>5. إعداد GPT</h2>
       <p>ضع هذا الرابط في GPT Actions:</p>
       <pre>{schema_url}</pre>
       <button onclick="copySchema()">Copy Schema URL</button>
@@ -623,6 +635,22 @@ async def client_dashboard(request: Request, email: str | None = None):
           return;
         }}
         alert("تم حفظ GA4 Property");
+        window.location.reload();
+      }}
+      async function saveClarity() {{
+        const api_token = document.getElementById("clarity_token").value;
+        const project_name = document.getElementById("clarity_project_name").value;
+        const response = await fetch("/clarity/connect_token", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          credentials: "include",
+          body: JSON.stringify({{ tenant_id: "{tenant_id}", api_token, project_name }})
+        }});
+        if (!response.ok) {{
+          alert(await response.text());
+          return;
+        }}
+        alert("تم حفظ Clarity Token");
         window.location.reload();
       }}
       async function copySchema() {{
