@@ -70,7 +70,7 @@ def openapi_gpt_schema():
         "/website/device_analysis",
         "/website/conversion_analysis",
         "/journey/analyze",
-        "/journey/ad_to_site_matching",
+        "/journey/analyze_from_payload",
         "/journey/utm_audit",
         "/journey/decision",
         "/reports/save_excel",

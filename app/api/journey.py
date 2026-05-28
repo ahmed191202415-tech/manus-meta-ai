@@ -18,7 +18,7 @@ from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call, normalize_account_id
 from app.core.pagination import meta_get_all_pages
 from app.core.tenant_resolver import resolve_tenant_id_for_google
-from app.schemas.ga4_requests import JourneyAnalysisRequest, MetaTrackingAuditRequest
+from app.schemas.ga4_requests import JourneyAnalysisRequest, JourneyPayloadAnalysisRequest, MetaTrackingAuditRequest
 from app.api.insights import _build_insights_filters
 
 router = APIRouter(prefix="/journey", tags=["journey"])
@@ -94,6 +94,74 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
             "auto_selection_reason": inferred_scope.get("reason"),
         },
         "ga4_filter_limits": _ga4_filter_limits(effective_body),
+        "matching": matching,
+        "matched_entities": matched_entities,
+        "tracking_link_audit": link_audit,
+        "summary_metrics": metrics,
+        "tracking_quality": tracking_quality,
+        "website_signals": website_signals,
+        "clarity": clarity,
+        "signals": signals,
+        "decision_hints": [item["decision_hint"] for item in signals],
+        "missing_data": matching.get("limits", []) + tracking_quality.get("missing_events", []),
+        "partial_data": bool(data_errors),
+        "data_errors": data_errors,
+    }
+
+
+@router.post("/analyze_from_payload")
+async def journey_analyze_from_payload(body: JourneyPayloadAnalysisRequest, request: Request):
+    data_errors = []
+    tenant_id = resolve_tenant_id_for_google(request, body.tenant_id)
+    meta_rows = _filter_meta_payload_rows(_normalize_meta_payload_rows(body.meta_rows), body)[:body.limit]
+    creative_source_rows = body.creative_rows or body.meta_rows
+    creative_rows = _filter_meta_payload_rows(_normalize_meta_payload_rows(creative_source_rows), body)[:body.limit]
+    link_rows = _normalize_meta_payload_rows(body.link_rows)[:body.limit]
+
+    ga4_reports = _ga4_journey_reports(tenant_id, body.ga4_property_id, body.start_date, body.end_date, body.limit)
+    data_errors.extend(ga4_reports.get("_errors", []))
+    website_summary = summarize_website_metrics(ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"], ga4_reports["devices"])
+    tracking_quality = build_tracking_quality(True, bool(body.ga4_property_id), ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"])
+    website_signals = build_website_signals(website_summary, tracking_quality, ga4_reports["landing"], ga4_reports["traffic"], ga4_reports["devices"])
+
+    if creative_rows:
+        link_audit = audit_meta_tracking_links(creative_rows, ga4_reports["landing"])
+    elif link_rows:
+        link_audit = _audit_payload_links(link_rows, ga4_reports["landing"])
+    else:
+        link_audit = {
+            "tracking_link_score": 0,
+            "total_links": 0,
+            "utm_complete_links": 0,
+            "strong_id_links": 0,
+            "matched_landing_pages": [],
+            "missing_key_counts": {},
+            "links": [],
+            "recommendations": ["Send creative_rows or link_rows to audit Meta ad URLs without Meta OAuth."],
+        }
+
+    matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
+    matched_entities = _build_matched_entities(meta_rows, creative_rows, ga4_reports["traffic"])
+    metrics = build_journey_metrics(meta_rows, website_summary)
+    signals = build_journey_signals(metrics, matching, website_signals)
+    clarity = _optional_clarity_behavior(body, tenant_id, matched_entities, link_audit, data_errors)
+    return {
+        "mode": "meta_ga4_journey",
+        "meta_source": "payload",
+        "requires_meta_oauth": False,
+        "tenant_id": tenant_id,
+        "meta_account_id": body.meta_account_id,
+        "ga4_property_id": body.ga4_property_id,
+        "date_range": {"start_date": body.start_date, "end_date": body.end_date, "date_preset": body.date_preset},
+        "meta_filter": {
+            "campaign_id": body.campaign_id,
+            "campaign_name": body.campaign_name,
+            "adset_id": body.adset_id,
+            "ad_id": body.ad_id,
+            "auto_selected": False,
+            "source": "provided_payload",
+        },
+        "ga4_filter_limits": _ga4_filter_limits(body),
         "matching": matching,
         "matched_entities": matched_entities,
         "tracking_link_audit": link_audit,
@@ -275,6 +343,68 @@ def _filter_meta_creative_rows(rows: list[dict], body: JourneyAnalysisRequest) -
             continue
         result.append(row)
     return result
+
+
+def _normalize_meta_payload_rows(rows: list[dict]) -> list[dict]:
+    normalized = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        campaign = item.get("campaign") if isinstance(item.get("campaign"), dict) else {}
+        adset = item.get("adset") if isinstance(item.get("adset"), dict) else {}
+        ad = item.get("ad") if isinstance(item.get("ad"), dict) else {}
+        creative = item.get("creative") if isinstance(item.get("creative"), dict) else {}
+        if not item.get("campaign_id"):
+            item["campaign_id"] = campaign.get("id") or item.get("campaignId")
+        if not item.get("campaign_name"):
+            item["campaign_name"] = campaign.get("name") or item.get("campaignName")
+        if not item.get("adset_id"):
+            item["adset_id"] = adset.get("id") or item.get("adsetId") or item.get("ad_set_id")
+        if not item.get("adset_name"):
+            item["adset_name"] = adset.get("name") or item.get("adsetName") or item.get("ad_set_name")
+        if not item.get("ad_id"):
+            item["ad_id"] = ad.get("id") or item.get("adId") or item.get("id")
+        if not item.get("ad_name"):
+            item["ad_name"] = ad.get("name") or item.get("adName") or item.get("name")
+        if creative and not item.get("creative"):
+            item["creative"] = creative
+        normalized.append(item)
+    return normalized
+
+
+def _filter_meta_payload_rows(rows: list[dict], body: JourneyPayloadAnalysisRequest) -> list[dict]:
+    result = []
+    for row in rows:
+        if body.campaign_id and str(row.get("campaign_id") or "").strip() != str(body.campaign_id).strip():
+            continue
+        if body.campaign_name and str(body.campaign_name).lower() not in str(row.get("campaign_name") or "").lower():
+            continue
+        if body.adset_id and str(row.get("adset_id") or "").strip() != str(body.adset_id).strip():
+            continue
+        if body.ad_id and str(row.get("ad_id") or row.get("id") or "").strip() != str(body.ad_id).strip():
+            continue
+        result.append(row)
+    return result
+
+
+def _audit_payload_links(link_rows: list[dict], landing_rows: list[dict]) -> dict:
+    creative_like_rows = []
+    for index, row in enumerate(link_rows):
+        url = row.get("url") or row.get("link_url") or row.get("website_url") or row.get("final_url")
+        creative_like_rows.append({
+            "id": row.get("ad_id") or row.get("id") or f"payload-link-{index + 1}",
+            "name": row.get("ad_name") or row.get("name"),
+            "campaign_id": row.get("campaign_id"),
+            "campaign_name": row.get("campaign_name"),
+            "adset_id": row.get("adset_id"),
+            "adset_name": row.get("adset_name"),
+            "creative": {
+                "url_tags": row.get("url_tags"),
+                "object_story_spec": {"link_data": {"link": url}} if url else {},
+            },
+        })
+    return audit_meta_tracking_links(creative_like_rows, landing_rows)
 
 
 def _infer_journey_scope(body: JourneyAnalysisRequest, token: str) -> dict:

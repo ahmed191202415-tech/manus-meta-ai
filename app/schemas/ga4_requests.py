@@ -66,6 +66,25 @@ class JourneyAnalysisRequest(BaseModel):
     limit: int = Field(default=100, ge=1, le=1000)
 
 
+class JourneyPayloadAnalysisRequest(BaseModel):
+    tenant_id: str | None = None
+    meta_account_id: str | None = None
+    ga4_property_id: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    adset_id: str | None = None
+    ad_id: str | None = None
+    include_clarity: bool = True
+    clarity_num_of_days: int = Field(default=1, ge=1, le=3)
+    start_date: str = "30daysAgo"
+    end_date: str = "today"
+    date_preset: str | None = "last_30d"
+    meta_rows: list[dict[str, Any]] = Field(default_factory=list)
+    creative_rows: list[dict[str, Any]] = Field(default_factory=list)
+    link_rows: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
 class MetaTrackingAuditRequest(BaseModel):
     tenant_id: str | None = None
     meta_account_id: str
