@@ -22,25 +22,46 @@ router = APIRouter(prefix="/journey", tags=["journey"])
 @router.post("/analyze")
 async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
     token = await resolve_access_token(request)
-    meta_df = fetch_insights_df(
-        body.meta_account_id,
-        token,
-        body.level,
-        None,
-        body.date_preset,
-        None,
-        None,
-        None,
-        None,
-    )
-    meta_rows = meta_df.head(body.limit).to_dict(orient="records") if not meta_df.empty else []
+    data_errors = []
+    try:
+        meta_df = fetch_insights_df(
+            body.meta_account_id,
+            token,
+            body.level,
+            None,
+            body.date_preset,
+            None,
+            None,
+            None,
+            None,
+        )
+        meta_rows = meta_df.head(body.limit).to_dict(orient="records") if not meta_df.empty else []
+    except Exception as exc:
+        meta_rows = []
+        data_errors.append({"source": "meta_insights", "message": _safe_error(exc)})
+
     tenant_id = resolve_tenant_id_for_google(request, body.tenant_id)
     ga4_reports = _ga4_journey_reports(tenant_id, body.ga4_property_id, body.start_date, body.end_date, body.limit)
+    data_errors.extend(ga4_reports.get("_errors", []))
     website_summary = summarize_website_metrics(ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"], ga4_reports["devices"])
     tracking_quality = build_tracking_quality(True, bool(body.ga4_property_id), ga4_reports["traffic"], ga4_reports["landing"], ga4_reports["events"])
     website_signals = build_website_signals(website_summary, tracking_quality, ga4_reports["landing"], ga4_reports["traffic"], ga4_reports["devices"])
-    creative_rows = _fetch_meta_ads_with_creatives(body.meta_account_id, token, body.limit)
-    link_audit = audit_meta_tracking_links(creative_rows, ga4_reports["landing"])
+    try:
+        creative_rows = _fetch_meta_ads_with_creatives(body.meta_account_id, token, body.limit)
+        link_audit = audit_meta_tracking_links(creative_rows, ga4_reports["landing"])
+    except Exception as exc:
+        link_audit = {
+            "tracking_link_score": 0,
+            "total_links": 0,
+            "utm_complete_links": 0,
+            "strong_id_links": 0,
+            "matched_landing_pages": [],
+            "missing_key_counts": {},
+            "links": [],
+            "recommendations": ["Could not inspect Meta creative URLs. Check ads_read permissions and creative fields."],
+        }
+        data_errors.append({"source": "meta_creatives", "message": _safe_error(exc)})
+
     matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
@@ -58,6 +79,8 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         "signals": signals,
         "decision_hints": [item["decision_hint"] for item in signals],
         "missing_data": matching.get("limits", []) + tracking_quality.get("missing_events", []),
+        "partial_data": bool(data_errors),
+        "data_errors": data_errors,
     }
 
 
@@ -116,31 +139,57 @@ async def journey_decision(body: JourneyAnalysisRequest, request: Request):
 
 
 def _ga4_journey_reports(tenant_id: str, property_id: str | None, start_date: str, end_date: str, limit: int) -> dict:
-    traffic = normalize_ga4_report(run_ga4_report(
-        tenant_id, property_id,
+    errors = []
+    traffic = _safe_ga4_rows(
+        errors, "traffic", tenant_id, property_id,
         ["sessionSourceMedium", "sessionCampaignName"],
         ["sessions", "activeUsers", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
         start_date, end_date, limit,
-    ))
-    landing = normalize_ga4_report(run_ga4_report(
-        tenant_id, property_id,
+    )
+    landing = _safe_ga4_rows(
+        errors, "landing", tenant_id, property_id,
         ["landingPagePlusQueryString", "sessionSourceMedium", "deviceCategory"],
         ["sessions", "activeUsers", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
         start_date, end_date, limit,
-    ))
-    events = normalize_ga4_report(run_ga4_report(
-        tenant_id, property_id,
+    )
+    events = _safe_ga4_rows(
+        errors, "events", tenant_id, property_id,
         ["eventName"],
         ["eventCount", "activeUsers"],
         start_date, end_date, limit,
-    ))
-    devices = normalize_ga4_report(run_ga4_report(
-        tenant_id, property_id,
+    )
+    devices = _safe_ga4_rows(
+        errors, "devices", tenant_id, property_id,
         ["deviceCategory"],
         ["sessions", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
         start_date, end_date, limit,
-    ))
-    return {"traffic": traffic, "landing": landing, "events": events, "devices": devices}
+    )
+    return {"traffic": traffic, "landing": landing, "events": events, "devices": devices, "_errors": errors}
+
+
+def _safe_ga4_rows(
+    errors: list[dict],
+    report_name: str,
+    tenant_id: str,
+    property_id: str | None,
+    dimensions: list[str],
+    metrics: list[str],
+    start_date: str,
+    end_date: str,
+    limit: int,
+) -> list[dict]:
+    try:
+        return normalize_ga4_report(run_ga4_report(tenant_id, property_id, dimensions, metrics, start_date, end_date, limit))
+    except Exception as exc:
+        fallback_metrics = [metric for metric in metrics if metric not in {"conversions", "totalRevenue"}]
+        errors.append({"source": f"ga4_{report_name}", "message": _safe_error(exc), "fallback": fallback_metrics})
+        if not fallback_metrics:
+            return []
+        try:
+            return normalize_ga4_report(run_ga4_report(tenant_id, property_id, dimensions, fallback_metrics, start_date, end_date, limit))
+        except Exception as fallback_exc:
+            errors.append({"source": f"ga4_{report_name}_fallback", "message": _safe_error(fallback_exc)})
+            return []
 
 
 def _fetch_meta_ads_with_creatives(account_id: str, token: str, limit: int) -> list[dict]:
@@ -159,7 +208,10 @@ def _fetch_meta_ads_with_creatives(account_id: str, token: str, limit: int) -> l
         )
         rows = payload.get("data", [])
     except Exception:
-        rows = meta_call("GET", f"{account_id}/ads", token, params={"fields": fields, "limit": min(max(int(limit or 100), 1), 100)}).get("data", [])
+        try:
+            rows = meta_call("GET", f"{account_id}/ads", token, params={"fields": fields, "limit": min(max(int(limit or 100), 1), 100)}).get("data", [])
+        except Exception:
+            return []
     normalized = []
     for row in rows[:limit]:
         campaign = row.get("campaign") or {}
@@ -170,6 +222,13 @@ def _fetch_meta_ads_with_creatives(account_id: str, token: str, limit: int) -> l
             "adset_name": adset.get("name") or row.get("adset_name"),
         })
     return normalized
+
+
+def _safe_error(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    if detail:
+        return str(detail)[:500]
+    return str(exc)[:500]
 
 
 def _journey_decision_label(result: dict, confidence: str) -> dict:
