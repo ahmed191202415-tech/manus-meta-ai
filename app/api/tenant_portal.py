@@ -311,6 +311,7 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
       <p class="muted">لن تحتاج هذه الخطوة إلا عند أول ربط أو إذا انتهى الوصول أو تم سحبه.</p>
       {reconnect_hint}
       <a class="button" href="/auth/meta/login">Connect Meta</a>
+      <a class="button" style="background:#8d2d2d" href="/auth/meta/disconnect">Remove saved Meta connection</a>
       {gpt_continue_html}
     </section>
 

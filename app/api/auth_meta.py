@@ -12,6 +12,7 @@ from app.core.oauth_store import (
     get_active_meta_connection_for_tenant,
     get_tenant_meta_app_required,
     purge_meta_connection,
+    purge_meta_connections_for_tenant,
     save_meta_connection,
 )
 
@@ -233,3 +234,24 @@ async def auth_me(request: Request):
 async def auth_logout(request: Request):
     _clear_meta_session(request)
     return {"success": True, "message": "Logged out successfully."}
+
+
+@router.post("/disconnect")
+async def auth_disconnect(request: Request, tenant_id: str | None = None):
+    resolved_tenant_id = str(tenant_id or request.session.get("tenant_id") or "").strip()
+    if not resolved_tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required.")
+    purge_meta_connections_for_tenant(resolved_tenant_id)
+    _clear_meta_session(request)
+    request.session["tenant_id"] = resolved_tenant_id
+    return {
+        "success": True,
+        "tenant_id": resolved_tenant_id,
+        "message": "Meta connection was removed. You can connect Meta again now.",
+    }
+
+
+@router.get("/disconnect")
+async def auth_disconnect_page(request: Request, tenant_id: str | None = None):
+    await auth_disconnect(request, tenant_id=tenant_id)
+    return RedirectResponse(url=f"{PORTAL_PATH}?meta_disconnected=1", status_code=302)

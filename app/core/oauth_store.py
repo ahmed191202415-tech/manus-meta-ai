@@ -678,6 +678,15 @@ def purge_meta_connection(meta_user_id: str, tenant_id: str | None = None):
     return True
 
 
+def purge_meta_connections_for_tenant(tenant_id: str):
+    clean_tenant_id = _clean(tenant_id)
+    if not clean_tenant_id:
+        return False
+    delete_app_tokens(tenant_id=clean_tenant_id)
+    _delete("meta_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
+    return True
+
+
 def get_app_token_data(token: str):
     row = _get_single(
         "app_tokens",
