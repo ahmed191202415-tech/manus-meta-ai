@@ -368,18 +368,15 @@ def update_tenant_meta_app(
     tenant_id: str,
     meta_app_id: str,
     meta_app_secret: str,
-    meta_login_config_id: str | None = None,
     meta_oauth_scopes: str | None = None,
     webhook_verify_token: str | None = None,
     webhook_callback_url: str | None = None,
 ):
-    clean_config_id = _clean(meta_login_config_id)
-    effective_scopes = f"config_id:{clean_config_id}" if clean_config_id else _clean(meta_oauth_scopes)
     payload = {
         "tenant_id": _clean(tenant_id),
         "meta_app_id": _clean(meta_app_id),
         "meta_app_secret": _clean(meta_app_secret),
-        "meta_oauth_scopes": effective_scopes,
+        "meta_oauth_scopes": _clean(meta_oauth_scopes),
         "webhook_verify_token": _clean(webhook_verify_token),
         "webhook_callback_url": _clean(webhook_callback_url),
         "updated_at": _dt(datetime.now(timezone.utc)),
@@ -739,14 +736,6 @@ def get_tenant_status(tenant_id: str):
         "meta_app": {
             "configured": bool(meta_app and _clean(meta_app.get("meta_app_id")) and _clean(meta_app.get("meta_app_secret"))),
             "meta_app_id": meta_app.get("meta_app_id") if meta_app else None,
-            "meta_login_config_id": (
-                meta_app.get("meta_login_config_id")
-                or (
-                    _clean(meta_app.get("meta_oauth_scopes")).split(":", 1)[1]
-                    if meta_app and _clean(meta_app.get("meta_oauth_scopes")).startswith("config_id:")
-                    else None
-                )
-            ) if meta_app else None,
             "meta_oauth_scopes": meta_app.get("meta_oauth_scopes") if meta_app else None,
             "webhook_callback_url": meta_app.get("webhook_callback_url") if meta_app else None,
             "webhook_verify_token_set": bool(_clean(meta_app.get("webhook_verify_token"))) if meta_app else False,

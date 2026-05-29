@@ -15,7 +15,6 @@ class TenantLoginRequest(BaseModel):
 class TenantMetaAppRequest(BaseModel):
     meta_app_id: str
     meta_app_secret: str
-    meta_login_config_id: str | None = None
     meta_oauth_scopes: str | None = None
     webhook_verify_token: str | None = None
     webhook_callback_url: str | None = None

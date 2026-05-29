@@ -57,16 +57,6 @@ def _oauth_redirect_url(redirect_uri: str, code: str, state: str | None = None) 
     return f"{redirect_uri}{separator}{urlencode(params)}"
 
 
-def _resolve_business_login_config_id(meta_app: dict) -> str:
-    config_id = str(meta_app.get("meta_login_config_id") or "").strip()
-    if config_id:
-        return config_id
-    scopes = str(meta_app.get("meta_oauth_scopes") or "").strip()
-    if scopes.startswith("config_id:"):
-        return scopes.split(":", 1)[1].strip()
-    return ""
-
-
 @router.get("/login")
 async def meta_login(request: Request, tenant_id: str | None = None):
     tenant_id = str(tenant_id or request.session.get("tenant_id") or "").strip()
@@ -91,13 +81,8 @@ async def meta_login(request: Request, tenant_id: str | None = None):
         "redirect_uri": META_OAUTH_REDIRECT_URI,
         "response_type": "code",
         "state": _encode_meta_state(request, tenant_id),
+        "scope": meta_app.get("meta_oauth_scopes") or META_OAUTH_SCOPES,
     }
-    config_id = _resolve_business_login_config_id(meta_app)
-    if config_id:
-        login_params["config_id"] = config_id
-        login_params["override_default_response_type"] = "true"
-    else:
-        login_params["scope"] = meta_app.get("meta_oauth_scopes") or META_OAUTH_SCOPES
     login_url = "https://www.facebook.com/v23.0/dialog/oauth?" + urlencode(login_params)
     return RedirectResponse(url=login_url, status_code=302)
 

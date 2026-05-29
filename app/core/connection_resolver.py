@@ -121,11 +121,6 @@ def resolve_tenant_connection_state(tenant_id: str) -> dict:
         result["meta_app"] = {
             "configured": bool(_safe_str(meta_app.get("meta_app_id")) and _safe_str(meta_app.get("meta_app_secret"))),
             "meta_app_id": meta_app.get("meta_app_id"),
-            "meta_login_config_id": meta_app.get("meta_login_config_id") or (
-                _safe_str(meta_app.get("meta_oauth_scopes")).split(":", 1)[1]
-                if _safe_str(meta_app.get("meta_oauth_scopes")).startswith("config_id:")
-                else None
-            ),
             "meta_oauth_scopes": meta_app.get("meta_oauth_scopes"),
         }
 

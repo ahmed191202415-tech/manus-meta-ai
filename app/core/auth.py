@@ -1,6 +1,6 @@
 from fastapi import HTTPException, Request
 
-from app.config import META_TEST_ACCESS_TOKEN
+from app.config import IS_PRODUCTION, META_TEST_ACCESS_TOKEN
 from app.core.meta_client import meta_call
 from app.core.meta_context import set_current_meta_app_secret
 from app.core.oauth_store import (
@@ -162,7 +162,7 @@ async def resolve_access_token(request: Request) -> str:
                 app_secret=app_secret,
             )
 
-    if META_TEST_ACCESS_TOKEN:
+    if META_TEST_ACCESS_TOKEN and not IS_PRODUCTION:
         set_current_meta_app_secret(None)
         return META_TEST_ACCESS_TOKEN
 

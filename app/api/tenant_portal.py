@@ -209,8 +209,6 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
     display_name = status.get("display_name") or "Client"
     email = status.get("email") or ""
     app_id_value = meta_app.get("meta_app_id") or ""
-    saved_scopes = str(meta_app.get("meta_oauth_scopes") or "")
-    config_id_value = meta_app.get("meta_login_config_id") or (saved_scopes.split(":", 1)[1] if saved_scopes.startswith("config_id:") else "")
     message_for_user = status.get("message_for_user") or ""
     next_action = status.get("next_action") or "show_setup"
 
@@ -297,8 +295,6 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
       <input id="meta_app_id" value="{app_id_value}" placeholder="Meta App ID" {'disabled' if blocked else ''} />
       <label for="meta_app_secret">Meta App Secret</label>
       <input id="meta_app_secret" type="password" placeholder="Meta App Secret" {'disabled' if blocked else ''} />
-      <label for="meta_login_config_id">Facebook Login for Business Configuration ID</label>
-      <input id="meta_login_config_id" value="{config_id_value}" placeholder="Config ID from Meta Business Login configuration" {'disabled' if blocked else ''} />
       <button onclick="saveMetaApp()" {'disabled' if blocked else ''}>حفظ بيانات التطبيق</button>
     </section>
 
@@ -329,7 +325,6 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
             body: JSON.stringify({{
               meta_app_id: document.getElementById("meta_app_id").value,
               meta_app_secret: document.getElementById("meta_app_secret").value,
-              meta_login_config_id: document.getElementById("meta_login_config_id").value,
               meta_oauth_scopes: "",
               webhook_verify_token: "",
               webhook_callback_url: ""
@@ -727,7 +722,6 @@ async def put_portal_meta_app(body: TenantMetaAppRequest, request: Request):
         tenant_id=tenant_id,
         meta_app_id=body.meta_app_id,
         meta_app_secret=body.meta_app_secret,
-        meta_login_config_id=body.meta_login_config_id,
         meta_oauth_scopes="",
         webhook_verify_token="",
         webhook_callback_url="",
@@ -736,7 +730,6 @@ async def put_portal_meta_app(body: TenantMetaAppRequest, request: Request):
         "success": True,
         "tenant_id": tenant_id,
         "meta_app_id": meta_app.get("meta_app_id"),
-        "meta_login_config_id": meta_app.get("meta_login_config_id"),
         "configured": bool(meta_app.get("meta_app_id") and meta_app.get("meta_app_secret")),
     }
 
