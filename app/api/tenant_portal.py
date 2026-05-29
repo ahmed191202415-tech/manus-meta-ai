@@ -337,8 +337,8 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
             alert((data && data.detail) ? JSON.stringify(data.detail) : text);
             return;
           }}
-          const hasPendingGpt = {"true" if has_pending_gpt_oauth else "false"};
-          window.location.href = hasPendingGpt ? "/auth/meta/login" : "/portal";
+          alert("تم حفظ بيانات التطبيق. اضغط Connect Meta عندما تكون جاهزًا للربط.");
+          window.location.href = "/portal";
         }} catch (error) {{
           alert(error.message);
         }}
@@ -434,7 +434,7 @@ def _admin_html() -> str:
               <div class="actions">
                 <button onclick="renewAccess('${item.email}')">تجديد/تفعيل</button>
                 <button class="secondary" onclick="setStatus('${item.email}', 'disabled')">إيقاف</button>
-                <button class="warn" onclick="deleteAccess('${item.email}')">حذف</button>
+                <button class="warn" onclick="deleteAccess('${item.email}')">تنظيف كامل</button>
               </div>
             </td>
           </tr>
@@ -525,6 +525,7 @@ def _admin_html() -> str:
       }
 
       async function deleteAccess(email) {
+        if (!confirm("سيتم حذف المستخدم وتنظيف كل بياناته المحفوظة: Meta وGoogle وClarity وGPT tokens. هل أنت متأكد؟")) return;
         const response = await fetch("/portal/admin/access?email=" + encodeURIComponent(email), {
           method: "DELETE",
           credentials: "include"
@@ -800,6 +801,20 @@ async def admin_delete_access(request: Request, email: str = Query(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"item": item}
+
+
+@router.post("/admin/access/purge")
+async def admin_purge_access(body: TenantEmailAccessRequest, request: Request):
+    _require_admin(request)
+    try:
+        item = delete_access_email(body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "message": "Tenant and all saved integrations were cleaned.",
+        "item": item,
+    }
 
 
 @router.get("/admin/access/invite-url")
