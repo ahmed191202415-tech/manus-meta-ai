@@ -50,7 +50,7 @@ async def oauth_authorize(
     if next_action in {"show_setup", "show_email_gate", "show_blocked"}:
         return RedirectResponse(url=PORTAL_PATH, status_code=302)
     if next_action in {"show_reconnect", "show_support"}:
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
+        return RedirectResponse(url=PORTAL_PATH, status_code=302)
 
     meta_user_id = request.session.get("meta_user_id") or resolution.get("connection", {}).get("meta_user_id")
 
@@ -121,7 +121,7 @@ async def oauth_continue(request: Request):
     if next_action in {"show_setup", "show_email_gate", "show_blocked"}:
         return RedirectResponse(url=PORTAL_PATH, status_code=302)
     if next_action in {"show_reconnect", "show_support"}:
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
+        return RedirectResponse(url=PORTAL_PATH, status_code=302)
 
     meta_user_id = request.session.get("meta_user_id") or resolution.get("connection", {}).get("meta_user_id")
     if not meta_user_id:
