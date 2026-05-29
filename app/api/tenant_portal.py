@@ -199,7 +199,7 @@ def _email_gate_html(message: str = "", email: str = "") -> str:
     return _page_shell("بوابة البريد الإلكتروني", body)
 
 
-def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = False) -> str:
+def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = False, meta_oauth_error: dict | None = None) -> str:
     meta_app = status.get("meta_app") or {}
     connection = status.get("connection") or {}
     app_ready = bool(meta_app.get("configured"))
@@ -227,6 +227,18 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
         if connected and next_action == "continue":
             gpt_continue_html = '<a class="button" href="/oauth/continue">الرجوع إلى GPT الآن</a>'
 
+    meta_error_html = ""
+    if meta_oauth_error:
+        reason = str(meta_oauth_error.get("reason") or "unknown")
+        detail = str(meta_oauth_error.get("detail") or "")
+        meta_error_html = f"""
+        <section class="card">
+          <div class="step blocked">Meta OAuth Error</div>
+          <p>Reason: <strong>{reason}</strong></p>
+          <pre>{detail}</pre>
+        </section>
+        """
+
     block_html = ""
     if blocked:
         block_html = """
@@ -242,6 +254,7 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
       <p>أهلًا {display_name}. البريد الحالي: <strong>{email}</strong>. هذه الصفحة لن تظهر لك إلا عند الحاجة فقط: أول إعداد، أو إعادة ربط، أو إصلاح مشكلة.</p>
     </section>
     {gpt_hint}
+    {meta_error_html}
 
     <section class="summary">
       <div class="mini">
@@ -550,7 +563,13 @@ async def portal_home(request: Request, email: str | None = None):
     status = resolve_tenant_connection_state(tenant_id)
     status["email"] = request.session.get("user_email") or tenant_id
     has_pending_gpt_oauth = bool(request.session.get("gpt_oauth_redirect_uri"))
-    return HTMLResponse(_portal_html(status, META_OAUTH_REDIRECT_URI, has_pending_gpt_oauth=has_pending_gpt_oauth))
+    meta_oauth_error = request.session.pop("meta_oauth_error", None)
+    return HTMLResponse(_portal_html(
+        status,
+        META_OAUTH_REDIRECT_URI,
+        has_pending_gpt_oauth=has_pending_gpt_oauth,
+        meta_oauth_error=meta_oauth_error,
+    ))
 
 
 @router.get("/client", response_class=HTMLResponse)

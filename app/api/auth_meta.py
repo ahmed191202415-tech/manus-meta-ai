@@ -40,6 +40,22 @@ def _decode_meta_state(state: str | None) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _portal_with_meta_error(request: Request, reason: str, detail: object) -> RedirectResponse:
+    request.session["meta_oauth_error"] = {
+        "reason": str(reason)[:120],
+        "detail": str(detail)[:800],
+    }
+    return RedirectResponse(url=f"{PORTAL_PATH}?meta_error={reason}", status_code=302)
+
+
+def _oauth_redirect_url(redirect_uri: str, code: str, state: str | None = None) -> str:
+    separator = "&" if "?" in redirect_uri else "?"
+    params = {"code": code}
+    if state:
+        params["state"] = state
+    return f"{redirect_uri}{separator}{urlencode(params)}"
+
+
 @router.get("/login")
 async def meta_login(request: Request, tenant_id: str | None = None):
     tenant_id = str(tenant_id or request.session.get("tenant_id") or "").strip()
@@ -119,7 +135,7 @@ async def meta_callback(
 
     if resp.status_code >= 400 or "access_token" not in data:
         if request.session.get("gpt_oauth_redirect_uri") or state_data.get("gpt_redirect_uri") or request.session.get("tenant_id"):
-            return RedirectResponse(url=PORTAL_PATH, status_code=302)
+            return _portal_with_meta_error(request, "token_exchange_failed", data)
         return JSONResponse(status_code=400, content={"success": False, "meta_response": data})
 
     me_resp = requests.get(
@@ -134,17 +150,20 @@ async def meta_callback(
 
     if not meta_user_id:
         if request.session.get("gpt_oauth_redirect_uri") or state_data.get("gpt_redirect_uri") or request.session.get("tenant_id"):
-            return RedirectResponse(url=PORTAL_PATH, status_code=302)
+            return _portal_with_meta_error(request, "profile_fetch_failed", me_data)
         return JSONResponse(status_code=400, content={"success": False, "meta_response": me_data})
 
     granted_scopes = data.get("granted_scopes")
-    save_meta_connection(
-        tenant_id=tenant_id,
-        meta_user_id=meta_user_id,
-        meta_access_token=data["access_token"],
-        meta_user_name=meta_user_name,
-        granted_scopes=",".join(granted_scopes) if isinstance(granted_scopes, list) else None,
-    )
+    try:
+        save_meta_connection(
+            tenant_id=tenant_id,
+            meta_user_id=meta_user_id,
+            meta_access_token=data["access_token"],
+            meta_user_name=meta_user_name,
+            granted_scopes=",".join(granted_scopes) if isinstance(granted_scopes, list) else None,
+        )
+    except Exception as exc:
+        return _portal_with_meta_error(request, "connection_save_failed", exc)
 
     request.session["meta_access_token"] = data["access_token"]
     request.session["meta_user_id"] = meta_user_id
@@ -157,9 +176,7 @@ async def meta_callback(
 
     if gpt_redirect_uri:
         oauth_code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
-        final_url = f"{gpt_redirect_uri}?code={oauth_code}"
-        if gpt_state:
-            final_url += f"&state={gpt_state}"
+        final_url = _oauth_redirect_url(gpt_redirect_uri, oauth_code, gpt_state)
         request.session.pop("gpt_oauth_redirect_uri", None)
         request.session.pop("gpt_oauth_state", None)
         request.session.pop("gpt_oauth_client_id", None)
