@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from itsdangerous import BadSignature, URLSafeSerializer
 import requests
+from urllib.parse import urlencode
 
-from app.config import META_OAUTH_REDIRECT_URI, META_OAUTH_SCOPES, PORTAL_PATH
+from app.config import META_OAUTH_REDIRECT_URI, META_OAUTH_SCOPES, PORTAL_PATH, SESSION_SECRET
 from app.core.connection_resolver import resolve_tenant_connection_state
 from app.core.auth import _clear_meta_session, _validate_meta_access_token
 from app.core.oauth_store import (
@@ -14,6 +16,28 @@ from app.core.oauth_store import (
 )
 
 router = APIRouter(prefix="/auth/meta", tags=["auth"])
+
+
+def _meta_state_serializer() -> URLSafeSerializer:
+    return URLSafeSerializer(SESSION_SECRET, salt="meta-oauth-state")
+
+
+def _encode_meta_state(request: Request, tenant_id: str) -> str:
+    return _meta_state_serializer().dumps({
+        "tenant_id": tenant_id,
+        "gpt_redirect_uri": request.session.get("gpt_oauth_redirect_uri"),
+        "gpt_state": request.session.get("gpt_oauth_state"),
+    })
+
+
+def _decode_meta_state(state: str | None) -> dict:
+    if not state:
+        return {}
+    try:
+        payload = _meta_state_serializer().loads(state)
+    except BadSignature:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 @router.get("/login")
@@ -33,16 +57,16 @@ async def meta_login(request: Request, tenant_id: str | None = None):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    scopes = meta_app.get("meta_oauth_scopes") or META_OAUTH_SCOPES
-    login_url = (
-        "https://www.facebook.com/v23.0/dialog/oauth"
-        f"?client_id={meta_app['meta_app_id']}"
-        f"&redirect_uri={META_OAUTH_REDIRECT_URI}"
-        f"&scope={scopes}"
-        "&response_type=code"
-    )
     request.session["tenant_id"] = tenant_id
     request.session["pending_meta_tenant_id"] = tenant_id
+    scopes = meta_app.get("meta_oauth_scopes") or META_OAUTH_SCOPES
+    login_url = "https://www.facebook.com/v23.0/dialog/oauth?" + urlencode({
+        "client_id": meta_app["meta_app_id"],
+        "redirect_uri": META_OAUTH_REDIRECT_URI,
+        "scope": scopes,
+        "response_type": "code",
+        "state": _encode_meta_state(request, tenant_id),
+    })
     return RedirectResponse(url=login_url, status_code=302)
 
 
@@ -51,10 +75,12 @@ async def meta_callback(
     request: Request,
     code: str | None = None,
     error: str | None = None,
-    error_description: str | None = None
+    error_description: str | None = None,
+    state: str | None = None,
 ):
+    state_data = _decode_meta_state(state)
     if error:
-        if request.session.get("gpt_oauth_redirect_uri") or request.session.get("tenant_id"):
+        if request.session.get("gpt_oauth_redirect_uri") or state_data.get("gpt_redirect_uri") or request.session.get("tenant_id"):
             return RedirectResponse(url=PORTAL_PATH, status_code=302)
         return JSONResponse(
             status_code=400,
@@ -67,6 +93,7 @@ async def meta_callback(
     tenant_id = str(
         request.session.get("pending_meta_tenant_id")
         or request.session.get("tenant_id")
+        or state_data.get("tenant_id")
         or ""
     ).strip()
     if not tenant_id:
@@ -91,7 +118,7 @@ async def meta_callback(
     data = resp.json()
 
     if resp.status_code >= 400 or "access_token" not in data:
-        if request.session.get("gpt_oauth_redirect_uri") or request.session.get("tenant_id"):
+        if request.session.get("gpt_oauth_redirect_uri") or state_data.get("gpt_redirect_uri") or request.session.get("tenant_id"):
             return RedirectResponse(url=PORTAL_PATH, status_code=302)
         return JSONResponse(status_code=400, content={"success": False, "meta_response": data})
 
@@ -106,7 +133,7 @@ async def meta_callback(
     meta_user_name = me_data.get("name")
 
     if not meta_user_id:
-        if request.session.get("gpt_oauth_redirect_uri") or request.session.get("tenant_id"):
+        if request.session.get("gpt_oauth_redirect_uri") or state_data.get("gpt_redirect_uri") or request.session.get("tenant_id"):
             return RedirectResponse(url=PORTAL_PATH, status_code=302)
         return JSONResponse(status_code=400, content={"success": False, "meta_response": me_data})
 
@@ -125,8 +152,8 @@ async def meta_callback(
     request.session["tenant_id"] = tenant_id
     request.session.pop("pending_meta_tenant_id", None)
 
-    gpt_redirect_uri = request.session.get("gpt_oauth_redirect_uri")
-    gpt_state = request.session.get("gpt_oauth_state")
+    gpt_redirect_uri = request.session.get("gpt_oauth_redirect_uri") or state_data.get("gpt_redirect_uri")
+    gpt_state = request.session.get("gpt_oauth_state") or state_data.get("gpt_state")
 
     if gpt_redirect_uri:
         oauth_code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
