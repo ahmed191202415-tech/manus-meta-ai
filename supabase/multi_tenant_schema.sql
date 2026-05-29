@@ -25,12 +25,15 @@ create table if not exists public.tenant_meta_apps (
   tenant_id text primary key references public.tenant_accounts(tenant_id) on delete cascade,
   meta_app_id text not null,
   meta_app_secret text not null,
+  meta_login_config_id text,
   meta_oauth_scopes text,
   webhook_verify_token text,
   webhook_callback_url text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table public.tenant_meta_apps add column if not exists meta_login_config_id text;
 
 create table if not exists public.meta_connections (
   tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
