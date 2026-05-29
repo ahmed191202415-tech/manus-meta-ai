@@ -318,6 +318,7 @@ def delete_access_email(email: str):
     existing = get_tenant_account_by_email(clean_email)
     if not existing:
         raise ValueError("Email not found.")
+    purge_tenant_integrations(existing["tenant_id"])
     now = _dt(datetime.now(timezone.utc))
     rows = _patch(
         "tenant_accounts",
@@ -684,6 +685,19 @@ def purge_meta_connections_for_tenant(tenant_id: str):
         return False
     delete_app_tokens(tenant_id=clean_tenant_id)
     _delete("meta_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
+    return True
+
+
+def purge_tenant_integrations(tenant_id: str):
+    clean_tenant_id = _clean(tenant_id)
+    if not clean_tenant_id:
+        return False
+    delete_app_tokens(tenant_id=clean_tenant_id)
+    _delete("oauth_codes", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("meta_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("tenant_meta_apps", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("google_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("clarity_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
     return True
 
 
