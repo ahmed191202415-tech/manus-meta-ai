@@ -8,7 +8,6 @@ from fastapi import HTTPException
 from app.config import (
     META_API_VERSION,
     META_GRAPH_BASE,
-    META_APP_SECRET,
     HTTP_TIMEOUT,
     META_RETRY_MAX_ATTEMPTS,
     META_RETRY_BASE_DELAY_SECONDS,
@@ -36,7 +35,7 @@ def build_meta_url(path: str) -> str:
 
 
 def appsecret_proof(access_token: str, app_secret: Optional[str] = None) -> Optional[str]:
-    secret = (app_secret or get_current_meta_app_secret() or META_APP_SECRET).strip()
+    secret = (app_secret or get_current_meta_app_secret() or "").strip()
     if not secret:
         return None
     return hmac.new(

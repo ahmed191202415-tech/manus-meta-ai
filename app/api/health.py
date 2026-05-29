@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.config import EXPORT_DIR, META_API_VERSION
+from app.config import EXPORT_DIR, META_API_VERSION, META_APP_SECRET, META_TEST_ACCESS_TOKEN, PUBLIC_BASE_URL
 
 router = APIRouter(tags=["health"])
 
@@ -9,6 +9,7 @@ async def health():
     return {
         "ok": True,
         "meta_api_version": META_API_VERSION,
+        "public_base_url": PUBLIC_BASE_URL,
         "export_dir": str(EXPORT_DIR),
         "message": "Project structure bootstrap is working"
     }
@@ -40,6 +41,11 @@ async def auth_connection_probe():
                 }
         except Exception as exc:
             out["connection_error"] = {"type": type(exc).__name__, "message": str(exc)[:500]}
+        out["railway_meta_warning"] = {
+            "meta_app_secret_set": bool(META_APP_SECRET),
+            "meta_test_access_token_set": bool(META_TEST_ACCESS_TOKEN),
+            "message": "For tenant-based Meta OAuth, remove META_APP_SECRET and META_TEST_ACCESS_TOKEN from Railway to avoid confusion. The app no longer uses them for production token resolution.",
+        }
         out["ok"] = bool(out.get("has_latest_connection"))
         return out
     except Exception as exc:
