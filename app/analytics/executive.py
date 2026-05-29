@@ -7,10 +7,12 @@ from app.analytics.funnel import build_video_funnel
 from app.analytics.diagnostics import build_drop_reason
 from app.analytics.decisions import build_scale_kill_hold
 from app.analytics.prediction import build_forecast
+from app.analytics.goal_context import build_goal_context
 
 
 def build_executive_report(current_df: pd.DataFrame, compare_df: Optional[pd.DataFrame], level: str, top_n: int) -> Dict[str, Any]:
     summary = summarize_df(current_df)
+    goal_context = build_goal_context(current_df)
     ranking = build_ranking(current_df, level, min(top_n, 5))
     funnel = build_video_funnel(current_df)
     drop = build_drop_reason(current_df, compare_df) if compare_df is not None and not compare_df.empty else None
@@ -29,6 +31,7 @@ def build_executive_report(current_df: pd.DataFrame, compare_df: Optional[pd.Dat
         bullets.extend(drop.get("suspected_reasons", []))
 
     return {
+        "goal_context": goal_context,
         "summary": summary,
         "top_entities": ranking.get("top", []),
         "bottom_entities": ranking.get("bottom", []),

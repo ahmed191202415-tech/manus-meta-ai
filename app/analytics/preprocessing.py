@@ -3,6 +3,7 @@ import numpy as np
 from typing import Any, List, Dict, Optional
 
 from app.config import ANALYSIS_DEFAULT_DATE_PRESET, ANALYSIS_MAX_PAGES, ANALYSIS_PAGE_LIMIT
+from app.analytics.goal_context import LEAD_ACTIONS, MESSAGE_ACTIONS, PURCHASE_ACTIONS
 from app.core.meta_client import normalize_account_id
 from app.core.pagination import meta_get_all_pages
 
@@ -39,8 +40,25 @@ def extract_video_action(actions: Any) -> float:
         return 0.0
 
 
-def extract_best_result(actions: Any) -> float:
+def _objective_result_actions(objective: Any) -> list[str]:
+    value = str(objective or "").lower()
+    if "message" in value or "whatsapp" in value or "conversation" in value:
+        return list(MESSAGE_ACTIONS)
+    if "lead" in value:
+        return list(LEAD_ACTIONS)
+    if "sales" in value or "conversion" in value or "purchase" in value or "catalog" in value:
+        return list(PURCHASE_ACTIONS)
+    return []
+
+
+def extract_best_result(actions: Any, objective: Any = None) -> float:
     # Meta reports different "result" action types depending on campaign objective.
+    objective_actions = _objective_result_actions(objective)
+    if objective_actions:
+        objective_value = max((extract_action_value(actions, action_type) for action_type in objective_actions), default=0.0)
+        if objective_value > 0:
+            return objective_value
+
     result_action_types = [
         "offsite_complete_registration_add_meta_leads",
         "onsite_conversion.lead_grouped",
@@ -59,6 +77,30 @@ def extract_best_result(actions: Any) -> float:
     return max((extract_action_value(actions, action_type) for action_type in result_action_types), default=0.0)
 
 
+def extract_result_type(actions: Any, objective: Any = None) -> str:
+    objective_actions = _objective_result_actions(objective)
+    candidate_actions = objective_actions or [
+        "offsite_complete_registration_add_meta_leads",
+        "onsite_conversion.lead_grouped",
+        "lead",
+        "purchase",
+        "omni_purchase",
+        "offsite_conversion.fb_pixel_purchase",
+        "onsite_conversion.purchase",
+        "messaging_conversation_started_7d",
+        "onsite_conversion.messaging_conversation_started_7d",
+        "onsite_conversion.messaging_first_reply",
+        "contact",
+        "submit_application",
+        "complete_registration",
+    ]
+    values = [(action_type, extract_action_value(actions, action_type)) for action_type in candidate_actions]
+    values = [item for item in values if item[1] > 0]
+    if not values:
+        return ""
+    return max(values, key=lambda item: item[1])[0]
+
+
 def safe_div(a: float, b: float) -> float:
     return float(a) / float(b) if b not in (0, 0.0, None) else 0.0
 
@@ -73,7 +115,10 @@ def frame_from_insights(rows: List[Dict[str, Any]], level: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    df["results"] = df.get("actions", pd.Series(dtype=object)).apply(extract_best_result)
+    actions_series = df.get("actions", pd.Series(dtype=object))
+    objective_series = df.get("objective", pd.Series([""] * len(df)))
+    df["results"] = [extract_best_result(actions, objective) for actions, objective in zip(actions_series, objective_series)]
+    df["result_action_type"] = [extract_result_type(actions, objective) for actions, objective in zip(actions_series, objective_series)]
 
     df["video_p50"] = df.get("video_p50_watched_actions", pd.Series(dtype=object)).apply(extract_video_action)
     df["video_p75"] = df.get("video_p75_watched_actions", pd.Series(dtype=object)).apply(extract_video_action)

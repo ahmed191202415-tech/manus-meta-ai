@@ -3,12 +3,15 @@ import numpy as np
 from typing import Dict, Any
 
 from app.analytics.ranking import _entity_aggregates
+from app.analytics.goal_context import build_goal_context
 
 
 def build_decision_score(df: pd.DataFrame, level: str, top_n: int) -> Dict[str, Any]:
     if df.empty:
         return {"message": "No data found."}
 
+    goal_context = build_goal_context(df)
+    primary_goal = goal_context.get("primary_goal")
     grouped = _entity_aggregates(df, level)
 
     spend_norm = grouped["spend"] / grouped["spend"].max() if grouped["spend"].max() else 0
@@ -24,9 +27,12 @@ def build_decision_score(df: pd.DataFrame, level: str, top_n: int) -> Dict[str, 
             return "SCALE"
         if row["decision_score"] >= 45:
             return "HOLD / KEEP TESTING"
+        if primary_goal in {"messages", "traffic", "awareness_engagement"}:
+            return "HOLD / CHECK GOAL FIT"
         return "KILL OR REBUILD"
 
     grouped["decision"] = grouped.apply(decide, axis=1)
+    grouped["decision_guardrail"] = goal_context.get("warning") or ""
     grouped = grouped.sort_values(["decision_score", "results"], ascending=[False, False])
 
     cols = [
@@ -39,9 +45,11 @@ def build_decision_score(df: pd.DataFrame, level: str, top_n: int) -> Dict[str, 
         "p75_rate_pct",
         "decision_score",
         "decision",
+        "decision_guardrail",
     ]
 
     return {
+        "goal_context": goal_context,
         "entities": grouped.head(top_n)[cols].round(2).replace({np.nan: None}).to_dict(orient="records")
     }
 
@@ -54,8 +62,10 @@ def build_scale_kill_hold(df: pd.DataFrame, level: str, top_n: int) -> Dict[str,
         return {"message": "No data found."}
 
     return {
+        "goal_context": scored.get("goal_context"),
         "scale": entities[entities["decision"] == "SCALE"].head(top_n).to_dict(orient="records"),
         "hold": entities[entities["decision"] == "HOLD / KEEP TESTING"].head(top_n).to_dict(orient="records"),
+        "check_goal_fit": entities[entities["decision"] == "HOLD / CHECK GOAL FIT"].head(top_n).to_dict(orient="records"),
         "kill": entities[entities["decision"] == "KILL OR REBUILD"].head(top_n).to_dict(orient="records"),
     }
 
@@ -78,6 +88,7 @@ def build_budget_reallocation(df: pd.DataFrame, level: str, top_n: int) -> Dict[
     released = float(kill["spend"].sum()) if not kill.empty else 0.0
 
     return {
+        "goal_context": scored.get("goal_context"),
         "released_budget_estimate": round(released, 2),
         "scale_targets": scale.head(top_n).replace({np.nan: None}).to_dict(orient="records"),
         "stop_targets": kill.head(top_n).replace({np.nan: None}).to_dict(orient="records"),

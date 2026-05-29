@@ -5,6 +5,7 @@ from app.analytics.clarity_ad_matching import build_clarity_ad_behavior
 from app.analytics.clarity_metrics import normalize_clarity_export, summarize_clarity_metrics
 from app.analytics.clarity_signals import build_clarity_signals
 from app.analytics.ga4_preprocessing import normalize_ga4_report
+from app.analytics.goal_context import build_goal_context
 from app.analytics.journey_metrics import build_journey_metrics
 from app.analytics.journey_signals import build_journey_signals
 from app.analytics.preprocessing import fetch_insights_df
@@ -74,6 +75,7 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         data_errors.append({"source": "meta_creatives", "message": _safe_error(exc)})
 
     matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
+    goal_context = build_goal_context(meta_rows)
     matched_entities = _build_matched_entities(meta_rows, creative_rows if "creative_rows" in locals() else [], ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
@@ -94,6 +96,7 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
             "auto_selection_reason": inferred_scope.get("reason"),
         },
         "ga4_filter_limits": _ga4_filter_limits(effective_body),
+        "goal_context": goal_context,
         "matching": matching,
         "matched_entities": matched_entities,
         "tracking_link_audit": link_audit,
@@ -141,6 +144,7 @@ async def journey_analyze_from_payload(body: JourneyPayloadAnalysisRequest, requ
         }
 
     matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
+    goal_context = build_goal_context(meta_rows)
     matched_entities = _build_matched_entities(meta_rows, creative_rows, ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
@@ -162,6 +166,7 @@ async def journey_analyze_from_payload(body: JourneyPayloadAnalysisRequest, requ
             "source": "provided_payload",
         },
         "ga4_filter_limits": _ga4_filter_limits(body),
+        "goal_context": goal_context,
         "matching": matching,
         "matched_entities": matched_entities,
         "tracking_link_audit": link_audit,
@@ -222,6 +227,7 @@ async def journey_decision(body: JourneyAnalysisRequest, request: Request):
     decision = _journey_decision_label(result, confidence)
     return {
         "confidence": confidence,
+        "goal_context": result.get("goal_context"),
         "decision": decision["decision"],
         "primary_reason": decision["primary_reason"],
         "next_action": decision["next_action"],
@@ -556,6 +562,7 @@ def _journey_decision_label(result: dict, confidence: str) -> dict:
     names = {item.get("signal") for item in signals}
     quality = result.get("tracking_quality") or {}
     matching = result.get("matching") or {}
+    goal = (result.get("goal_context") or {}).get("primary_goal")
 
     if confidence == "low" or quality.get("level") == "weak" or "ad_to_page_match_low_confidence" in names:
         return {
@@ -576,6 +583,18 @@ def _journey_decision_label(result: dict, confidence: str) -> dict:
             "next_action": "Improve landing page speed, message match, mobile UX, CTA, and trust elements.",
         }
     if "engaged_no_conversion" in names:
+        if goal == "messages":
+            return {
+                "decision": "Hold / Check Messages",
+                "primary_reason": "The Meta campaign goal appears to be messages, so missing GA4 purchases or leads is not enough to call it a failed campaign.",
+                "next_action": "Judge conversation starts, reply quality, WhatsApp/Messenger follow-up, and add website conversion tracking only if the campaign is meant to produce site leads.",
+            }
+        if goal in {"traffic", "awareness_engagement"}:
+            return {
+                "decision": "Hold / Check Goal Fit",
+                "primary_reason": "The campaign goal is not clearly direct conversions, so conversion-only judgement would be misleading.",
+                "next_action": "Evaluate the campaign against its real objective first, then decide whether conversion tracking is needed for a lower-funnel test.",
+            }
         return {
             "decision": "Fix CTA",
             "primary_reason": "Users engage with the site but do not convert.",

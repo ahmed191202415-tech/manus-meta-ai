@@ -14,6 +14,7 @@ from app.analytics.semantic_metrics import aggregate_metrics, expand_semantic_me
 from app.analytics.statistics_engine import pct_change, severity_from_score
 from app.analytics.arabic_explainer import evidence_sentence
 from app.analytics.diagnostic_rules_catalog import RULES_CATALOG
+from app.analytics.goal_context import build_goal_context
 
 
 def _row_dict(df: pd.DataFrame, idx: int) -> Dict[str, Any]:
@@ -154,10 +155,15 @@ def _diagnose_entity(row: Dict[str, Any], prev: Dict[str, Any], level: str) -> L
 
 
 def _objective_notes(df: pd.DataFrame) -> List[str]:
-    if df is None or df.empty or 'objective' not in df.columns:
-        return []
-    objectives = sorted(set(str(x) for x in df['objective'].dropna().unique() if str(x)))[:8]
+    goal_context = build_goal_context(df)
     notes = []
+    warning = goal_context.get("warning")
+    if warning:
+        notes.append(warning)
+    notes.extend(goal_context.get("analysis_guardrails", []))
+    if df is None or df.empty or 'objective' not in df.columns:
+        return list(dict.fromkeys(notes))
+    objectives = sorted(set(str(x) for x in df['objective'].dropna().unique() if str(x)))[:8]
     for obj in objectives:
         low = obj.lower()
         if 'message' in low:
@@ -170,6 +176,7 @@ def _objective_notes(df: pd.DataFrame) -> List[str]:
 
 
 def build_intelligence_diagnostics(current_df: pd.DataFrame, compare_df: pd.DataFrame, level: str = 'campaign', top_n: int = 10) -> Dict[str, Any]:
+    goal_context = build_goal_context(current_df)
     current = aggregate_metrics(current_df, level)
     previous = aggregate_metrics(compare_df, level) if compare_df is not None and not compare_df.empty else pd.DataFrame()
     hits: List[Dict[str, Any]] = []
@@ -205,6 +212,7 @@ def build_intelligence_diagnostics(current_df: pd.DataFrame, compare_df: pd.Data
         'diagnostics_count': len(hits),
         'scenario_counts': scenario_counts,
         'top_diagnostics': top_hits,
+        'goal_context': goal_context,
         'objective_notes': _objective_notes(current_df),
         'missing_notes': missing_notes,
         'method': {
