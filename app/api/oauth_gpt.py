@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from urllib.parse import urlencode
 
 from app.config import GPT_OAUTH_CLIENT_ID, GPT_OAUTH_CLIENT_SECRET, PORTAL_PATH
 from app.core.connection_resolver import resolve_tenant_connection_state
+from app.core.gpt_oauth_state import encode_gpt_oauth_state
 from app.core.auth import _clear_meta_session, _validate_meta_access_token
 from app.core.oauth_store import (
     create_app_token,
@@ -14,6 +16,19 @@ from app.core.oauth_store import (
 )
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
+
+
+def _portal_url_with_gpt_state(client_id: str, redirect_uri: str, state: str) -> str:
+    token = encode_gpt_oauth_state(client_id=client_id, redirect_uri=redirect_uri, state=state)
+    return f"{PORTAL_PATH}?{urlencode({'gpt_oauth': token})}"
+
+
+def _oauth_redirect_url(redirect_uri: str, code: str, state: str | None = None) -> str:
+    separator = "&" if "?" in redirect_uri else "?"
+    params = {"code": code}
+    if state:
+        params["state"] = state
+    return f"{redirect_uri}{separator}{urlencode(params)}"
 
 
 @router.get("/authorize")
@@ -38,7 +53,7 @@ async def oauth_authorize(
         request.session["gpt_oauth_redirect_uri"] = redirect_uri
         request.session["gpt_oauth_state"] = state
         request.session["gpt_oauth_client_id"] = client_id
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+        return RedirectResponse(url=_portal_url_with_gpt_state(client_id, redirect_uri, state), status_code=302)
 
     request.session["gpt_oauth_redirect_uri"] = redirect_uri
     request.session["gpt_oauth_state"] = state
@@ -48,9 +63,9 @@ async def oauth_authorize(
     next_action = resolution.get("next_action")
 
     if next_action in {"show_setup", "show_email_gate", "show_blocked"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+        return RedirectResponse(url=_portal_url_with_gpt_state(client_id, redirect_uri, state), status_code=302)
     if next_action in {"show_reconnect", "show_support"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+        return RedirectResponse(url=_portal_url_with_gpt_state(client_id, redirect_uri, state), status_code=302)
 
     meta_user_id = request.session.get("meta_user_id") or resolution.get("connection", {}).get("meta_user_id")
 
@@ -69,10 +84,7 @@ async def oauth_authorize(
         return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
 
     code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
-    final_url = f"{redirect_uri}?code={code}"
-    if state:
-        final_url += f"&state={state}"
-    return RedirectResponse(url=final_url, status_code=302)
+    return RedirectResponse(url=_oauth_redirect_url(redirect_uri, code, state), status_code=302)
 
 
 @router.post("/token")
@@ -142,9 +154,7 @@ async def oauth_continue(request: Request):
         return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
 
     code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
-    final_url = f"{redirect_uri}?code={code}"
-    if state:
-        final_url += f"&state={state}"
+    final_url = _oauth_redirect_url(redirect_uri, code, state)
     request.session.pop("gpt_oauth_redirect_uri", None)
     request.session.pop("gpt_oauth_state", None)
     request.session.pop("gpt_oauth_client_id", None)

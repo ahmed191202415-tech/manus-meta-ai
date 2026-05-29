@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 
 from app.config import ADMIN_API_KEY, ADMIN_EMAIL, ADMIN_PASSWORD, META_OAUTH_REDIRECT_URI, PUBLIC_BASE_URL
 from app.core.connection_resolver import resolve_tenant_connection_state
+from app.core.gpt_oauth_state import decode_gpt_oauth_state
 from app.core.oauth_store import (
     delete_access_email,
     ensure_allowed_tenant_by_email,
@@ -547,7 +548,13 @@ def _admin_html() -> str:
 
 
 @router.get("", response_class=HTMLResponse)
-async def portal_home(request: Request, email: str | None = None):
+async def portal_home(request: Request, email: str | None = None, gpt_oauth: str | None = None):
+    gpt_state = decode_gpt_oauth_state(gpt_oauth)
+    if gpt_state:
+        request.session["gpt_oauth_redirect_uri"] = gpt_state.get("redirect_uri")
+        request.session["gpt_oauth_state"] = gpt_state.get("state") or ""
+        request.session["gpt_oauth_client_id"] = gpt_state.get("client_id")
+
     if email and not request.session.get("tenant_id"):
         try:
             record = ensure_allowed_tenant_by_email(email)
