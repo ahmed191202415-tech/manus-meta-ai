@@ -76,7 +76,8 @@ async def oauth_authorize(
 
     try:
         meta_app = get_tenant_meta_app(tenant_id)
-        _validate_meta_access_token(conn["meta_access_token"], app_secret=meta_app.get("meta_app_secret") if meta_app else None)
+        app_secret = meta_app.get("meta_app_secret") if meta_app and conn.get("connection_mode") != "manual_token" else None
+        _validate_meta_access_token(conn["meta_access_token"], app_secret=app_secret)
     except HTTPException:
         purge_meta_connection(meta_user_id, tenant_id=tenant_id)
         _clear_meta_session(request)
@@ -146,7 +147,8 @@ async def oauth_continue(request: Request):
 
     try:
         meta_app = get_tenant_meta_app(tenant_id)
-        _validate_meta_access_token(conn["meta_access_token"], app_secret=meta_app.get("meta_app_secret") if meta_app else None)
+        app_secret = meta_app.get("meta_app_secret") if meta_app and conn.get("connection_mode") != "manual_token" else None
+        _validate_meta_access_token(conn["meta_access_token"], app_secret=app_secret)
     except HTTPException:
         purge_meta_connection(meta_user_id, tenant_id=tenant_id)
         _clear_meta_session(request)

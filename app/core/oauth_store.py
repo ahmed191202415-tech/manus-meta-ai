@@ -732,7 +732,7 @@ def get_app_token_data(token: str):
         "meta_user_id": connection["meta_user_id"],
         "meta_user_name": connection.get("meta_user_name"),
         "meta_app_id": meta_app.get("meta_app_id") if meta_app else None,
-        "meta_app_secret": meta_app.get("meta_app_secret") if meta_app else None,
+        "meta_app_secret": meta_app.get("meta_app_secret") if meta_app and connection.get("connection_mode") != "manual_token" else None,
     }
 
 

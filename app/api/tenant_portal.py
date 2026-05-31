@@ -1,7 +1,8 @@
+from html import escape
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import ADMIN_API_KEY, ADMIN_EMAIL, ADMIN_PASSWORD, META_OAUTH_REDIRECT_URI, PUBLIC_BASE_URL
 from app.core.connection_resolver import resolve_tenant_connection_state
@@ -31,7 +32,7 @@ router = APIRouter(prefix="/portal", tags=["portal"])
 def _portal_url_for_email(email: str) -> str:
     clean_email = normalize_email(email)
     base_url = PUBLIC_BASE_URL or ""
-    return f"{base_url}/portal?email={quote(clean_email)}" if base_url else f"/portal?email={quote(clean_email)}"
+    return f"{base_url}/portal/client?email={quote(clean_email)}" if base_url else f"/portal/client?email={quote(clean_email)}"
 
 
 def _admin_access_items() -> list[dict]:
@@ -44,8 +45,11 @@ def _admin_access_items() -> list[dict]:
             "portal_url": _portal_url_for_email(item["email"]),
             "meta_app_configured": bool(status.get("meta_app", {}).get("configured")),
             "meta_connected": bool(status.get("meta_connection", {}).get("connected")),
+            "meta_connection_mode": status.get("meta_connection", {}).get("connection_mode"),
             "meta_user_name": status.get("meta_connection", {}).get("meta_user_name"),
             "selected_page_name": status.get("meta_connection", {}).get("selected_page_name"),
+            "google_connected": bool(get_active_google_connection_for_tenant(item["tenant_id"])),
+            "clarity_connected": bool(get_active_clarity_connection_for_tenant(item["tenant_id"])),
         })
     return enriched
 
@@ -79,28 +83,29 @@ def _page_shell(title: str, body: str) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{title}</title>
   <style>
-    :root {{ --bg:#f6efe6; --card:#fffdf9; --text:#1c2a32; --muted:#6f6157; --accent:#b7552d; --line:#e4d4c6; --ok:#256b45; --bad:#8d2d2d; }}
+    :root {{ --bg:#f4f7f9; --card:#ffffff; --text:#17232b; --muted:#667680; --accent:#126f78; --accent-dark:#0d5259; --line:#dce5e8; --ok:#217a50; --bad:#b63c48; --warn:#9a6a16; --soft:#f7fafb; }}
     * {{ box-sizing:border-box; }}
-    body {{ margin:0; font-family:Tahoma, Arial, sans-serif; background:linear-gradient(180deg, #fff8f0 0%, var(--bg) 100%); color:var(--text); }}
-    main {{ max-width:920px; margin:0 auto; padding:28px 18px 60px; }}
-    .card {{ background:var(--card); border:1px solid var(--line); border-radius:20px; padding:20px; margin-top:16px; box-shadow:0 12px 28px rgba(89,61,37,.06); }}
+    body {{ margin:0; font-family:Tahoma, Arial, sans-serif; background:var(--bg); color:var(--text); }}
+    main {{ max-width:1180px; margin:0 auto; padding:26px 18px 60px; }}
+    .card {{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:20px; margin-top:16px; box-shadow:0 8px 22px rgba(23,35,43,.05); }}
     .summary {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-top:16px; }}
-    .mini {{ background:#faf4ed; border:1px solid #eadacc; border-radius:16px; padding:14px; }}
+    .mini {{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:15px; box-shadow:0 5px 14px rgba(23,35,43,.035); }}
     .mini strong {{ display:block; margin-bottom:6px; }}
-    .step {{ display:inline-block; padding:6px 12px; border-radius:999px; background:#f2e6da; color:#6e4d38; font-size:.9rem; margin-bottom:10px; }}
+    .step {{ display:inline-block; padding:5px 10px; border-radius:999px; background:#e7f1f2; color:var(--accent-dark); font-size:.84rem; margin-bottom:10px; }}
     .done {{ background:#e5f3ea; color:var(--ok); }}
     .blocked {{ background:#f7e2e2; color:var(--bad); }}
     h1, h2, h3 {{ margin:0 0 8px; }}
     p {{ line-height:1.7; margin:0; }}
     label {{ display:block; margin-top:12px; font-weight:700; }}
-    input, button, select {{ width:100%; padding:13px; border-radius:14px; border:1px solid #ccb6a7; font:inherit; margin-top:8px; }}
-    button {{ background:var(--accent); color:#fff; border:none; cursor:pointer; font-weight:700; }}
+    input, button, select {{ width:100%; padding:12px; border-radius:6px; border:1px solid #cbd8dc; font:inherit; margin-top:8px; background:#fff; }}
+    button {{ background:var(--accent); color:#fff; border:none; cursor:pointer; font-weight:700; transition:.18s ease; }}
+    button:hover, a.button:hover {{ filter:brightness(.94); transform:translateY(-1px); }}
     button.secondary {{ background:#1d313d; }}
     button.warn {{ background:#8d2d2d; }}
-    a.button {{ display:block; width:100%; text-align:center; text-decoration:none; padding:13px; border-radius:14px; background:#1d313d; color:#fff; font-weight:700; margin-top:12px; }}
-    pre {{ white-space:pre-wrap; word-break:break-word; background:#f7f0e8; padding:14px; border-radius:14px; border:1px solid #eadacc; direction:ltr; text-align:left; }}
+    a.button {{ display:block; width:100%; text-align:center; text-decoration:none; padding:12px; border-radius:6px; background:#1d313d; color:#fff; font-weight:700; margin-top:10px; transition:.18s ease; }}
+    pre {{ white-space:pre-wrap; word-break:break-word; background:#f4f8f9; padding:13px; border-radius:6px; border:1px solid var(--line); direction:ltr; text-align:left; }}
     .muted {{ color:var(--muted); font-size:.96rem; margin-top:6px; }}
-    .hint {{ margin-top:10px; padding:10px 12px; border-radius:12px; background:#f7efe6; color:#6e4d38; }}
+    .hint {{ margin-top:10px; padding:10px 12px; border-radius:6px; background:#eef6f6; color:var(--accent-dark); }}
     .row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }}
     table {{ width:100%; border-collapse:collapse; margin-top:12px; font-size:.95rem; }}
     th, td {{ border-bottom:1px solid #eadacc; padding:10px; text-align:right; vertical-align:top; }}
@@ -108,7 +113,7 @@ def _page_shell(title: str, body: str) -> str:
     .actions button {{ width:auto; min-width:90px; margin-top:0; }}
     .dashboard-grid {{ display:grid; grid-template-columns:1.2fr .8fr; gap:16px; margin-top:16px; }}
     .stat-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }}
-    .stat {{ background:#fcf7f1; border:1px solid #eadacc; border-radius:16px; padding:16px; }}
+    .stat {{ background:#f8fbfc; border:1px solid var(--line); border-radius:8px; padding:16px; }}
     .stat b {{ display:block; font-size:1.2rem; margin-top:4px; }}
     .toolbar {{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }}
     .toolbar button, .toolbar a {{ width:auto; }}
@@ -117,6 +122,22 @@ def _page_shell(title: str, body: str) -> str:
     .pill.bad {{ background:#f7e2e2; color:#8d2d2d; }}
     .pill.warn {{ background:#fff3dd; color:#8a5b00; }}
     .table-wrap {{ overflow:auto; }}
+    .hero {{ display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; padding:18px 0 4px; }}
+    .hero h1 {{ font-size:1.7rem; }}
+    .hero-actions {{ display:flex; gap:8px; flex-wrap:wrap; }}
+    .hero-actions a, .hero-actions button {{ width:auto; margin-top:0; }}
+    .integration-grid {{ display:grid; gap:14px; }}
+    .integration-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }}
+    .integration-head h2 {{ margin:0; }}
+    .method-panel {{ display:none; margin-top:14px; padding:14px; border:1px solid var(--line); border-radius:6px; background:var(--soft); }}
+    .method-panel.active {{ display:block; }}
+    .status-line {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+    .status-dot {{ width:9px; height:9px; border-radius:50%; background:#a8b3b7; display:inline-block; }}
+    .status-dot.ok {{ background:var(--ok); }}
+    .compact-actions {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }}
+    .compact-actions button, .compact-actions a {{ width:auto; min-width:130px; margin-top:0; }}
+    .danger-link {{ background:var(--bad)!important; }}
+    @media (max-width:760px) {{ .dashboard-grid {{ grid-template-columns:1fr; }} .compact-actions button, .compact-actions a {{ width:100%; }} }}
   </style>
 </head>
 <body>
@@ -359,6 +380,105 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
 
 
 def _admin_html() -> str:
+    return _professional_admin_html()
+
+
+def _professional_admin_html() -> str:
+    body = """
+    <header class="hero">
+      <div>
+        <h1>لوحة إدارة العملاء</h1>
+        <p class="muted">أضف العملاء، راجع حالة الاشتراكات والربط، وافتح لوحة أي عميل لإدارة مصادر بياناته.</p>
+      </div>
+      <div class="hero-actions">
+        <button class="secondary" onclick="loadAccess()">تحديث البيانات</button>
+        <button class="warn" onclick="adminLogout()">تسجيل الخروج</button>
+      </div>
+    </header>
+    <section class="dashboard-grid">
+      <section class="card">
+        <div class="step">إدارة عميل</div>
+        <h2>إضافة أو تحديث عميل</h2>
+        <div class="row">
+          <div><label for="email">البريد الإلكتروني</label><input id="email" type="email" placeholder="client@example.com" /></div>
+          <div><label for="display_name">اسم العميل</label><input id="display_name" placeholder="اسم العميل" /></div>
+          <div><label for="subscription_days">مدة التفعيل بالأيام</label><input id="subscription_days" type="number" min="1" placeholder="30" /></div>
+        </div>
+        <button onclick="addAccess()">حفظ العميل</button>
+        <p class="muted">بعد الحفظ افتح لوحة العميل لإضافة أو تعديل Meta وGoogle Analytics وClarity بالنيابة عنه.</p>
+      </section>
+      <section class="card">
+        <div class="step">ملخص</div>
+        <h2>حالة المنصة</h2>
+        <div id="summary_wrap" class="stat-grid"></div>
+      </section>
+    </section>
+    <section class="card">
+      <div class="integration-head">
+        <div><div class="step">العملاء</div><h2>قائمة العملاء</h2></div>
+        <span class="muted">يمكن تعديل الاشتراك أو إيقاف العميل أو تنظيف بياناته بالكامل.</span>
+      </div>
+      <div id="table_wrap" class="table-wrap muted">جاري تحميل البيانات...</div>
+    </section>
+    <script>
+      const statusBadge = (ok, yes = "متصل", no = "غير متصل") =>
+        `<span class="pill ${ok ? "ok" : "bad"}">${ok ? yes : no}</span>`;
+      async function api(url, options = {}) {
+        const response = await fetch(url, { credentials:"include", ...options });
+        const text = await response.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { data = { detail:text }; }
+        if (!response.ok) { alert(JSON.stringify(data.detail || data)); throw new Error("Request failed"); }
+        return data;
+      }
+      async function loadAccess() {
+        const data = await api("/portal/admin/access");
+        const items = data.items || [];
+        const active = items.filter(i => i.status === "active" && !i.subscription?.is_expired).length;
+        document.getElementById("summary_wrap").innerHTML = `
+          <div class="stat"><span>إجمالي العملاء</span><b>${items.length}</b></div>
+          <div class="stat"><span>اشتراكات فعالة</span><b>${active}</b></div>
+          <div class="stat"><span>Meta متصل</span><b>${items.filter(i => i.meta_connected).length}</b></div>
+          <div class="stat"><span>Google متصل</span><b>${items.filter(i => i.google_connected).length}</b></div>`;
+        const rows = items.map(item => `
+          <tr>
+            <td><strong>${item.display_name || "-"}</strong><div class="muted">${item.email || ""}</div></td>
+            <td>${statusBadge(item.status === "active" && !item.subscription?.is_expired, item.status === "active" ? "فعال" : item.status, item.subscription?.is_expired ? "منتهي" : item.status)}</td>
+            <td>${statusBadge(item.meta_connected)}<div class="muted">${item.meta_connection_mode || ""}</div></td>
+            <td>${statusBadge(item.google_connected)}</td>
+            <td>${statusBadge(item.clarity_connected)}</td>
+            <td>${item.subscription?.access_expires_at || "غير محدد"}</td>
+            <td>
+              <div class="actions">
+                <a class="button" href="${item.portal_url}" target="_blank">إدارة الربط</a>
+                <button onclick="renewAccess('${item.email}')">تجديد</button>
+                <button class="secondary" onclick="setStatus('${item.email}','disabled')">إيقاف</button>
+                <button class="warn" onclick="deleteAccess('${item.email}')">حذف</button>
+              </div>
+            </td>
+          </tr>`).join("");
+        document.getElementById("table_wrap").innerHTML = `<table><thead><tr><th>العميل</th><th>الاشتراك</th><th>Meta</th><th>Google</th><th>Clarity</th><th>ينتهي في</th><th>إجراءات</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+      async function addAccess() {
+        await api("/portal/admin/access", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
+          email:document.getElementById("email").value, display_name:document.getElementById("display_name").value,
+          subscription_days:document.getElementById("subscription_days").value ? parseInt(document.getElementById("subscription_days").value,10) : null
+        })}); loadAccess();
+      }
+      async function renewAccess(email) {
+        const days = parseInt(prompt("عدد أيام التجديد", "30"),10); if (!days) return;
+        await api("/portal/admin/access/status", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email,status:"active",subscription_days:days}) }); loadAccess();
+      }
+      async function setStatus(email,status) { await api("/portal/admin/access/status", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,status})}); loadAccess(); }
+      async function deleteAccess(email) { if(confirm("سيتم حذف العميل وكل بيانات الربط المحفوظة. هل أنت متأكد؟")) { await api("/portal/admin/access?email="+encodeURIComponent(email),{method:"DELETE"}); loadAccess(); } }
+      async function adminLogout() { await api("/portal/admin/session/logout",{method:"POST"}); window.location.href="/portal/admin"; }
+      loadAccess();
+    </script>
+    """
+    return _page_shell("إدارة العملاء", body)
+
+
+def _legacy_admin_html() -> str:
     body = """
     <section class="card">
       <h1>لوحة إدارة العملاء</h1>
@@ -554,6 +674,133 @@ def _admin_html() -> str:
     return _page_shell("إدارة الوصول", body)
 
 
+def _client_dashboard_html(
+    tenant_id: str,
+    user_email: str,
+    meta_status: dict,
+    google_connection: dict | None,
+    clarity_connection: dict | None,
+    service_account_email: str,
+    schema_url: str,
+    has_pending_gpt_oauth: bool,
+) -> str:
+    meta_connection = meta_status.get("meta_connection") or {}
+    meta_app = meta_status.get("meta_app") or {}
+    meta_connected = bool(meta_connection.get("connected"))
+    google_connected = bool(google_connection)
+    clarity_connected = bool(clarity_connection)
+    property_id = escape(str((google_connection or {}).get("selected_ga4_property_id") or ""))
+    property_name = escape(str((google_connection or {}).get("selected_ga4_property_name") or ""))
+    clarity_name = escape(str((clarity_connection or {}).get("project_name") or ""))
+    gpt_continue = '<a class="button" href="/oauth/continue">الرجوع إلى GPT ومتابعة التحليل</a>' if has_pending_gpt_oauth and meta_connected else ""
+    body = f"""
+    <header class="hero">
+      <div>
+        <h1>مركز ربط مصادر البيانات</h1>
+        <p class="muted">أدر ربط Meta وGoogle Analytics وMicrosoft Clarity من مكان واحد.</p>
+        <p class="muted">{escape(user_email)}</p>
+      </div>
+      <div class="hero-actions">
+        {gpt_continue}
+        <button class="secondary" onclick="logout()">تغيير البريد</button>
+      </div>
+    </header>
+    <section class="summary">
+      <div class="mini"><strong>Meta Ads</strong><div class="status-line"><i class="status-dot {'ok' if meta_connected else ''}"></i><span>{'متصل' if meta_connected else 'غير متصل'}</span></div><div class="muted">{escape(str(meta_connection.get('connection_mode') or ''))}</div></div>
+      <div class="mini"><strong>Google Analytics</strong><div class="status-line"><i class="status-dot {'ok' if google_connected else ''}"></i><span>{'متصل' if google_connected else 'غير متصل'}</span></div><div class="muted">{escape(str((google_connection or {}).get('connection_mode') or ''))}</div></div>
+      <div class="mini"><strong>Microsoft Clarity</strong><div class="status-line"><i class="status-dot {'ok' if clarity_connected else ''}"></i><span>{'متصل' if clarity_connected else 'غير متصل'}</span></div><div class="muted">{clarity_name}</div></div>
+      <div class="mini"><strong>GA4 Property</strong><div class="status-line"><i class="status-dot {'ok' if property_id else ''}"></i><span>{property_name or property_id or 'لم يتم الاختيار'}</span></div></div>
+    </section>
+
+    <section class="card">
+      <div class="integration-head"><div><div class="step">Meta Ads</div><h2>ربط حساب Meta</h2></div><span class="pill {'ok' if meta_connected else 'bad'}">{'متصل' if meta_connected else 'غير متصل'}</span></div>
+      <label for="meta_method">طريقة الربط</label>
+      <select id="meta_method" onchange="toggleMethods()">
+        <option value="">اختر طريقة الربط</option>
+        <option value="oauth">تطبيق Meta مخصص + تسجيل دخول Facebook</option>
+        <option value="token">Access Token يدوي</option>
+      </select>
+      <div id="meta_oauth_panel" class="method-panel">
+        <h3>تطبيق Meta مخصص</h3>
+        <p class="muted">احفظ App ID وApp Secret، ثم اضغط تسجيل الدخول. أي ربط سابق سيتم استبداله بعد نجاح الربط الجديد.</p>
+        <label for="meta_app_id">App ID</label><input id="meta_app_id" value="{escape(str(meta_app.get('meta_app_id') or ''))}" placeholder="Meta App ID" />
+        <label for="meta_app_secret">App Secret</label><input id="meta_app_secret" type="password" placeholder="Meta App Secret" />
+        <div class="compact-actions"><button onclick="saveMetaApp()">حفظ بيانات التطبيق</button><a class="button" href="/auth/meta/login">تسجيل الدخول عبر Facebook</a></div>
+      </div>
+      <div id="meta_token_panel" class="method-panel">
+        <h3>Access Token يدوي</h3>
+        <p class="muted">استخدم هذه الطريقة بمفردها. عند الحفظ سيتم حذف ربط OAuth السابق لمنع التعارض.</p>
+        <label for="meta_manual_token">Access Token</label><input id="meta_manual_token" type="password" placeholder="Paste Meta Access Token" />
+        <button onclick="connectMetaToken()">ربط باستخدام التوكن</button>
+      </div>
+      <div class="compact-actions"><button class="warn" onclick="disconnectMeta()">حذف ربط Meta</button></div>
+    </section>
+
+    <section class="card">
+      <div class="integration-head"><div><div class="step">Google Analytics</div><h2>ربط GA4</h2></div><span class="pill {'ok' if google_connected else 'bad'}">{'متصل' if google_connected else 'غير متصل'}</span></div>
+      <label for="google_method">طريقة الربط</label>
+      <select id="google_method" onchange="toggleMethods()">
+        <option value="">اختر طريقة الربط</option>
+        <option value="oauth">تسجيل الدخول بحساب Google</option>
+        <option value="service">منح صلاحية لإيميل الخدمة</option>
+      </select>
+      <div id="google_oauth_panel" class="method-panel">
+        <h3>تسجيل الدخول بحساب Google</h3>
+        <p class="muted">الطريقة المناسبة لمعظم المستخدمين، وتدعم التجديد التلقائي للصلاحية.</p>
+        <a class="button" href="/auth/google/login?tenant_id={quote(tenant_id)}">تسجيل الدخول عبر Google</a>
+      </div>
+      <div id="google_service_panel" class="method-panel">
+        <h3>منح صلاحية داخل GA4</h3>
+        <p class="muted">أضف الإيميل التالي كـ Viewer داخل GA4 Property، ثم اكتب Property ID.</p>
+        <pre>{escape(service_account_email or 'Service Account غير مضاف على السيرفر حتى الآن.')}</pre>
+        <label for="service_property_id">Property ID</label><input id="service_property_id" value="{property_id}" placeholder="529884683" />
+        <label for="service_property_name">اسم الموقع</label><input id="service_property_name" value="{property_name}" placeholder="Website name" />
+        <button onclick="connectGoogleService()">ربط بالصلاحية</button>
+      </div>
+      <div class="method-panel active">
+        <h3>Property المختارة</h3>
+        <div class="row"><div><label for="property_id">Property ID</label><input id="property_id" value="{property_id}" placeholder="529884683" /></div><div><label for="property_name">اسم الموقع</label><input id="property_name" value="{property_name}" placeholder="Website name" /></div></div>
+        <button onclick="selectProperty()">تحديث Property</button>
+      </div>
+      <div class="compact-actions"><a class="button" href="/ga4/properties?tenant_id={quote(tenant_id)}">عرض Properties المتاحة</a><button class="warn" onclick="disconnectGoogle()">حذف ربط Google</button></div>
+    </section>
+
+    <section class="card">
+      <div class="integration-head"><div><div class="step">Microsoft Clarity</div><h2>ربط سلوك الزوار</h2></div><span class="pill {'ok' if clarity_connected else 'bad'}">{'متصل' if clarity_connected else 'غير متصل'}</span></div>
+      <label for="clarity_project_name">اسم المشروع</label><input id="clarity_project_name" value="{clarity_name}" placeholder="Project name" />
+      <label for="clarity_token">API Token</label><input id="clarity_token" type="password" placeholder="Paste Clarity API Token" />
+      <div class="compact-actions"><button onclick="saveClarity()">حفظ وربط Clarity</button><button class="warn" onclick="disconnectClarity()">حذف ربط Clarity</button></div>
+    </section>
+
+    <section class="card">
+      <div class="step">GPT Actions</div><h2>رابط Schema</h2>
+      <pre>{escape(schema_url)}</pre><button onclick="copySchema()">نسخ الرابط</button>
+    </section>
+    <script>
+      async function api(url, options={{}}) {{
+        const response=await fetch(url,{{credentials:"include",...options}}); const text=await response.text(); let data={{}};
+        try{{data=text?JSON.parse(text):{{}}}}catch{{data={{detail:text}}}} if(!response.ok){{alert(JSON.stringify(data.detail||data));throw new Error("Request failed")}} return data;
+      }}
+      function toggleMethods() {{
+        const meta=document.getElementById("meta_method").value, google=document.getElementById("google_method").value;
+        document.getElementById("meta_oauth_panel").classList.toggle("active",meta==="oauth"); document.getElementById("meta_token_panel").classList.toggle("active",meta==="token");
+        document.getElementById("google_oauth_panel").classList.toggle("active",google==="oauth"); document.getElementById("google_service_panel").classList.toggle("active",google==="service");
+      }}
+      async function saveMetaApp() {{ await api("/portal/meta-app",{{method:"PUT",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{meta_app_id:document.getElementById("meta_app_id").value,meta_app_secret:document.getElementById("meta_app_secret").value}})}}); alert("تم حفظ بيانات التطبيق"); location.reload(); }}
+      async function connectMetaToken() {{ await api("/auth/meta/connect_token",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{access_token:document.getElementById("meta_manual_token").value}})}}); location.reload(); }}
+      async function disconnectMeta() {{ if(confirm("حذف ربط Meta؟")){{await api("/auth/meta/disconnect",{{method:"POST"}});location.reload();}} }}
+      async function connectGoogleService() {{ await api("/auth/google/connect_service_account",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{property_id:document.getElementById("service_property_id").value,property_name:document.getElementById("service_property_name").value}})}});location.reload(); }}
+      async function disconnectGoogle() {{ if(confirm("حذف ربط Google؟")){{await api("/auth/google/disconnect",{{method:"POST"}});location.reload();}} }}
+      async function selectProperty() {{ await api("/ga4/select_property",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{tenant_id:"{escape(tenant_id)}",property_id:document.getElementById("property_id").value,property_name:document.getElementById("property_name").value}})}});location.reload(); }}
+      async function saveClarity() {{ await api("/clarity/connect_token",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{tenant_id:"{escape(tenant_id)}",api_token:document.getElementById("clarity_token").value,project_name:document.getElementById("clarity_project_name").value}})}});location.reload(); }}
+      async function disconnectClarity() {{ if(confirm("حذف ربط Clarity؟")){{await api("/clarity/disconnect",{{method:"POST"}});location.reload();}} }}
+      async function copySchema() {{ await navigator.clipboard.writeText("{escape(schema_url)}"); alert("تم نسخ الرابط"); }}
+      async function logout() {{ await api("/portal/session/logout",{{method:"POST"}});location.href="/portal"; }}
+    </script>
+    """
+    return _page_shell("مركز ربط مصادر البيانات", body)
+
+
 @router.get("", response_class=HTMLResponse)
 async def portal_home(request: Request, email: str | None = None, gpt_oauth: str | None = None):
     gpt_state = decode_gpt_oauth_state(gpt_oauth)
@@ -574,21 +821,12 @@ async def portal_home(request: Request, email: str | None = None, gpt_oauth: str
     if not tenant_id:
         return HTMLResponse(_email_gate_html(email=email or ""))
 
-    status = resolve_tenant_connection_state(tenant_id)
-    status["email"] = request.session.get("user_email") or tenant_id
-    has_pending_gpt_oauth = bool(request.session.get("gpt_oauth_redirect_uri"))
-    meta_oauth_error = request.session.pop("meta_oauth_error", None)
-    return HTMLResponse(_portal_html(
-        status,
-        META_OAUTH_REDIRECT_URI,
-        has_pending_gpt_oauth=has_pending_gpt_oauth,
-        meta_oauth_error=meta_oauth_error,
-    ))
+    return RedirectResponse(url="/portal/client", status_code=302)
 
 
 @router.get("/client", response_class=HTMLResponse)
 async def client_dashboard(request: Request, email: str | None = None):
-    if email and not request.session.get("tenant_id"):
+    if email:
         try:
             record = ensure_allowed_tenant_by_email(email)
             request.session["tenant_id"] = record["tenant_id"]
@@ -611,6 +849,16 @@ async def client_dashboard(request: Request, email: str | None = None):
     selected_property_name = (google_connection or {}).get("selected_ga4_property_name") or ""
     user_email = request.session.get("user_email") or tenant_id
     schema_url = f"{PUBLIC_BASE_URL}/openapi-gpt.json" if PUBLIC_BASE_URL else "/openapi-gpt.json"
+    return HTMLResponse(_client_dashboard_html(
+        tenant_id=tenant_id,
+        user_email=user_email,
+        meta_status=meta_status,
+        google_connection=google_connection,
+        clarity_connection=clarity_connection,
+        service_account_email=service_account_email,
+        schema_url=schema_url,
+        has_pending_gpt_oauth=bool(request.session.get("gpt_oauth_redirect_uri")),
+    ))
     body = f"""
     <section class="card">
       <h1>لوحة ربط العميل</h1>
