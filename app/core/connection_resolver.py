@@ -124,14 +124,16 @@ def resolve_tenant_connection_state(tenant_id: str) -> dict:
             "meta_oauth_scopes": meta_app.get("meta_oauth_scopes"),
         }
 
-    if not result["meta_app"]["configured"]:
+    connection = get_active_meta_connection_for_tenant(tenant_id)
+    is_manual_token = bool(connection and connection.get("connection_mode") == "manual_token")
+
+    if not result["meta_app"]["configured"] and not is_manual_token:
         result["state"] = "needs_setup"
         result["reason"] = "missing_meta_app_config"
         result["next_action"] = "show_setup"
         result["message_for_user"] = "أدخل بيانات تطبيق Meta أولًا ثم أعد المحاولة."
         return result
 
-    connection = get_active_meta_connection_for_tenant(tenant_id)
     if not connection:
         result["state"] = "needs_reconnect"
         result["reason"] = "missing_meta_connection"
@@ -143,6 +145,7 @@ def resolve_tenant_connection_state(tenant_id: str) -> dict:
         "connected": True,
         "meta_user_id": connection.get("meta_user_id"),
         "meta_user_name": connection.get("meta_user_name"),
+        "connection_mode": connection.get("connection_mode") or "oauth",
     }
 
     try:
@@ -151,7 +154,7 @@ def resolve_tenant_connection_state(tenant_id: str) -> dict:
             "me",
             connection["meta_access_token"],
             params={"fields": "id,name"},
-            app_secret=meta_app.get("meta_app_secret"),
+            app_secret=meta_app.get("meta_app_secret") if meta_app and not is_manual_token else None,
         )
         resolved_user_id = _safe_str(me.get("id"))
         saved_user_id = _safe_str(connection.get("meta_user_id"))

@@ -409,6 +409,7 @@ def save_meta_connection(
     meta_access_token: str,
     meta_user_name: str | None = None,
     granted_scopes: str | None = None,
+    connection_mode: str = "oauth",
 ):
     params = {"on_conflict": "tenant_id,meta_user_id"}
     payload = {
@@ -416,6 +417,7 @@ def save_meta_connection(
         "meta_user_id": _clean(meta_user_id),
         "meta_user_name": _clean(meta_user_name),
         "meta_access_token": _clean(meta_access_token),
+        "connection_mode": _clean(connection_mode) or "oauth",
         "granted_scopes": _clean(granted_scopes),
         "updated_at": _dt(datetime.now(timezone.utc)),
     }
@@ -505,11 +507,12 @@ def save_google_connection(tenant_id: str, payload: dict):
         "tenant_id": clean_tenant_id,
         "google_user_email": _clean(payload.get("google_user_email")),
         "access_token": _clean(payload.get("access_token")),
+        "connection_mode": _clean(payload.get("connection_mode")) or "oauth",
         "refresh_token": refresh_token,
         "expires_at": payload.get("expires_at"),
         "scopes": _clean(payload.get("scopes")),
-        "selected_ga4_property_id": _clean((existing or {}).get("selected_ga4_property_id")),
-        "selected_ga4_property_name": _clean((existing or {}).get("selected_ga4_property_name")),
+        "selected_ga4_property_id": _clean(payload.get("selected_ga4_property_id")) or _clean((existing or {}).get("selected_ga4_property_id")),
+        "selected_ga4_property_name": _clean(payload.get("selected_ga4_property_name")) or _clean((existing or {}).get("selected_ga4_property_name")),
         "updated_at": _dt(datetime.now(timezone.utc)),
     }
     params = {"on_conflict": "tenant_id"}
@@ -756,6 +759,7 @@ def get_tenant_status(tenant_id: str):
         },
         "meta_connection": {
             "connected": bool(connection),
+            "connection_mode": connection.get("connection_mode") if connection else None,
             "meta_user_id": connection.get("meta_user_id") if connection else None,
             "meta_user_name": connection.get("meta_user_name") if connection else None,
             "selected_page_id": connection.get("selected_page_id") if connection else None,

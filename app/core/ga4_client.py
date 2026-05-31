@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from fastapi import HTTPException
 
-from app.core.google_oauth import refresh_google_access_token
+from app.core.google_oauth import get_google_service_account_token, refresh_google_access_token
 from app.core.oauth_store import (
     get_active_google_connection_for_tenant,
     update_google_tokens,
@@ -41,6 +41,10 @@ def get_google_connection_or_401(tenant_id: str) -> dict:
 
 def get_google_credentials_for_tenant(tenant_id: str) -> dict:
     connection = get_google_connection_or_401(tenant_id)
+    if connection.get("connection_mode") == "service_account":
+        refreshed = get_google_service_account_token()
+        updated = update_google_tokens(tenant_id, refreshed)
+        return {**connection, **refreshed, **(updated or {})}
     if _is_expiring(connection.get("expires_at")):
         refreshed = refresh_google_access_token(connection.get("refresh_token") or "")
         updated = update_google_tokens(tenant_id, refreshed)

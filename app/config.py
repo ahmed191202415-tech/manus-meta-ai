@@ -36,6 +36,7 @@ GOOGLE_OAUTH_SCOPES = os.getenv(
     "GOOGLE_OAUTH_SCOPES",
     "https://www.googleapis.com/auth/analytics.readonly",
 )
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-production")
 PORTAL_PATH = os.getenv("PORTAL_PATH", "/portal")
 PORTAL_INVITE_SALT = os.getenv("PORTAL_INVITE_SALT", "portal-invite")

@@ -122,7 +122,8 @@ async def resolve_access_token(request: Request) -> str:
         if direct_conn:
             tenant_id = direct_conn.get("tenant_id")
             meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
-            set_current_meta_app_secret(meta_app.get("meta_app_secret") if meta_app else None)
+            app_secret = meta_app.get("meta_app_secret") if meta_app and direct_conn.get("connection_mode") != "manual_token" else None
+            set_current_meta_app_secret(app_secret)
         else:
             set_current_meta_app_secret(None)
         return bearer
@@ -131,7 +132,8 @@ async def resolve_access_token(request: Request) -> str:
     if session_token:
         tenant_id = request.session.get("tenant_id")
         meta_app = get_tenant_meta_app(tenant_id) if tenant_id else None
-        app_secret = meta_app.get("meta_app_secret") if meta_app else None
+        connection = get_active_meta_connection_for_tenant(tenant_id) if tenant_id else None
+        app_secret = meta_app.get("meta_app_secret") if meta_app and (connection or {}).get("connection_mode") != "manual_token" else None
         set_current_meta_app_secret(app_secret)
         return _resolve_valid_saved_token(
             request,
@@ -145,8 +147,8 @@ async def resolve_access_token(request: Request) -> str:
     if tenant_id:
         connection = get_active_meta_connection_for_tenant(tenant_id)
         meta_app = get_tenant_meta_app(tenant_id)
-        if connection and meta_app:
-            app_secret = meta_app.get("meta_app_secret")
+        if connection and (meta_app or connection.get("connection_mode") == "manual_token"):
+            app_secret = meta_app.get("meta_app_secret") if connection.get("connection_mode") != "manual_token" else None
             set_current_meta_app_secret(app_secret)
             request.session["meta_access_token"] = connection["meta_access_token"]
             request.session["meta_user_id"] = connection["meta_user_id"]

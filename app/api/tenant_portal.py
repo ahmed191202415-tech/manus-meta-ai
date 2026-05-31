@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from app.config import ADMIN_API_KEY, ADMIN_EMAIL, ADMIN_PASSWORD, META_OAUTH_REDIRECT_URI, PUBLIC_BASE_URL
 from app.core.connection_resolver import resolve_tenant_connection_state
 from app.core.gpt_oauth_state import decode_gpt_oauth_state
+from app.core.google_oauth import get_google_service_account_email
 from app.core.oauth_store import (
     delete_access_email,
     ensure_allowed_tenant_by_email,
@@ -311,6 +312,10 @@ def _portal_html(status: dict, redirect_uri: str, has_pending_gpt_oauth: bool = 
       <p class="muted">لن تحتاج هذه الخطوة إلا عند أول ربط أو إذا انتهى الوصول أو تم سحبه.</p>
       {reconnect_hint}
       <a class="button" href="/auth/meta/login">Connect Meta</a>
+      <label for="meta_manual_token">Or connect with a Meta Access Token</label>
+      <input id="meta_manual_token" type="password" placeholder="Paste Meta Access Token" />
+      <button onclick="connectMetaToken()">Connect using Access Token</button>
+      <p class="muted">Only one Meta method stays active. Connecting with a token replaces the previous OAuth connection.</p>
       <a class="button" style="background:#8d2d2d" href="/auth/meta/disconnect">Remove saved Meta connection</a>
       {gpt_continue_html}
     </section>
@@ -598,6 +603,10 @@ async def client_dashboard(request: Request, email: str | None = None):
     meta_status = get_tenant_status(tenant_id)
     google_connection = get_active_google_connection_for_tenant(tenant_id)
     clarity_connection = get_active_clarity_connection_for_tenant(tenant_id)
+    service_account_email = get_google_service_account_email()
+    meta_app_id = (meta_status.get("meta_app") or {}).get("meta_app_id") or ""
+    meta_connection_mode = (meta_status.get("meta_connection") or {}).get("connection_mode") or ""
+    google_connection_mode = (google_connection or {}).get("connection_mode") or ""
     selected_property_id = (google_connection or {}).get("selected_ga4_property_id") or ""
     selected_property_name = (google_connection or {}).get("selected_ga4_property_name") or ""
     user_email = request.session.get("user_email") or tenant_id
@@ -609,18 +618,41 @@ async def client_dashboard(request: Request, email: str | None = None):
       <p class="muted">Tenant ID: <strong>{tenant_id}</strong></p>
     </section>
     <section class="summary">
-      <div class="mini"><strong>Meta</strong><span>{'متصل' if meta_status.get('meta_connection', {}).get('connected') else 'غير متصل'}</span></div>
-      <div class="mini"><strong>Google</strong><span>{'متصل' if google_connection else 'غير متصل'}</span></div>
+      <div class="mini"><strong>Meta</strong><span>{'متصل - ' + meta_connection_mode if meta_status.get('meta_connection', {}).get('connected') else 'غير متصل'}</span></div>
+      <div class="mini"><strong>Google</strong><span>{'متصل - ' + google_connection_mode if google_connection else 'غير متصل'}</span></div>
       <div class="mini"><strong>Clarity</strong><span>{'متصل' if clarity_connection else 'غير متصل'}</span></div>
       <div class="mini"><strong>GA4 Property</strong><span>{selected_property_name or selected_property_id or 'لم يتم الاختيار'}</span></div>
     </section>
     <section class="card">
       <h2>1. ربط Meta</h2>
-      <a class="button" href="/auth/meta/login">Connect Meta</a>
+      <p class="muted">اختر طريقة واحدة فقط. عند استخدام طريقة جديدة يتم حذف الربط السابق تلقائيًا.</p>
+      <h3>الطريقة الأولى: تطبيق Meta مخصص + مصادقة Facebook</h3>
+      <label for="meta_app_id">Meta App ID</label>
+      <input id="meta_app_id" placeholder="Meta App ID" value="{meta_app_id}" />
+      <label for="meta_app_secret">Meta App Secret</label>
+      <input id="meta_app_secret" type="password" placeholder="Meta App Secret" />
+      <button onclick="saveMetaApp()">Save Meta App</button>
+      <a class="button" href="/auth/meta/login">Connect Meta with Facebook Login</a>
+      <h3>الطريقة الثانية: Access Token</h3>
+      <label for="meta_manual_token">Meta Access Token</label>
+      <input id="meta_manual_token" type="password" placeholder="Paste Meta Access Token" />
+      <button onclick="connectMetaToken()">Connect Meta using Access Token</button>
+      <button class="warn" onclick="disconnectMeta()">Disconnect Meta</button>
     </section>
     <section class="card">
       <h2>2. ربط Google Analytics</h2>
-      <a class="button" href="/auth/google/login?tenant_id={tenant_id}">Connect Google</a>
+      <p class="muted">اختر المصادقة أو منح الصلاحية لإيميل الخدمة. عند تغيير الطريقة يتم استبدال الربط السابق.</p>
+      <h3>الطريقة الأولى: Google Login</h3>
+      <a class="button" href="/auth/google/login?tenant_id={tenant_id}">Connect Google with Login</a>
+      <h3>الطريقة الثانية: منح صلاحية داخل GA4</h3>
+      <p class="muted">أضف الإيميل التالي بصلاحية Viewer داخل GA4 Property ثم اكتب Property ID واضغط Connect.</p>
+      <pre>{service_account_email or 'Service Account is not configured on the server yet.'}</pre>
+      <label for="service_property_id">Property ID</label>
+      <input id="service_property_id" placeholder="529884683" value="{selected_property_id}" />
+      <label for="service_property_name">Property Name</label>
+      <input id="service_property_name" placeholder="Website name" value="{selected_property_name}" />
+      <button onclick="connectGoogleServiceAccount()">Connect by granted permission</button>
+      <button class="warn" onclick="disconnectGoogle()">Disconnect Google</button>
       <p class="muted">بعد الربط افتح خصائص GA4 من الرابط التالي.</p>
       <a class="button" href="/ga4/properties?tenant_id={tenant_id}">Show GA4 Properties</a>
     </section>
@@ -641,6 +673,7 @@ async def client_dashboard(request: Request, email: str | None = None):
       <label for="clarity_token">Clarity API Token</label>
       <input id="clarity_token" type="password" placeholder="Paste Clarity API token" />
       <button onclick="saveClarity()">Save Clarity Token</button>
+      <button class="warn" onclick="disconnectClarity()">Disconnect Clarity</button>
     </section>
     <section class="card">
       <h2>5. إعداد GPT</h2>
@@ -649,6 +682,58 @@ async def client_dashboard(request: Request, email: str | None = None):
       <button onclick="copySchema()">Copy Schema URL</button>
     </section>
     <script>
+      async function apiRequest(url, options = {{}}) {{
+        const response = await fetch(url, {{ credentials: "include", ...options }});
+        const text = await response.text();
+        let data = null;
+        try {{ data = text ? JSON.parse(text) : null; }} catch {{ data = {{ detail: text }}; }}
+        if (!response.ok) {{
+          alert((data && data.detail) ? JSON.stringify(data.detail) : text);
+          throw new Error("Request failed");
+        }}
+        return data;
+      }}
+      async function saveMetaApp() {{
+        await apiRequest("/portal/meta-app", {{
+          method: "PUT",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            meta_app_id: document.getElementById("meta_app_id").value,
+            meta_app_secret: document.getElementById("meta_app_secret").value
+          }})
+        }});
+        alert("Meta App saved. Press Facebook Login when ready.");
+        window.location.reload();
+      }}
+      async function connectMetaToken() {{
+        await apiRequest("/auth/meta/connect_token", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ access_token: document.getElementById("meta_manual_token").value }})
+        }});
+        alert("Meta connected using Access Token. Previous Meta connection was replaced.");
+        window.location.reload();
+      }}
+      async function disconnectMeta() {{
+        await apiRequest("/auth/meta/disconnect", {{ method: "POST" }});
+        window.location.reload();
+      }}
+      async function connectGoogleServiceAccount() {{
+        await apiRequest("/auth/google/connect_service_account", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            property_id: document.getElementById("service_property_id").value,
+            property_name: document.getElementById("service_property_name").value
+          }})
+        }});
+        alert("Google Analytics connected by granted permission.");
+        window.location.reload();
+      }}
+      async function disconnectGoogle() {{
+        await apiRequest("/auth/google/disconnect", {{ method: "POST" }});
+        window.location.reload();
+      }}
       async function selectProperty() {{
         const property_id = document.getElementById("property_id").value;
         const property_name = document.getElementById("property_name").value;
@@ -665,6 +750,24 @@ async def client_dashboard(request: Request, email: str | None = None):
         alert("تم حفظ GA4 Property");
         window.location.reload();
       }}
+
+      async function connectMetaToken() {{
+        const response = await fetch("/auth/meta/connect_token", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          credentials: "include",
+          body: JSON.stringify({{ access_token: document.getElementById("meta_manual_token").value }})
+        }});
+        const text = await response.text();
+        let data = null;
+        try {{ data = text ? JSON.parse(text) : null; }} catch {{ data = {{ detail: text }}; }}
+        if (!response.ok) {{
+          alert((data && data.detail) ? JSON.stringify(data.detail) : text);
+          return;
+        }}
+        alert("Meta connected using the Access Token. Any previous Meta connection was replaced.");
+        window.location.href = "/portal";
+      }}
       async function saveClarity() {{
         const api_token = document.getElementById("clarity_token").value;
         const project_name = document.getElementById("clarity_project_name").value;
@@ -679,6 +782,10 @@ async def client_dashboard(request: Request, email: str | None = None):
           return;
         }}
         alert("تم حفظ Clarity Token");
+        window.location.reload();
+      }}
+      async function disconnectClarity() {{
+        await apiRequest("/clarity/disconnect", {{ method: "POST" }});
         window.location.reload();
       }}
       async function copySchema() {{

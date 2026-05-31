@@ -37,6 +37,7 @@ create table if not exists public.meta_connections (
   meta_user_id text not null,
   meta_user_name text,
   meta_access_token text not null,
+  connection_mode text default 'oauth',
   granted_scopes text,
   selected_page_id text,
   selected_page_name text,
@@ -49,11 +50,13 @@ create table if not exists public.meta_connections (
 alter table public.meta_connections add column if not exists selected_page_id text;
 alter table public.meta_connections add column if not exists selected_page_name text;
 alter table public.meta_connections add column if not exists selected_page_access_token text;
+alter table public.meta_connections add column if not exists connection_mode text default 'oauth';
 
 create table if not exists public.google_connections (
   tenant_id text primary key references public.tenant_accounts(tenant_id) on delete cascade,
   google_user_email text,
   access_token text not null,
+  connection_mode text default 'oauth',
   refresh_token text,
   expires_at timestamptz,
   scopes text,
@@ -65,6 +68,7 @@ create table if not exists public.google_connections (
 
 alter table public.google_connections add column if not exists google_user_email text;
 alter table public.google_connections add column if not exists access_token text;
+alter table public.google_connections add column if not exists connection_mode text default 'oauth';
 alter table public.google_connections add column if not exists refresh_token text;
 alter table public.google_connections add column if not exists expires_at timestamptz;
 alter table public.google_connections add column if not exists scopes text;

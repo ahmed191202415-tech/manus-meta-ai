@@ -1,14 +1,18 @@
 from datetime import datetime, timedelta, timezone
+import json
 from urllib.parse import urlencode
 
 import requests
 from fastapi import HTTPException
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import service_account
 
 from app.config import (
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     GOOGLE_OAUTH_REDIRECT_URI,
     GOOGLE_OAUTH_SCOPES,
+    GOOGLE_SERVICE_ACCOUNT_JSON,
 )
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -100,3 +104,39 @@ def fetch_google_userinfo(access_token: str) -> dict:
     if response.status_code >= 400:
         raise HTTPException(status_code=400, detail={"message": "Could not fetch Google user profile.", "google_response": data})
     return data
+
+
+def get_google_service_account_info() -> dict:
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        raise HTTPException(status_code=503, detail="Google Service Account is not configured on the server.")
+    try:
+        info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="GOOGLE_SERVICE_ACCOUNT_JSON is invalid JSON.") from exc
+    email = str(info.get("client_email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=500, detail="Google Service Account JSON is missing client_email.")
+    return info
+
+
+def get_google_service_account_email() -> str:
+    try:
+        return str(get_google_service_account_info()["client_email"])
+    except HTTPException:
+        return ""
+
+
+def get_google_service_account_token() -> dict:
+    info = get_google_service_account_info()
+    credentials = service_account.Credentials.from_service_account_info(
+        info,
+        scopes=[item for item in GOOGLE_OAUTH_SCOPES.replace(",", " ").split() if item],
+    )
+    credentials.refresh(GoogleAuthRequest())
+    return {
+        "access_token": credentials.token,
+        "expires_at": credentials.expiry.isoformat() if credentials.expiry else None,
+        "google_user_email": info["client_email"],
+        "scopes": GOOGLE_OAUTH_SCOPES,
+        "connection_mode": "service_account",
+    }

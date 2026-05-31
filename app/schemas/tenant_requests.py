@@ -20,6 +20,15 @@ class TenantMetaAppRequest(BaseModel):
     webhook_callback_url: str | None = None
 
 
+class TenantMetaTokenRequest(BaseModel):
+    access_token: str = Field(min_length=10)
+
+
+class TenantGoogleServiceAccountRequest(BaseModel):
+    property_id: str = Field(min_length=1)
+    property_name: str | None = None
+
+
 class TenantPageSelectionRequest(BaseModel):
     page_id: str
     page_name: str | None = None

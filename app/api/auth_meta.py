@@ -15,6 +15,7 @@ from app.core.oauth_store import (
     purge_meta_connections_for_tenant,
     save_meta_connection,
 )
+from app.schemas.tenant_requests import TenantMetaTokenRequest
 
 router = APIRouter(prefix="/auth/meta", tags=["auth"])
 
@@ -120,7 +121,7 @@ def _token_bridge_html() -> str:
 </html>"""
 
 
-async def _save_meta_access_token(request: Request, access_token: str, state_data: dict) -> dict:
+async def _save_meta_access_token(request: Request, access_token: str, state_data: dict, connection_mode: str = "oauth") -> dict:
     tenant_id = str(
         request.session.get("pending_meta_tenant_id")
         or request.session.get("tenant_id")
@@ -141,12 +142,14 @@ async def _save_meta_access_token(request: Request, access_token: str, state_dat
     if not meta_user_id:
         raise HTTPException(status_code=400, detail={"message": "Could not fetch Meta user profile.", "meta_response": me_data})
 
+    purge_meta_connections_for_tenant(tenant_id)
     save_meta_connection(
         tenant_id=tenant_id,
         meta_user_id=meta_user_id,
         meta_access_token=access_token,
         meta_user_name=meta_user_name,
         granted_scopes=None,
+        connection_mode=connection_mode,
     )
 
     request.session["meta_access_token"] = access_token
@@ -266,11 +269,23 @@ async def meta_token_callback(request: Request):
     if not access_token:
         raise HTTPException(status_code=400, detail="access_token is required.")
     state_data = _decode_meta_state(state)
-    saved = await _save_meta_access_token(request, access_token, state_data)
+    saved = await _save_meta_access_token(request, access_token, state_data, connection_mode="oauth")
     return {
         "success": True,
         "tenant_id": saved["tenant_id"],
         "redirect_url": _finish_meta_redirect(request, saved["tenant_id"], saved["meta_user_id"], state_data),
+    }
+
+
+@router.post("/connect_token")
+async def meta_connect_token(body: TenantMetaTokenRequest, request: Request):
+    saved = await _save_meta_access_token(request, body.access_token, {}, connection_mode="manual_token")
+    return {
+        "success": True,
+        "tenant_id": saved["tenant_id"],
+        "meta_user_id": saved["meta_user_id"],
+        "meta_user_name": saved["me"].get("name"),
+        "connection_mode": "manual_token",
     }
 
 
@@ -295,7 +310,7 @@ async def auth_me(request: Request):
         }
 
     try:
-        meta_app = get_tenant_meta_app_required(tenant_id)
+        meta_app = get_tenant_meta_app_required(tenant_id) if conn.get("connection_mode") != "manual_token" else {}
         me_data = _validate_meta_access_token(conn["meta_access_token"], app_secret=meta_app.get("meta_app_secret"))
     except (HTTPException, ValueError):
         purge_meta_connection(meta_user_id, tenant_id=tenant_id)
