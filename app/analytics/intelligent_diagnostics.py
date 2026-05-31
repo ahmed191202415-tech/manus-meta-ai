@@ -36,6 +36,21 @@ def _entity_name(row: Dict[str, Any], level: str) -> str:
     return str(row.get(f'{level}_name') or row.get('ad_name') or row.get('adset_name') or row.get('campaign_name') or _entity_key(row, level))
 
 
+def _row_goal(row: Dict[str, Any]) -> str:
+    value = str(row.get('optimization_goal') or row.get('objective') or '').lower()
+    if any(item in value for item in ('message', 'conversation', 'whatsapp')):
+        return 'messages'
+    if 'lead' in value:
+        return 'leads'
+    if any(item in value for item in ('sale', 'purchase', 'conversion', 'catalog')):
+        return 'sales'
+    if any(item in value for item in ('traffic', 'link_click', 'landing')):
+        return 'traffic'
+    if any(item in value for item in ('awareness', 'reach', 'video', 'engagement')):
+        return 'awareness_engagement'
+    return 'unknown'
+
+
 def _find_previous(prev_df: pd.DataFrame, level: str, entity_id: str) -> Dict[str, Any]:
     if prev_df is None or prev_df.empty:
         return {}
@@ -67,6 +82,8 @@ def _make_hit(rule_id: str, scenario: str, score: float, rule: dict, entity: dic
 def _diagnose_entity(row: Dict[str, Any], prev: Dict[str, Any], level: str) -> List[Dict[str, Any]]:
     entity = {'level': level, 'id': _entity_key(row, level), 'name': _entity_name(row, level)}
     hits: List[Dict[str, Any]] = []
+    goal = _row_goal(row)
+    sales_goal = goal in ('sales', 'unknown')
 
     freq_ch = pct_change(_metric(row, 'frequency'), _metric(prev, 'frequency'))
     ctr_ch = pct_change(_metric(row, 'ctr'), _metric(prev, 'ctr'))
@@ -104,19 +121,19 @@ def _diagnose_entity(row: Dict[str, Any], prev: Dict[str, Any], level: str) -> L
         }))
 
     rule = RULES_CATALOG[3]
-    if _metric(row, 'landing_page_views') >= 20 and _metric(row, 'atc_rate') < 0.02 and _metric(row, 'purchases') == 0:
+    if sales_goal and _metric(row, 'landing_page_views') >= 20 and _metric(row, 'atc_rate') < 0.02 and _metric(row, 'purchases') == 0:
         hits.append(_make_hit('R004', 'Offer / Product Friction', 55, rule, entity, {
             'landing_page_views': _metric(row, 'landing_page_views'), 'add_to_cart': _metric(row, 'add_to_cart'), 'atc_rate': _metric(row, 'atc_rate')
         }))
 
     rule = RULES_CATALOG[4]
-    if _metric(row, 'add_to_cart') >= 5 and _metric(row, 'purchases') == 0:
+    if sales_goal and _metric(row, 'add_to_cart') >= 5 and _metric(row, 'purchases') == 0:
         hits.append(_make_hit('R005', 'Checkout Friction', 65, rule, entity, {
             'add_to_cart': _metric(row, 'add_to_cart'), 'initiate_checkout': _metric(row, 'initiate_checkout'), 'purchases': _metric(row, 'purchases'), 'checkout_to_purchase_rate': _metric(row, 'checkout_to_purchase_rate')
         }))
 
     rule = RULES_CATALOG[5]
-    if spend_ch is not None and spend_ch > 0.20 and (purchases_ch is None or purchases_ch <= 0) and (cpa_ch is not None and cpa_ch > 0.15):
+    if sales_goal and spend_ch is not None and spend_ch > 0.20 and (purchases_ch is None or purchases_ch <= 0) and (cpa_ch is not None and cpa_ch > 0.15):
         hits.append(_make_hit('R006', 'Budget Waste', 75, rule, entity, {
             'spend_change': spend_ch, 'purchases_change': purchases_ch, 'cpa_change': cpa_ch, 'roas_change': roas_ch
         }))
@@ -128,13 +145,13 @@ def _diagnose_entity(row: Dict[str, Any], prev: Dict[str, Any], level: str) -> L
         }))
 
     rule = RULES_CATALOG[7]
-    if _metric(row, 'outbound_clicks_count') >= 30 and _metric(row, 'signal_quality') < 0.005:
+    if sales_goal and _metric(row, 'outbound_clicks_count') >= 30 and _metric(row, 'signal_quality') < 0.005:
         hits.append(_make_hit('R008', 'Weak Signal Quality', 70, rule, entity, {
             'outbound_clicks': _metric(row, 'outbound_clicks_count'), 'purchases': _metric(row, 'purchases'), 'signal_quality': _metric(row, 'signal_quality')
         }))
 
     rule = RULES_CATALOG[8]
-    if _metric(row, 'purchases') >= 3 and _metric(row, 'roas_calc') >= 1.5 and _metric(row, 'frequency') < 3.5 and (ctr_ch is None or ctr_ch > -0.10) and (cpm_ch is None or cpm_ch < 0.20):
+    if sales_goal and _metric(row, 'purchases') >= 3 and _metric(row, 'roas_calc') >= 1.5 and _metric(row, 'frequency') < 3.5 and (ctr_ch is None or ctr_ch > -0.10) and (cpm_ch is None or cpm_ch < 0.20):
         hits.append(_make_hit('R009', 'Scale Candidate', 55, rule, entity, {
             'purchases': _metric(row, 'purchases'), 'roas': _metric(row, 'roas_calc'), 'frequency': _metric(row, 'frequency'), 'ctr_change': ctr_ch, 'cpm_change': cpm_ch
         }))
@@ -149,6 +166,13 @@ def _diagnose_entity(row: Dict[str, Any], prev: Dict[str, Any], level: str) -> L
     if _metric(row, 'video_p25') >= 50 and 0 < _metric(row, 'hold_rate_50') < 0.45:
         hits.append(_make_hit('R012', 'Video Hold / Message Continuity Problem', 58, rule, entity, {
             'video_p25': _metric(row, 'video_p25'), 'video_p50': _metric(row, 'video_p50'), 'hold_rate_50': _metric(row, 'hold_rate_50'), 'hold_rate_75': _metric(row, 'hold_rate_75')
+        }))
+
+    if goal == 'messages' and _metric(row, 'spend') > 0 and _metric(row, 'messaging_conversations') == 0:
+        rule = RULES_CATALOG[13]
+        hits.append(_make_hit('R014', 'Message Campaign Conversation Friction', 65, rule, entity, {
+            'spend': _metric(row, 'spend'), 'ctr': _metric(row, 'ctr'),
+            'messaging_conversations': _metric(row, 'messaging_conversations'),
         }))
 
     return hits

@@ -79,7 +79,7 @@ def _classify_actions(counts: Counter) -> str | None:
     return None
 
 
-def build_goal_context(df: pd.DataFrame | list[dict] | None) -> dict:
+def build_goal_context(df: pd.DataFrame | list[dict] | None, delivery_context: dict | None = None) -> dict:
     if df is None:
         return _unknown_context()
     frame = pd.DataFrame(df) if isinstance(df, list) else df
@@ -110,6 +110,12 @@ def build_goal_context(df: pd.DataFrame | list[dict] | None) -> dict:
     elif action_goal:
         primary_goal = action_goal
         source = "observed_actions"
+
+    optimization_goal = _clean((delivery_context or {}).get("primary_optimization_goal"))
+    optimization_class = _classify_objective(optimization_goal) if optimization_goal else None
+    if optimization_class:
+        primary_goal = optimization_class
+        source = "adset_optimization_goal"
 
     if not primary_goal:
         return _unknown_context(objective_counts, action_counts)
@@ -150,6 +156,9 @@ def build_goal_context(df: pd.DataFrame | list[dict] | None) -> dict:
     return {
         "primary_goal": primary_goal,
         "source": source,
+        "campaign_goal": objective_goals.most_common(1)[0][0] if objective_goals else None,
+        "adset_optimization_goal": optimization_goal or None,
+        "adset_optimization_class": optimization_class,
         "result_label": result_label_map[primary_goal],
         "primary_success_metrics": primary_metric_map[primary_goal],
         "detected_objectives": dict(objective_counts.most_common(8)),

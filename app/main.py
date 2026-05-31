@@ -88,7 +88,12 @@ def openapi_gpt_schema():
     schema["info"] = {
         "title": "Super Ad Analysis GPT",
         "version": "1.0.0",
-        "description": "Reduced schema for ChatGPT Actions with stable Meta, analysis, reports, and page operations.",
+        "description": (
+            "Reduced schema for ChatGPT Actions. For Meta and journey analysis, use analyst_brief first: "
+            "silently respect goal_context and adset_optimization_goal, present the executive judgement, "
+            "strongest evidence, ranked_root_causes, prioritized next actions, and confidence limits. "
+            "Do not judge messages campaigns mainly by purchases or website leads."
+        ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
     filtered_paths = {}

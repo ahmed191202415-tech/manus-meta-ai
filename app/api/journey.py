@@ -6,6 +6,8 @@ from app.analytics.clarity_metrics import normalize_clarity_export, summarize_cl
 from app.analytics.clarity_signals import build_clarity_signals
 from app.analytics.ga4_preprocessing import normalize_ga4_report
 from app.analytics.goal_context import build_goal_context
+from app.analytics.meta_delivery_context import attach_delivery_context, fetch_adset_delivery_context, relevant_entity_ids, summarize_delivery_context
+from app.analytics.professional_analyst import build_professional_analyst_brief
 from app.analytics.journey_metrics import build_journey_metrics
 from app.analytics.journey_signals import build_journey_signals
 from app.analytics.preprocessing import fetch_insights_df
@@ -75,7 +77,18 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         data_errors.append({"source": "meta_creatives", "message": _safe_error(exc)})
 
     matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
-    goal_context = build_goal_context(meta_rows)
+    try:
+        adset_rows = fetch_adset_delivery_context(effective_body.meta_account_id, token)
+    except Exception as exc:
+        adset_rows = []
+        data_errors.append({"source": "meta_adsets", "message": _safe_error(exc)})
+    if "meta_df" in locals():
+        meta_df = attach_delivery_context(meta_df, adset_rows)
+        meta_rows = meta_df.head(body.limit).to_dict(orient="records") if not meta_df.empty else []
+    campaign_ids, adset_ids = relevant_entity_ids(meta_rows)
+    delivery_context = summarize_delivery_context(adset_rows, campaign_ids=campaign_ids, adset_ids=adset_ids)
+    goal_context = build_goal_context(meta_rows, delivery_context)
+    analyst_brief = build_professional_analyst_brief(meta_df if "meta_df" in locals() else [], None, _resolve_meta_level(effective_body), adsets=adset_rows)
     matched_entities = _build_matched_entities(meta_rows, creative_rows if "creative_rows" in locals() else [], ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
@@ -97,6 +110,8 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         },
         "ga4_filter_limits": _ga4_filter_limits(effective_body),
         "goal_context": goal_context,
+        "delivery_context": delivery_context,
+        "analyst_brief": analyst_brief,
         "matching": matching,
         "matched_entities": matched_entities,
         "tracking_link_audit": link_audit,
@@ -145,6 +160,7 @@ async def journey_analyze_from_payload(body: JourneyPayloadAnalysisRequest, requ
 
     matching = build_ad_site_matching(meta_rows, ga4_reports["traffic"], link_audit)
     goal_context = build_goal_context(meta_rows)
+    analyst_brief = build_professional_analyst_brief(meta_rows, None, "campaign", adsets=[])
     matched_entities = _build_matched_entities(meta_rows, creative_rows, ga4_reports["traffic"])
     metrics = build_journey_metrics(meta_rows, website_summary)
     signals = build_journey_signals(metrics, matching, website_signals)
@@ -167,6 +183,7 @@ async def journey_analyze_from_payload(body: JourneyPayloadAnalysisRequest, requ
         },
         "ga4_filter_limits": _ga4_filter_limits(body),
         "goal_context": goal_context,
+        "analyst_brief": analyst_brief,
         "matching": matching,
         "matched_entities": matched_entities,
         "tracking_link_audit": link_audit,

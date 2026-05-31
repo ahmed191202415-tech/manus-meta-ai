@@ -123,13 +123,16 @@ def expand_semantic_metrics(df: pd.DataFrame) -> pd.DataFrame:
     cost_actions = out['cost_per_action_type'] if 'cost_per_action_type' in out.columns else pd.Series([None] * len(out), index=out.index)
 
     for metric, aliases in ACTION_ALIASES.items():
-        out[metric] = actions.apply(lambda x, aliases=aliases: _extract_from_action_list(x, aliases))
+        extracted = actions.apply(lambda x, aliases=aliases: _extract_from_action_list(x, aliases))
+        out[metric] = extracted if metric not in out.columns else np.where(extracted > 0, extracted, pd.to_numeric(out[metric], errors='coerce').fillna(0.0))
 
     for metric, aliases in VALUE_ALIASES.items():
-        out[metric] = action_values.apply(lambda x, aliases=aliases: _extract_from_action_list(x, aliases))
+        extracted = action_values.apply(lambda x, aliases=aliases: _extract_from_action_list(x, aliases))
+        out[metric] = extracted if metric not in out.columns else np.where(extracted > 0, extracted, pd.to_numeric(out[metric], errors='coerce').fillna(0.0))
 
     for metric, aliases in COST_ALIASES.items():
-        out[metric] = cost_actions.apply(lambda x, aliases=aliases: _extract_from_action_list(x, aliases))
+        extracted = cost_actions.apply(lambda x, aliases=aliases: _extract_from_action_list(x, aliases))
+        out[metric] = extracted if metric not in out.columns else np.where(extracted > 0, extracted, pd.to_numeric(out[metric], errors='coerce').fillna(0.0))
 
     # Meta sometimes returns outbound_clicks/outbound_clicks_ctr as list actions.
     if 'outbound_clicks' in out.columns:
@@ -137,7 +140,8 @@ def expand_semantic_metrics(df: pd.DataFrame) -> pd.DataFrame:
             lambda x: _extract_from_action_list(x, ['outbound_click']) if isinstance(x, list) else safe_float(x)
         )
     else:
-        out['outbound_clicks_value'] = 0.0
+        existing_outbound = out.get('outbound_clicks_value', out.get('outbound_clicks_count', 0.0))
+        out['outbound_clicks_value'] = pd.to_numeric(existing_outbound, errors='coerce').fillna(0.0) if isinstance(existing_outbound, pd.Series) else 0.0
 
     out['link_clicks'] = out['inline_link_clicks']
     out['outbound_clicks_count'] = out['outbound_clicks_value']
@@ -187,6 +191,9 @@ def aggregate_metrics(df: pd.DataFrame, level: str) -> pd.DataFrame:
         agg_map['cpm'] = 'mean'
     if 'cpc' in df.columns:
         agg_map['cpc'] = 'mean'
+    for context_col in ['objective', 'optimization_goal', 'billing_event', 'destination_type']:
+        if context_col in df.columns:
+            agg_map[context_col] = 'first'
 
     grouped = df.groupby([id_col, name_col], dropna=False).agg(agg_map).reset_index()
     grouped = expand_semantic_metrics(grouped)

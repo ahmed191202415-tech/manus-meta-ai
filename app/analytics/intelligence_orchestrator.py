@@ -14,6 +14,8 @@ def orchestrate_intelligence(meta_result: dict | None = None, website_result: di
     return {
         "mode": mode,
         "summary_metrics": source.get("summary_metrics") or source.get("result") or {},
+        "analyst_brief": source.get("analyst_brief") or {},
+        "goal_context": source.get("goal_context") or (source.get("analyst_brief") or {}).get("goal_context") or {},
         "data_quality": source.get("tracking_quality") or source.get("data_quality") or {},
         "signals": signals,
         "ranked_issues": sorted(signals, key=lambda item: _severity_weight(item.get("severity")), reverse=True),

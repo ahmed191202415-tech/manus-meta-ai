@@ -21,6 +21,8 @@ from app.analytics.audit_framework import build_audit_snapshot
 from app.analytics.intelligent_diagnostics import build_intelligence_diagnostics
 from app.analytics.intelligence_storage import save_intelligence_run
 from app.analytics.goal_context import build_goal_context
+from app.analytics.meta_delivery_context import attach_delivery_context, fetch_adset_delivery_context, relevant_entity_ids, summarize_delivery_context
+from app.analytics.professional_analyst import build_professional_analyst_brief
 from app.core.auth import resolve_access_token
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -41,13 +43,6 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
         body.filters,
         body.sort,
     )
-    goal_context = build_goal_context(current_df)
-
-    def response(result, **extra):
-        payload = {"analysis_type": body.analysis_type, "goal_context": goal_context, "result": result}
-        payload.update(extra)
-        return payload
-
     compare_since = body.compare_since
     compare_until = body.compare_until
 
@@ -160,6 +155,28 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             )
         )
 
+    try:
+        adset_rows = fetch_adset_delivery_context(body.account_id, token)
+    except Exception:
+        adset_rows = []
+    current_df = attach_delivery_context(current_df, adset_rows)
+    compare_df = attach_delivery_context(compare_df, adset_rows)
+    campaign_ids, adset_ids = relevant_entity_ids(current_df)
+    delivery_context = summarize_delivery_context(adset_rows, campaign_ids=campaign_ids, adset_ids=adset_ids)
+    goal_context = build_goal_context(current_df, delivery_context)
+    analyst_brief = build_professional_analyst_brief(current_df, compare_df, body.level, adsets=adset_rows)
+
+    def response(result, **extra):
+        payload = {
+            "analysis_type": body.analysis_type,
+            "goal_context": goal_context,
+            "delivery_context": delivery_context,
+            "analyst_brief": analyst_brief,
+            "result": result,
+        }
+        payload.update(extra)
+        return payload
+
     if body.analysis_type == "audit_snapshot":
         return response(build_audit_snapshot(current_df, compare_df, body.level), compare_range={"since": compare_since, "until": compare_until})
 
@@ -177,6 +194,7 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             body.sort,
             time_increment="1",
         )
+        daily_df = attach_delivery_context(daily_df, adset_rows)
         result = build_intelligence_diagnostics(daily_df, compare_df, body.level, body.top_n)
         run_id = save_intelligence_run(
             body.account_id,
