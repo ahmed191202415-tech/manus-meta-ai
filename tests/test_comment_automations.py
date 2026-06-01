@@ -1,7 +1,11 @@
 import hashlib
 import hmac
 
+import pytest
+from pydantic import ValidationError
+
 from app.api import webhooks
+from app.schemas.comment_automation_requests import CommentAutomationManageRequest
 
 
 def test_extract_comment_events_keeps_new_external_page_comments_only():
@@ -146,3 +150,11 @@ def test_signature_validation_uses_tenant_meta_app_secret(monkeypatch):
         f"sha256={digest}",
         [{"page_id": "page_1", "post_id": "post_1"}],
     ) is True
+
+
+def test_list_comments_requires_page_and_post_ids():
+    with pytest.raises(ValidationError):
+        CommentAutomationManageRequest(action="list_comments", page_id="page_1")
+
+    request = CommentAutomationManageRequest(action="list_comments", page_id="page_1", post_id="post_1")
+    assert request.action == "list_comments"

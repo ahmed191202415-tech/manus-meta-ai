@@ -82,11 +82,22 @@ async def manage_comment_automations(
 
     if body.action == "list_posts":
         page_token = resolve_page_token_for_page_id(token, body.page_id or "")
+        _select_page(tenant_id, str(body.page_id or ""), page_token)
         return meta_call(
             "GET",
             f"{body.page_id}/posts",
             page_token,
             params={"fields": "id,message,created_time,permalink_url", "limit": body.limit},
+        )
+
+    if body.action == "list_comments":
+        page_token = resolve_page_token_for_page_id(token, body.page_id or "")
+        _select_page(tenant_id, str(body.page_id or ""), page_token)
+        return meta_call(
+            "GET",
+            f"{body.post_id}/comments",
+            page_token,
+            params={"fields": "id,from,message,created_time,like_count,comment_count,is_hidden", "limit": body.limit},
         )
 
     if body.action in {"subscribe_page", "create_rule"}:

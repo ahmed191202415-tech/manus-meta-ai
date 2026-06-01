@@ -94,6 +94,9 @@ def openapi_gpt_schema():
             "silently respect goal_context and adset_optimization_goal, present the executive judgement, "
             "strongest evidence, ranked_root_causes, prioritized next actions, and confidence limits. "
             "Do not judge messages campaigns mainly by purchases or website leads."
+            " For Facebook Page comments, always use /comment_automations/manage with list_pages, list_posts, "
+            "list_comments, subscribe_page, create_rule, list_rules, disable_rule, or delete_rule. "
+            "Do not attempt raw Page Graph calls."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
