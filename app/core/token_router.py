@@ -121,7 +121,6 @@ def choose_token_for_meta_path(
         "/feed",
         "/posts",
         "/comments",
-        "/insights",
     )
     if any(clean_path.endswith(edge) for edge in page_scoped_edges):
         page_id = _first_path_segment(clean_path)

@@ -42,6 +42,7 @@ GPT_DATA_PATHS = {
     "/comment_automations/manage",
     "/accounts",
     "/insights",
+    "/meta/query",
     "/campaigns",
     "/adsets",
     "/ads",
@@ -76,7 +77,6 @@ app = FastAPI(
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
     allowed_paths = GPT_DATA_PATHS | {
-        "/clarity/connect_token",
         "/reports/save_excel",
         "/reports/save_website_html",
         "/reports/save_website_docx",
@@ -112,6 +112,9 @@ def openapi_gpt_schema():
             "For any GA4 custom question, choose the needed dimensions and metrics and use the simplified "
             "dimension_filters, metric_filters, sort, offset, and metric_aggregations fields. "
             "Do not invent a sort field inside filters and do not fetch all rows before filtering."
+            " For flexible Meta reads, use /meta/query with a precise Graph path and small field list. "
+            "Prefer direct campaign_id/insights, adset_id/insights, or ad_id/insights paths when the entity is known. "
+            "The /meta/query tool is read-only: never use it for write operations."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []

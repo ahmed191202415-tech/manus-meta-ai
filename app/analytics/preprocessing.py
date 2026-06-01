@@ -238,34 +238,50 @@ def fetch_insights_payload(
     original = dict(params)
     original_fields = str(original.get("fields") or DEFAULT_INSIGHTS_FIELDS)
     original_filters = original.get("filtering")
-    attempts = [("requested_fields_and_filters", path, original)]
     direct_scope_id = _single_meta_scope_id(original_filters)
+    attempts = []
+    seen_attempts = set()
+
+    def add_attempt(mode: str, attempt_path: str, attempt_params: dict) -> None:
+        signature = (attempt_path, json.dumps(attempt_params, sort_keys=True, default=str))
+        if signature in seen_attempts:
+            return
+        seen_attempts.add(signature)
+        attempts.append((mode, attempt_path, attempt_params))
+
     if direct_scope_id:
         direct = dict(original)
         direct.pop("filtering", None)
-        attempts.append(("direct_object_insights", f"{direct_scope_id}/insights", direct))
+        add_attempt("direct_object_insights", f"{direct_scope_id}/insights", direct)
+        add_attempt(
+            "direct_object_lightweight_fields",
+            f"{direct_scope_id}/insights",
+            {**direct, "fields": LIGHTWEIGHT_INSIGHTS_FIELDS},
+        )
+        add_attempt(
+            "direct_object_minimal_fields",
+            f"{direct_scope_id}/insights",
+            {**direct, "fields": MINIMAL_INSIGHTS_FIELDS},
+        )
+    add_attempt("requested_fields_and_filters", path, original)
     if original_filters:
         without_filters = dict(original)
         without_filters.pop("filtering", None)
-        attempts.append(("requested_fields_local_filter", path, without_filters))
+        add_attempt("requested_fields_local_filter", path, without_filters)
     if original_fields != LIGHTWEIGHT_INSIGHTS_FIELDS:
         lightweight = {**original, "fields": LIGHTWEIGHT_INSIGHTS_FIELDS}
-        attempts.append(("lightweight_fields_and_filters", path, lightweight))
+        add_attempt("lightweight_fields_and_filters", path, lightweight)
         if original_filters:
             lightweight_without_filters = dict(lightweight)
             lightweight_without_filters.pop("filtering", None)
-            attempts.append(("lightweight_fields_local_filter", path, lightweight_without_filters))
+            add_attempt("lightweight_fields_local_filter", path, lightweight_without_filters)
     if original_fields != MINIMAL_INSIGHTS_FIELDS:
         minimal = {**original, "fields": MINIMAL_INSIGHTS_FIELDS}
-        attempts.append(("minimal_fields_and_filters", path, minimal))
-        if direct_scope_id:
-            direct_minimal = dict(minimal)
-            direct_minimal.pop("filtering", None)
-            attempts.append(("direct_object_minimal_fields", f"{direct_scope_id}/insights", direct_minimal))
+        add_attempt("minimal_fields_and_filters", path, minimal)
         if original_filters:
             minimal_without_filters = dict(minimal)
             minimal_without_filters.pop("filtering", None)
-            attempts.append(("minimal_fields_local_filter", path, minimal_without_filters))
+            add_attempt("minimal_fields_local_filter", path, minimal_without_filters)
 
     errors = []
     for mode, attempt_path, attempt_params in attempts:

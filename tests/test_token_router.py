@@ -36,3 +36,7 @@ def test_resolve_page_token_rejects_user_token_fallback(monkeypatch):
         assert "No Page access token" in str(exc.detail)
     else:
         raise AssertionError("Expected a clear Page token error.")
+
+
+def test_campaign_insights_keep_user_token():
+    assert token_router.choose_token_for_meta_path("user_token", "120246445412420505/insights", "GET") == "user_token"

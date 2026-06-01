@@ -55,7 +55,7 @@ def test_fetch_insights_payload_removes_rejected_filter_and_filters_locally(monk
     assert len(calls) == 2
 
 
-def test_fetch_insights_payload_uses_direct_campaign_insights_after_filtered_account_failure(monkeypatch):
+def test_fetch_insights_payload_uses_direct_campaign_insights_before_account_request(monkeypatch):
     calls = []
 
     def get_all_pages(path, token, params=None, max_pages=3):
@@ -77,4 +77,29 @@ def test_fetch_insights_payload_uses_direct_campaign_insights_after_filtered_acc
 
     assert result["fallback_mode"] == "direct_object_insights"
     assert result["meta_insights_path"] == "10/insights"
-    assert calls[1][0] == "10/insights"
+    assert calls == [("10/insights", {"fields": preprocessing.DEFAULT_INSIGHTS_FIELDS})]
+
+
+def test_fetch_insights_payload_uses_direct_campaign_lightweight_fields_next(monkeypatch):
+    calls = []
+
+    def get_all_pages(path, token, params=None, max_pages=3):
+        calls.append((path, dict(params or {})))
+        if params.get("fields") != preprocessing.LIGHTWEIGHT_INSIGHTS_FIELDS:
+            raise RuntimeError("ClientResponseError")
+        return {"data": [{"campaign_id": "10", "spend": "2.00"}]}
+
+    monkeypatch.setattr(preprocessing, "meta_get_all_pages", get_all_pages)
+
+    result = preprocessing.fetch_insights_payload(
+        "act_1",
+        "token",
+        params={
+            "fields": preprocessing.DEFAULT_INSIGHTS_FIELDS,
+            "filtering": [{"field": "campaign.id", "operator": "IN", "value": ["10"]}],
+        },
+    )
+
+    assert result["fallback_mode"] == "direct_object_lightweight_fields"
+    assert result["meta_insights_path"] == "10/insights"
+    assert len(calls) == 2

@@ -9,6 +9,17 @@ class RawMetaRequest(BaseModel):
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ReadOnlyMetaQueryRequest(BaseModel):
+    path: str = Field(
+        min_length=1,
+        description="Meta Graph path only, for example act_123/insights, 456/insights, or act_123/campaigns.",
+    )
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Meta Graph GET parameters such as fields, date_preset, time_range, level, filtering, breakdowns, and limit.",
+    )
+
+
 class CampaignCreateRequest(BaseModel):
     account_id: str
     name: str
