@@ -63,6 +63,7 @@ To enable automatic public replies and Messenger private replies:
 4. Set the callback URL to `https://your-domain.com/webhooks/meta`.
 5. Use the same `META_WEBHOOK_VERIFY_TOKEN` value as the webhook verify token.
 6. Reconnect Meta so the granted scopes include `pages_messaging`.
+   The server also requests `pages_manage_metadata` so it can subscribe the selected Page to webhook events.
 
 ChatGPT uses `POST /comment_automations/manage` to list pages and posts, subscribe a Page,
 create a per-post rule, inspect recent execution logs, disable a rule, or delete it.

@@ -25,7 +25,7 @@ META_OAUTH_REDIRECT_URI = os.getenv(
 )
 META_OAUTH_SCOPES = os.getenv(
     "META_OAUTH_SCOPES",
-    "ads_management,ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement,pages_messaging"
+    "ads_management,ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement,pages_manage_metadata,pages_messaging"
 )
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
