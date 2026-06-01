@@ -5,9 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import DEFAULT_PAGE_LIMIT, DEFAULT_MAX_PAGES
 from app.core.auth import resolve_access_token
-from app.core.pagination import meta_get_all_pages
 from app.core.meta_client import meta_call, normalize_account_id
-from app.analytics.preprocessing import DEFAULT_INSIGHTS_FIELDS
+from app.analytics.preprocessing import DEFAULT_INSIGHTS_FIELDS, fetch_insights_payload
 
 router = APIRouter(tags=["insights"])
 
@@ -60,25 +59,14 @@ async def get_insights(
     if after:
         params["after"] = after
 
+    if fetch_all:
+        return fetch_insights_payload(account_id, token, params=params, max_pages=max_pages)
     try:
-        if fetch_all:
-            return meta_get_all_pages(f"{account_id}/insights", token, params=params, max_pages=max_pages)
         return meta_call("GET", f"{account_id}/insights", token, params=params)
-    except HTTPException as exc:
-        if not filters:
-            raise
-        fallback_params = dict(params)
-        fallback_params.pop("filtering", None)
-        fallback_params["limit"] = max(int(limit or DEFAULT_PAGE_LIMIT), DEFAULT_PAGE_LIMIT)
-        fallback = meta_get_all_pages(f"{account_id}/insights", token, params=fallback_params, max_pages=min(max_pages, 3))
-        rows = _local_filter_rows(fallback.get("data", []), campaign_id, campaign_name, adset_id, ad_id)
-        return {
-            "data": rows[: int(limit or DEFAULT_PAGE_LIMIT)],
-            "paging": fallback.get("paging"),
-            "fallback_used": True,
-            "fallback_reason": "Meta filtering failed, so rows were fetched without filtering and filtered locally.",
-            "meta_error": exc.detail,
-        }
+    except HTTPException:
+        payload = fetch_insights_payload(account_id, token, params=params, max_pages=min(max_pages, 3))
+        payload["data"] = payload.get("data", [])[: int(limit or DEFAULT_PAGE_LIMIT)]
+        return payload
 
 
 def _build_insights_filters(

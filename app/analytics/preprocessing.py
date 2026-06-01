@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import numpy as np
 from typing import Any, List, Dict, Optional
@@ -16,6 +17,15 @@ DEFAULT_INSIGHTS_FIELDS = (
     "video_p95_watched_actions,video_p100_watched_actions,video_avg_time_watched_actions,"
     "video_thruplay_watched_actions,outbound_clicks,outbound_clicks_ctr,website_ctr,"
     "purchase_roas,date_start,date_stop"
+)
+LIGHTWEIGHT_INSIGHTS_FIELDS = (
+    "account_id,account_name,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
+    "objective,spend,reach,frequency,impressions,clicks,inline_link_clicks,ctr,cpc,cpm,"
+    "actions,outbound_clicks,date_start,date_stop"
+)
+MINIMAL_INSIGHTS_FIELDS = (
+    "account_id,account_name,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
+    "objective,spend,reach,impressions,inline_link_clicks,date_start,date_stop"
 )
 
 
@@ -162,6 +172,125 @@ def infer_previous_range(since: Optional[str], until: Optional[str]) -> tuple[Op
     return prev_since.strftime("%Y-%m-%d"), prev_until.strftime("%Y-%m-%d")
 
 
+def _parsed_meta_filters(filters: Any) -> list[dict]:
+    if isinstance(filters, list):
+        return [item for item in filters if isinstance(item, dict)]
+    if isinstance(filters, dict):
+        return [filters]
+    try:
+        parsed = json.loads(str(filters or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if isinstance(parsed, dict):
+        return [parsed]
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    return []
+
+
+def _row_matches_meta_filter(row: dict, item: dict) -> bool:
+    field_map = {
+        "campaign.id": "campaign_id",
+        "campaign.name": "campaign_name",
+        "adset.id": "adset_id",
+        "adset.name": "adset_name",
+        "ad.id": "ad_id",
+        "ad.name": "ad_name",
+    }
+    row_value = str(row.get(field_map.get(str(item.get("field") or ""), "")) or "").strip()
+    filter_value = item.get("value")
+    operator = str(item.get("operator") or "").upper()
+    if operator in {"IN", "NOT_IN"}:
+        expected = {str(value).strip() for value in (filter_value if isinstance(filter_value, list) else [filter_value])}
+        matched = row_value in expected
+        return not matched if operator == "NOT_IN" else matched
+    if operator in {"CONTAIN", "NOT_CONTAIN"}:
+        matched = str(filter_value or "").strip().lower() in row_value.lower()
+        return not matched if operator == "NOT_CONTAIN" else matched
+    return row_value == str(filter_value or "").strip()
+
+
+def _local_filter_insights_rows(rows: list[dict], filters: Any) -> list[dict]:
+    parsed_filters = _parsed_meta_filters(filters)
+    if not parsed_filters:
+        return rows
+    return [row for row in rows if all(_row_matches_meta_filter(row, item) for item in parsed_filters)]
+
+
+def _single_meta_scope_id(filters: Any) -> str | None:
+    for item in _parsed_meta_filters(filters):
+        if item.get("field") not in {"campaign.id", "adset.id", "ad.id"} or str(item.get("operator") or "").upper() != "IN":
+            continue
+        values = item.get("value") if isinstance(item.get("value"), list) else [item.get("value")]
+        clean_values = [str(value or "").strip() for value in values if str(value or "").strip()]
+        if len(clean_values) == 1:
+            return clean_values[0]
+    return None
+
+
+def fetch_insights_payload(
+    account_id: str,
+    access_token: str,
+    params: Dict[str, Any],
+    max_pages: int = ANALYSIS_MAX_PAGES,
+) -> dict:
+    path = f"{normalize_account_id(account_id)}/insights"
+    original = dict(params)
+    original_fields = str(original.get("fields") or DEFAULT_INSIGHTS_FIELDS)
+    original_filters = original.get("filtering")
+    attempts = [("requested_fields_and_filters", path, original)]
+    direct_scope_id = _single_meta_scope_id(original_filters)
+    if direct_scope_id:
+        direct = dict(original)
+        direct.pop("filtering", None)
+        attempts.append(("direct_object_insights", f"{direct_scope_id}/insights", direct))
+    if original_filters:
+        without_filters = dict(original)
+        without_filters.pop("filtering", None)
+        attempts.append(("requested_fields_local_filter", path, without_filters))
+    if original_fields != LIGHTWEIGHT_INSIGHTS_FIELDS:
+        lightweight = {**original, "fields": LIGHTWEIGHT_INSIGHTS_FIELDS}
+        attempts.append(("lightweight_fields_and_filters", path, lightweight))
+        if original_filters:
+            lightweight_without_filters = dict(lightweight)
+            lightweight_without_filters.pop("filtering", None)
+            attempts.append(("lightweight_fields_local_filter", path, lightweight_without_filters))
+    if original_fields != MINIMAL_INSIGHTS_FIELDS:
+        minimal = {**original, "fields": MINIMAL_INSIGHTS_FIELDS}
+        attempts.append(("minimal_fields_and_filters", path, minimal))
+        if direct_scope_id:
+            direct_minimal = dict(minimal)
+            direct_minimal.pop("filtering", None)
+            attempts.append(("direct_object_minimal_fields", f"{direct_scope_id}/insights", direct_minimal))
+        if original_filters:
+            minimal_without_filters = dict(minimal)
+            minimal_without_filters.pop("filtering", None)
+            attempts.append(("minimal_fields_local_filter", path, minimal_without_filters))
+
+    errors = []
+    for mode, attempt_path, attempt_params in attempts:
+        try:
+            payload = meta_get_all_pages(attempt_path, access_token, params=attempt_params, max_pages=max_pages)
+            rows = payload.get("data", [])
+            local_filter_used = bool(original_filters and "filtering" not in attempt_params and attempt_path == path)
+            if local_filter_used:
+                rows = _local_filter_insights_rows(rows, original_filters)
+            return {
+                **payload,
+                "data": rows,
+                "fallback_used": mode != "requested_fields_and_filters",
+                "fallback_mode": mode,
+                "fallback_errors": errors,
+                "local_filter_used": local_filter_used,
+                "meta_insights_path": attempt_path,
+            }
+        except Exception as exc:
+            errors.append({"mode": mode, "error": str(getattr(exc, "detail", exc))[:500]})
+    if errors:
+        raise RuntimeError(f"Meta insights failed after progressive fallbacks: {errors}")
+    raise RuntimeError("Meta insights failed without a completed request.")
+
+
 def fetch_insights_df(
     account_id: str,
     access_token: str,
@@ -199,5 +328,12 @@ def fetch_insights_df(
     if time_increment:
         params["time_increment"] = time_increment
 
-    payload = meta_get_all_pages(f"{account_id}/insights", access_token, params=params, max_pages=ANALYSIS_MAX_PAGES)
-    return frame_from_insights(payload.get("data", []), level)
+    payload = fetch_insights_payload(account_id, access_token, params=params, max_pages=ANALYSIS_MAX_PAGES)
+    frame = frame_from_insights(payload.get("data", []), level)
+    frame.attrs["meta_insights_fallback"] = {
+        "fallback_used": payload.get("fallback_used", False),
+        "fallback_mode": payload.get("fallback_mode"),
+        "local_filter_used": payload.get("local_filter_used", False),
+        "fallback_errors": payload.get("fallback_errors", []),
+    }
+    return frame

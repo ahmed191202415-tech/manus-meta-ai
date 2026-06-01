@@ -47,8 +47,10 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
             None,
         )
         meta_rows = meta_df.head(body.limit).to_dict(orient="records") if not meta_df.empty else []
+        meta_insights_resolution = dict(meta_df.attrs.get("meta_insights_fallback", {}))
     except Exception as exc:
         meta_rows = []
+        meta_insights_resolution = {}
         data_errors.append({"source": "meta_insights", "message": _safe_error(exc)})
 
     tenant_id = resolve_tenant_id_for_google(request, effective_body.tenant_id)
@@ -110,6 +112,7 @@ async def journey_analyze(body: JourneyAnalysisRequest, request: Request):
         },
         "ga4_filter_limits": _ga4_filter_limits(effective_body),
         "goal_context": goal_context,
+        "meta_insights_resolution": meta_insights_resolution,
         "delivery_context": delivery_context,
         "analyst_brief": analyst_brief,
         "matching": matching,
