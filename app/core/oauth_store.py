@@ -637,7 +637,7 @@ def list_comment_post_aliases(tenant_id: str, page_id: str | None = None):
 def list_unmapped_comment_posts(tenant_id: str, page_id: str | None = None, limit: int = 30):
     event_params = {
         "select": "*",
-        "delivery_status": "eq.unmapped_ad_post",
+        "delivery_status": "in.(unmapped_ad_post,no_rule_for_post)",
         "order": "created_at.desc",
         "limit": str(max(1, min(int(limit), 100))),
     }
