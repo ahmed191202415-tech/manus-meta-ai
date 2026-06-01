@@ -38,5 +38,6 @@ def build_custom_report_output(raw_payload: dict, normalized_rows: list[dict], v
         },
         "row_count": len(normalized_rows),
         "rows": normalized_rows,
-        "raw_response": raw_payload,
+        "totals": raw_payload.get("totals", []),
+        "row_count_from_ga4": raw_payload.get("rowCount"),
     }

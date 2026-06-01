@@ -106,7 +106,9 @@ def openapi_gpt_schema():
             "link_post_alias. "
             "Do not attempt raw Page Graph calls. If response_guard.compacted is true, continue with a smaller "
             "limit or request one specific entity instead of repeating the same broad request. For creatives, list "
-            "lightweight rows first and use creative_id with include_details=true for one selected creative only."
+            "lightweight rows first and use creative_id with include_details=true for one selected creative only. "
+            "For a GA4 page lookup, use /ga4/custom_report with a small limit and "
+            'filters={"page_path_contains":"the-page-fragment"} instead of fetching all page URLs.'
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []

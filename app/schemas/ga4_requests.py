@@ -24,7 +24,15 @@ class GA4DateRangeRequest(BaseModel):
 class GA4CustomReportRequest(GA4DateRangeRequest):
     dimensions: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
-    filters: dict[str, Any] = Field(default_factory=dict)
+    filters: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "GA4 filters. For page lookup prefer the simple form "
+            '{"page_path_contains":"verify-otp"}. For generic text filters use '
+            '{"dimension_string_filters":[{"dimension":"pagePathPlusQueryString",'
+            '"operator":"contains","value":"verify-otp"}]}. Raw GA4 dimensionFilter and metricFilter are also supported.'
+        ),
+    )
     order_by: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("dimensions", "metrics")
