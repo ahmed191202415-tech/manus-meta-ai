@@ -72,3 +72,7 @@ create a per-post rule, inspect recent execution logs, disable a rule, or delete
 If an automation does not reply, run the latest SQL again and ask ChatGPT to diagnose the Page
 automation. The `diagnose_page` action reports the Page subscription, saved rules, webhook
 deliveries, execution attempts, and Meta error messages separately.
+
+For ad posts, dark posts, or reused creatives, Meta may deliver a canonical webhook `post_id`
+that differs from the visible post link. Use `list_unmapped_posts`, review the result, then
+approve it with `link_post_alias`. Replies begin automatically for future comments after approval.

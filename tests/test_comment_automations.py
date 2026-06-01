@@ -190,11 +190,12 @@ def test_process_comment_events_logs_missing_rule(monkeypatch):
         ]
     }
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [])
     monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((event, status, kwargs)))
 
     webhooks.process_comment_events(payload)
 
-    assert logged[0][1] == "no_rule_for_post"
+    assert logged[0][1] == "unmapped_ad_post"
 
 
 def test_process_comment_events_logs_keyword_mismatch(monkeypatch):
@@ -253,3 +254,33 @@ def test_private_reply_does_not_fallback_after_non_object_error(monkeypatch):
         webhooks.send_facebook_private_reply({"page_id": "page_1", "comment_id": "comment_1"}, "Hello", "token")
 
     assert calls == ["comment_1/private_replies"]
+
+
+def test_process_comment_events_uses_approved_alias(monkeypatch):
+    processed = []
+    logged = []
+    event = {"page_id": "page_1", "post_id": "canonical_dark_post", "comment_id": "comment_1", "message": "hello"}
+    rule = {"rule_id": "rule_1", "tenant_id": "tenant_1", "match_mode": "all_comments"}
+    monkeypatch.setattr(webhooks, "extract_comment_events", lambda payload: [event])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [rule])
+    monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append(status))
+    monkeypatch.setattr(webhooks, "_process_rule", lambda rule, event: processed.append((rule, event)))
+
+    webhooks.process_comment_events({})
+
+    assert logged == ["processing"]
+    assert processed == [(rule, event)]
+
+
+def test_link_post_alias_requires_rule_and_canonical_post():
+    with pytest.raises(ValidationError):
+        CommentAutomationManageRequest(action="link_post_alias", page_id="page_1", rule_id="rule_1")
+
+    request = CommentAutomationManageRequest(
+        action="link_post_alias",
+        page_id="page_1",
+        post_id="canonical_dark_post",
+        rule_id="rule_1",
+    )
+    assert request.post_id == "canonical_dark_post"

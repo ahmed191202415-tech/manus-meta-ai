@@ -100,6 +100,7 @@ def openapi_gpt_schema():
             " For Facebook Page comments, always use /comment_automations/manage with list_pages, list_posts, "
             "list_comments, subscribe_page, create_rule, list_rules, disable_rule, or delete_rule. "
             "When an automation does not reply, call diagnose_page and inspect webhook deliveries before guessing. "
+            "For dark posts or unpublished ad posts, list_unmapped_posts and ask for confirmation before link_post_alias. "
             "Do not attempt raw Page Graph calls. If response_guard.compacted is true, continue with a smaller "
             "limit or request one specific entity instead of repeating the same broad request. For creatives, list "
             "lightweight rows first and use creative_id with include_details=true for one selected creative only."

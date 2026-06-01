@@ -581,6 +581,89 @@ def list_enabled_comment_automation_rules_for_page(page_id: str):
     )
 
 
+def list_enabled_comment_automation_rules_for_alias(page_id: str, canonical_post_id: str):
+    aliases = _get_many(
+        "comment_post_aliases",
+        params={
+            "page_id": f"eq.{_clean(page_id)}",
+            "canonical_post_id": f"eq.{_clean(canonical_post_id)}",
+            "select": "rule_id",
+        },
+    )
+    rule_ids = [_clean(alias.get("rule_id")) for alias in aliases if _clean(alias.get("rule_id"))]
+    if not rule_ids:
+        return []
+    return _get_many(
+        "comment_automation_rules",
+        params={
+            "rule_id": f"in.({','.join(rule_ids)})",
+            "enabled": "eq.true",
+            "select": "*",
+            "order": "updated_at.desc",
+        },
+    )
+
+
+def create_comment_post_alias(tenant_id: str, rule_id: str, page_id: str, canonical_post_id: str, source_post_id: str | None = None):
+    payload = {
+        "alias_id": "alias_" + secrets.token_urlsafe(12),
+        "tenant_id": _clean(tenant_id),
+        "rule_id": _clean(rule_id),
+        "page_id": _clean(page_id),
+        "canonical_post_id": _clean(canonical_post_id),
+        "source_post_id": _clean(source_post_id),
+        "source_type": "webhook_canonical_post",
+    }
+    rows = _post(
+        "comment_post_aliases",
+        payload,
+        params={"on_conflict": "tenant_id,page_id,canonical_post_id"},
+        prefer="resolution=merge-duplicates,return=representation",
+    ) or []
+    return rows[0] if rows else payload
+
+
+def list_comment_post_aliases(tenant_id: str, page_id: str | None = None):
+    params = {
+        "tenant_id": f"eq.{_clean(tenant_id)}",
+        "select": "*",
+        "order": "created_at.desc",
+    }
+    if page_id:
+        params["page_id"] = f"eq.{_clean(page_id)}"
+    return _get_many("comment_post_aliases", params=params)
+
+
+def list_unmapped_comment_posts(tenant_id: str, page_id: str | None = None, limit: int = 30):
+    event_params = {
+        "select": "*",
+        "delivery_status": "eq.unmapped_ad_post",
+        "order": "created_at.desc",
+        "limit": str(max(1, min(int(limit), 100))),
+    }
+    if page_id:
+        event_params["page_id"] = f"eq.{_clean(page_id)}"
+    events = _get_many("comment_webhook_events", params=event_params)
+    aliases = list_comment_post_aliases(tenant_id, page_id=page_id)
+    mapped = {(_clean(item.get("page_id")), _clean(item.get("canonical_post_id"))) for item in aliases}
+    return [
+        event for event in events
+        if (_clean(event.get("page_id")), _clean(event.get("post_id"))) not in mapped
+    ]
+
+
+def get_comment_automation_rule(tenant_id: str, rule_id: str):
+    return _get_single(
+        "comment_automation_rules",
+        params={
+            "tenant_id": f"eq.{_clean(tenant_id)}",
+            "rule_id": f"eq.{_clean(rule_id)}",
+            "select": "*",
+            "limit": "1",
+        },
+    )
+
+
 def find_tenant_meta_app_by_webhook_verify_token(verify_token: str):
     return _get_single(
         "tenant_meta_apps",
@@ -883,6 +966,7 @@ def purge_tenant_integrations(tenant_id: str):
     _delete("clarity_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_automation_logs", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_webhook_events", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("comment_post_aliases", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_automation_rules", {"tenant_id": f"eq.{clean_tenant_id}"})
     return True
 

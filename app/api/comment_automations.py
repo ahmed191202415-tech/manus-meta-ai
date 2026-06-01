@@ -4,13 +4,17 @@ from app.core.auth import resolve_access_token
 from app.core.meta_client import meta_call
 from app.core.oauth_store import (
     create_comment_automation_rule,
+    create_comment_post_alias,
     delete_comment_automation_rule,
     find_meta_connection_by_access_token,
     get_active_meta_connection_for_tenant,
     get_app_token_data,
+    get_comment_automation_rule,
     list_comment_automation_logs,
     list_comment_automation_rules,
+    list_comment_post_aliases,
     list_comment_webhook_events,
+    list_unmapped_comment_posts,
     set_comment_automation_rule_enabled,
     set_selected_page,
 )
@@ -247,6 +251,40 @@ async def manage_comment_automations(
     if body.action == "list_logs":
         return {"tenant_id": tenant_id, "logs": list_comment_automation_logs(tenant_id, limit=body.limit)}
 
+    if body.action == "list_unmapped_posts":
+        return {
+            "tenant_id": tenant_id,
+            "page_id": body.page_id,
+            "unmapped_posts": list_unmapped_comment_posts(tenant_id, page_id=body.page_id, limit=body.limit),
+            "next_step": "Review the canonical post_id and link it to an existing rule with link_post_alias.",
+        }
+
+    if body.action == "list_post_aliases":
+        return {
+            "tenant_id": tenant_id,
+            "page_id": body.page_id,
+            "post_aliases": list_comment_post_aliases(tenant_id, page_id=body.page_id),
+        }
+
+    if body.action == "link_post_alias":
+        rule = get_comment_automation_rule(tenant_id, str(body.rule_id or ""))
+        if not rule:
+            raise HTTPException(status_code=404, detail="Comment automation rule was not found.")
+        if str(rule.get("page_id") or "").strip() != str(body.page_id or "").strip():
+            raise HTTPException(status_code=400, detail="The rule and canonical post must belong to the same Facebook Page.")
+        alias = create_comment_post_alias(
+            tenant_id=tenant_id,
+            rule_id=str(body.rule_id or ""),
+            page_id=str(body.page_id or ""),
+            canonical_post_id=str(body.post_id or ""),
+            source_post_id=body.source_post_id or rule.get("post_id"),
+        )
+        return {
+            "success": True,
+            "message": "The canonical Page post alias was approved. New comments on this post will use the linked automation rule.",
+            "post_alias": alias,
+        }
+
     if body.action == "diagnose_page":
         page_id = str(body.page_id or "").strip()
         preflight = _page_preflight(page_id, token)
@@ -262,6 +300,8 @@ async def manage_comment_automations(
         rules = list_comment_automation_rules(tenant_id, page_id=page_id)
         deliveries = list_comment_webhook_events(page_id=page_id, limit=body.limit)
         executions = list_comment_automation_logs(tenant_id, limit=body.limit)
+        aliases = list_comment_post_aliases(tenant_id, page_id=page_id)
+        unmapped_posts = list_unmapped_comment_posts(tenant_id, page_id=page_id, limit=body.limit)
         return {
             "tenant_id": tenant_id,
             "page_id": page_id,
@@ -280,6 +320,8 @@ async def manage_comment_automations(
             "rules": rules,
             "recent_webhook_deliveries": deliveries,
             "recent_automation_executions": executions,
+            "post_aliases": aliases,
+            "unmapped_posts": unmapped_posts,
         }
 
     raise HTTPException(status_code=400, detail="Unsupported comment automation action.")

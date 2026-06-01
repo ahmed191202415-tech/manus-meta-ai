@@ -16,10 +16,14 @@ class CommentAutomationManageRequest(BaseModel):
         "delete_rule",
         "list_logs",
         "diagnose_page",
+        "list_unmapped_posts",
+        "list_post_aliases",
+        "link_post_alias",
     ]
     tenant_id: str | None = None
     page_id: str | None = None
     post_id: str | None = None
+    source_post_id: str | None = None
     rule_id: str | None = None
     keyword: str | None = None
     match_mode: Literal["all_comments", "contains_keyword"] = "all_comments"
@@ -30,7 +34,7 @@ class CommentAutomationManageRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_action_fields(self):
-        if self.action in {"list_posts", "list_comments", "subscribe_page", "create_rule", "diagnose_page"} and not self.page_id:
+        if self.action in {"list_posts", "list_comments", "subscribe_page", "create_rule", "diagnose_page", "list_unmapped_posts", "list_post_aliases", "link_post_alias"} and not self.page_id:
             raise ValueError("page_id is required for this action.")
         if self.action == "list_comments" and not self.post_id:
             raise ValueError("post_id is required for list_comments.")
@@ -43,4 +47,9 @@ class CommentAutomationManageRequest(BaseModel):
                 raise ValueError("keyword is required when match_mode is contains_keyword.")
         if self.action in {"enable_rule", "disable_rule", "delete_rule"} and not self.rule_id:
             raise ValueError("rule_id is required for this action.")
+        if self.action == "link_post_alias":
+            if not self.rule_id:
+                raise ValueError("rule_id is required for link_post_alias.")
+            if not self.post_id:
+                raise ValueError("post_id is required for link_post_alias. Use the canonical post_id from the webhook.")
         return self

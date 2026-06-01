@@ -145,6 +145,18 @@ create table if not exists public.comment_webhook_events (
   created_at timestamptz default now()
 );
 
+create table if not exists public.comment_post_aliases (
+  alias_id text primary key,
+  tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
+  rule_id text not null references public.comment_automation_rules(rule_id) on delete cascade,
+  page_id text not null,
+  canonical_post_id text not null,
+  source_post_id text,
+  source_type text default 'webhook_canonical_post',
+  created_at timestamptz default now(),
+  unique (tenant_id, page_id, canonical_post_id)
+);
+
 alter table public.comment_automation_rules add column if not exists page_access_token text;
 
 create index if not exists idx_meta_connections_tenant_updated_at
@@ -182,6 +194,12 @@ create index if not exists idx_comment_webhook_events_page_created
 
 create index if not exists idx_comment_webhook_events_tenant_created
   on public.comment_webhook_events (tenant_id, created_at desc);
+
+create index if not exists idx_comment_post_aliases_page_post
+  on public.comment_post_aliases (page_id, canonical_post_id);
+
+create index if not exists idx_comment_post_aliases_rule
+  on public.comment_post_aliases (rule_id);
 
 do $$
 begin
@@ -255,6 +273,7 @@ alter table public.app_tokens enable row level security;
 alter table public.comment_automation_rules enable row level security;
 alter table public.comment_automation_logs enable row level security;
 alter table public.comment_webhook_events enable row level security;
+alter table public.comment_post_aliases enable row level security;
 
 -- The FastAPI server uses SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS.
 -- No anon/authenticated policies are created here, so browser clients cannot
