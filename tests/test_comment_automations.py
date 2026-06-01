@@ -92,6 +92,13 @@ def test_process_rule_sends_public_private_and_hide_once(monkeypatch):
 
     monkeypatch.setattr(webhooks, "begin_comment_automation_log", lambda rule, event: {"log_id": "log_1"})
     monkeypatch.setattr(webhooks, "_meta_app_secret_for_rule", lambda rule: "secret")
+    monkeypatch.setattr(
+        webhooks,
+        "send_facebook_private_reply",
+        lambda event, message, token, app_secret=None: calls.append(
+            ("PRIVATE_REPLY", event["comment_id"], token, {"message": message}, app_secret)
+        ) or {"mode": "comment_private_replies"},
+    )
     monkeypatch.setattr(webhooks, "finish_comment_automation_log", lambda log_id, payload: completed.append((log_id, payload)))
     monkeypatch.setattr(
         webhooks,
@@ -106,8 +113,8 @@ def test_process_rule_sends_public_private_and_hide_once(monkeypatch):
     assert calls == [
         ("POST", "comment_1/comments", "page_token", {"message": "Public answer"}, "secret"),
         (
-            "POST",
-            "comment_1/private_replies",
+            "PRIVATE_REPLY",
+            "comment_1",
             "page_token",
             {"message": "Private answer"},
             "secret",
@@ -203,3 +210,46 @@ def test_process_comment_events_logs_keyword_mismatch(monkeypatch):
     webhooks.process_comment_events({})
 
     assert logged[0][1] == "keyword_not_matched"
+
+
+def test_private_reply_falls_back_for_composite_comment_id(monkeypatch):
+    calls = []
+
+    def meta_call(method, path, token, params=None, data=None, app_secret=None):
+        calls.append((path, data))
+        if path != "page_1/messages":
+            raise webhooks.HTTPException(
+                status_code=400,
+                detail={"code": 100, "error_subcode": 33, "message": "Unsupported post request"},
+            )
+        return {"message_id": "message_1"}
+
+    monkeypatch.setattr(webhooks, "meta_call", meta_call)
+
+    result = webhooks.send_facebook_private_reply(
+        {"page_id": "page_1", "comment_id": "122210969480562448_1704741537204014"},
+        "Private answer",
+        "page_token",
+    )
+
+    assert result["mode"] == "page_messages_comment_recipient"
+    assert calls == [
+        ("122210969480562448_1704741537204014/private_replies", {"message": "Private answer"}),
+        ("1704741537204014/private_replies", {"message": "Private answer"}),
+        ("page_1/messages", {"recipient": {"comment_id": "122210969480562448_1704741537204014"}, "message": {"text": "Private answer"}}),
+    ]
+
+
+def test_private_reply_does_not_fallback_after_non_object_error(monkeypatch):
+    calls = []
+
+    def meta_call(method, path, token, params=None, data=None, app_secret=None):
+        calls.append(path)
+        raise webhooks.HTTPException(status_code=400, detail={"code": 10903, "message": "Cannot reply"})
+
+    monkeypatch.setattr(webhooks, "meta_call", meta_call)
+
+    with pytest.raises(webhooks.HTTPException):
+        webhooks.send_facebook_private_reply({"page_id": "page_1", "comment_id": "comment_1"}, "Hello", "token")
+
+    assert calls == ["comment_1/private_replies"]

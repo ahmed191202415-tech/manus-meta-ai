@@ -93,6 +93,50 @@ def _meta_app_secret_for_rule(rule: dict) -> str | None:
     return str((app or {}).get("meta_app_secret") or "").strip() or None
 
 
+def _is_missing_private_reply_object(exc: Exception) -> bool:
+    if not isinstance(exc, HTTPException) or not isinstance(exc.detail, dict):
+        return False
+    return exc.detail.get("code") == 100 and exc.detail.get("error_subcode") == 33
+
+
+def _private_reply_attempts(event: dict, message: str) -> list[tuple[str, str, dict]]:
+    comment_id = str(event.get("comment_id") or "").strip()
+    page_id = str(event.get("page_id") or "").strip()
+    short_comment_id = comment_id.rsplit("_", 1)[-1]
+    attempts = [
+        ("comment_private_replies", f"{comment_id}/private_replies", {"message": message}),
+    ]
+    if short_comment_id and short_comment_id != comment_id:
+        attempts.append(("short_comment_private_replies", f"{short_comment_id}/private_replies", {"message": message}))
+    attempts.append(
+        (
+            "page_messages_comment_recipient",
+            f"{page_id}/messages",
+            {"recipient": {"comment_id": comment_id}, "message": {"text": message}},
+        )
+    )
+    return attempts
+
+
+def send_facebook_private_reply(event: dict, message: str, page_token: str, app_secret: str | None = None) -> dict:
+    failures = []
+    for mode, path, data in _private_reply_attempts(event, message):
+        try:
+            response = meta_call("POST", path, page_token, data=data, app_secret=app_secret)
+            return {"mode": mode, "response": response}
+        except Exception as exc:
+            failures.append({"mode": mode, "path": path, "error": str(exc)})
+            if not _is_missing_private_reply_object(exc):
+                raise
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "message": "All supported Facebook private reply request formats were rejected.",
+            "attempts": failures,
+        },
+    )
+
+
 def _process_rule(rule: dict, event: dict) -> None:
     log = begin_comment_automation_log(rule, event)
     if not log:
@@ -123,13 +167,7 @@ def _process_rule(rule: dict, event: dict) -> None:
 
         if rule.get("private_reply_message"):
             try:
-                meta_call(
-                    "POST",
-                    f"{event['comment_id']}/private_replies",
-                    page_token,
-                    data={"message": rule["private_reply_message"]},
-                    app_secret=app_secret,
-                )
+                send_facebook_private_reply(event, rule["private_reply_message"], page_token, app_secret=app_secret)
                 private_status = "sent"
             except Exception as exc:
                 private_status = "failed"
