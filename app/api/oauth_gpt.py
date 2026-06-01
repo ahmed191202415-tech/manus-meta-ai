@@ -2,7 +2,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from urllib.parse import urlencode
 
-from app.config import GPT_OAUTH_CLIENT_ID, GPT_OAUTH_CLIENT_SECRET, PORTAL_PATH
+from app.config import GPT_OAUTH_CLIENT_ID, GPT_OAUTH_CLIENT_SECRET, PORTAL_PATH, PUBLIC_BASE_URL
 from app.core.connection_resolver import resolve_tenant_connection_state
 from app.core.gpt_oauth_state import encode_gpt_oauth_state
 from app.core.auth import _clear_meta_session, _validate_meta_access_token
@@ -16,6 +16,19 @@ from app.core.oauth_store import (
 )
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
+
+
+@router.get("/config", include_in_schema=False)
+async def oauth_config():
+    base_url = str(PUBLIC_BASE_URL or "").rstrip("/")
+    return {
+        "authentication_type": "OAuth",
+        "client_id": GPT_OAUTH_CLIENT_ID,
+        "authorization_url": f"{base_url}/oauth/authorize",
+        "token_url": f"{base_url}/oauth/token",
+        "scope": "",
+        "client_secret": "Use the GPT_OAUTH_CLIENT_SECRET value from Railway. It is intentionally not exposed here.",
+    }
 
 
 def _portal_url_with_gpt_state(client_id: str, redirect_uri: str, state: str) -> str:
