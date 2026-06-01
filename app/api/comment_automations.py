@@ -97,6 +97,58 @@ def _resolve_managed_page(page_id: str, user_token: str) -> tuple[dict, str]:
     )
 
 
+def _page_preflight(page_id: str, user_token: str) -> dict:
+    clean_page_id = str(page_id or "").strip()
+    try:
+        accounts_payload = meta_call(
+            "GET",
+            "me/accounts",
+            user_token,
+            params={"fields": "id,name,access_token", "limit": 200},
+        )
+        accounts_error = None
+    except HTTPException as exc:
+        accounts_payload = {"data": []}
+        accounts_error = exc.detail
+
+    try:
+        permissions_payload = meta_call("GET", "me/permissions", user_token)
+        permissions_error = None
+    except HTTPException as exc:
+        permissions_payload = {"data": []}
+        permissions_error = exc.detail
+
+    pages = accounts_payload.get("data", [])
+    visible_pages = [
+        {"id": str(page.get("id") or ""), "name": str(page.get("name") or "")}
+        for page in pages
+    ]
+    selected_page = next(
+        (page for page in pages if str(page.get("id") or "").strip() == clean_page_id),
+        None,
+    )
+    page_token = str((selected_page or {}).get("access_token") or "").strip()
+    granted_permissions = sorted(
+        str(item.get("permission") or "")
+        for item in permissions_payload.get("data", [])
+        if item.get("status") == "granted"
+    )
+    required_permissions = ["pages_show_list", "pages_read_engagement", "pages_manage_metadata"]
+    return {
+        "page_id": clean_page_id,
+        "page_visible": bool(selected_page),
+        "page_token_available": bool(page_token),
+        "visible_pages": visible_pages,
+        "granted_permissions": granted_permissions,
+        "missing_required_permissions": [
+            permission for permission in required_permissions if permission not in granted_permissions
+        ],
+        "accounts_error": accounts_error,
+        "permissions_error": permissions_error,
+        "_page_token": page_token,
+    }
+
+
 def _select_page(tenant_id: str, page_id: str, page_token: str) -> None:
     connection = get_active_meta_connection_for_tenant(tenant_id)
     if not connection:
@@ -197,14 +249,16 @@ async def manage_comment_automations(
 
     if body.action == "diagnose_page":
         page_id = str(body.page_id or "").strip()
-        page_token = resolve_page_token_for_page_id(token, page_id)
-        _select_page(tenant_id, page_id, page_token)
-        try:
-            subscription = meta_call("GET", f"{page_id}/subscribed_apps", page_token)
-            subscription_error = None
-        except HTTPException as exc:
-            subscription = None
-            subscription_error = exc.detail
+        preflight = _page_preflight(page_id, token)
+        page_token = str(preflight.pop("_page_token") or "")
+        subscription = None
+        subscription_error = None
+        if page_token:
+            try:
+                _select_page(tenant_id, page_id, page_token)
+                subscription = meta_call("GET", f"{page_id}/subscribed_apps", page_token)
+            except HTTPException as exc:
+                subscription_error = exc.detail
         rules = list_comment_automation_rules(tenant_id, page_id=page_id)
         deliveries = list_comment_webhook_events(page_id=page_id, limit=body.limit)
         executions = list_comment_automation_logs(tenant_id, limit=body.limit)
@@ -212,7 +266,7 @@ async def manage_comment_automations(
             "tenant_id": tenant_id,
             "page_id": page_id,
             "diagnosis": {
-                "page_token_available": True,
+                **preflight,
                 "page_subscribed_apps": subscription,
                 "page_subscription_error": subscription_error,
                 "enabled_rule_count": len([rule for rule in rules if rule.get("enabled")]),
