@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from app.core.meta_client import meta_call
+from app.core.oauth_store import find_meta_connection_by_access_token
 
 
 def _first_path_segment(path: str) -> str:
@@ -40,11 +41,36 @@ def resolve_page_token_for_page_id(user_token: str, page_id: str) -> str:
     if not clean_page_id:
         return user_token
 
-    for item in _list_page_entries(user_token):
+    connection = find_meta_connection_by_access_token(user_token)
+    if (
+        connection
+        and str(connection.get("selected_page_id") or "").strip() == clean_page_id
+        and str(connection.get("selected_page_access_token") or "").strip()
+    ):
+        return str(connection["selected_page_access_token"]).strip()
+
+    try:
+        page_entries = _list_page_entries(user_token)
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "A Page access token is required. Reconnect Meta after granting the Page permissions, "
+                "then select or subscribe the Facebook Page before reading posts or comments."
+            ),
+        ) from exc
+
+    for item in page_entries:
         if item["id"] == clean_page_id:
             return item["access_token"]
 
-    return user_token
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"No Page access token is available for Page {clean_page_id}. "
+            "Reconnect Meta with a Facebook account that manages this Page, then select or subscribe the Page."
+        ),
+    )
 
 
 def _resolve_page_id_for_form_id(user_token: str, form_id: str) -> Optional[str]:
