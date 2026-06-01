@@ -19,12 +19,14 @@ class CommentAutomationManageRequest(BaseModel):
         "list_unmapped_posts",
         "list_post_aliases",
         "link_post_alias",
+        "set_rule_ad_scope",
     ]
     tenant_id: str | None = None
     page_id: str | None = None
     post_id: str | None = None
     source_post_id: str | None = None
     rule_id: str | None = None
+    ad_id: str | None = None
     keyword: str | None = None
     match_mode: Literal["all_comments", "contains_keyword"] = "all_comments"
     public_reply_message: str | None = Field(default=None, max_length=2000)
@@ -45,8 +47,10 @@ class CommentAutomationManageRequest(BaseModel):
                 raise ValueError("Add a public reply, a private reply, or hide_comment.")
             if self.match_mode == "contains_keyword" and not str(self.keyword or "").strip():
                 raise ValueError("keyword is required when match_mode is contains_keyword.")
-        if self.action in {"enable_rule", "disable_rule", "delete_rule"} and not self.rule_id:
+        if self.action in {"enable_rule", "disable_rule", "delete_rule", "set_rule_ad_scope"} and not self.rule_id:
             raise ValueError("rule_id is required for this action.")
+        if self.action == "set_rule_ad_scope" and not self.ad_id:
+            raise ValueError("ad_id is required for set_rule_ad_scope.")
         if self.action == "link_post_alias":
             if not self.rule_id:
                 raise ValueError("rule_id is required for link_post_alias.")

@@ -112,6 +112,13 @@ create table if not exists public.comment_automation_rules (
   public_reply_message text,
   private_reply_message text,
   hide_comment boolean default false,
+  ad_id text,
+  ad_name text,
+  creative_id text,
+  creative_name text,
+  effective_object_story_id text,
+  trusted_post_ids jsonb default '[]'::jsonb,
+  auto_link_ad_variants boolean default false,
   enabled boolean default true,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
@@ -158,6 +165,13 @@ create table if not exists public.comment_post_aliases (
 );
 
 alter table public.comment_automation_rules add column if not exists page_access_token text;
+alter table public.comment_automation_rules add column if not exists ad_id text;
+alter table public.comment_automation_rules add column if not exists ad_name text;
+alter table public.comment_automation_rules add column if not exists creative_id text;
+alter table public.comment_automation_rules add column if not exists creative_name text;
+alter table public.comment_automation_rules add column if not exists effective_object_story_id text;
+alter table public.comment_automation_rules add column if not exists trusted_post_ids jsonb default '[]'::jsonb;
+alter table public.comment_automation_rules add column if not exists auto_link_ad_variants boolean default false;
 
 create index if not exists idx_meta_connections_tenant_updated_at
   on public.meta_connections (tenant_id, updated_at desc);
@@ -185,6 +199,9 @@ create index if not exists idx_comment_automation_rules_page_post_enabled
 
 create index if not exists idx_comment_automation_rules_tenant_updated
   on public.comment_automation_rules (tenant_id, updated_at desc);
+
+create index if not exists idx_comment_automation_rules_page_ad_enabled
+  on public.comment_automation_rules (page_id, ad_id, enabled);
 
 create index if not exists idx_comment_automation_logs_tenant_created
   on public.comment_automation_logs (tenant_id, created_at desc);

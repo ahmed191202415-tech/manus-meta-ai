@@ -522,7 +522,9 @@ def create_comment_automation_rule(
     public_reply_message: str | None = None,
     private_reply_message: str | None = None,
     hide_comment: bool = False,
+    ad_scope: dict | None = None,
 ):
+    ad_scope = ad_scope or {}
     payload = {
         "rule_id": "rule_" + secrets.token_urlsafe(12),
         "tenant_id": _clean(tenant_id),
@@ -534,6 +536,13 @@ def create_comment_automation_rule(
         "public_reply_message": _clean(public_reply_message),
         "private_reply_message": _clean(private_reply_message),
         "hide_comment": bool(hide_comment),
+        "ad_id": _clean(ad_scope.get("ad_id")),
+        "ad_name": _clean(ad_scope.get("ad_name")),
+        "creative_id": _clean(ad_scope.get("creative_id")),
+        "creative_name": _clean(ad_scope.get("creative_name")),
+        "effective_object_story_id": _clean(ad_scope.get("effective_object_story_id")),
+        "trusted_post_ids": ad_scope.get("trusted_post_ids") or [],
+        "auto_link_ad_variants": bool(ad_scope.get("ad_id")),
         "enabled": True,
         "updated_at": _dt(datetime.now(timezone.utc)),
     }
@@ -544,7 +553,7 @@ def create_comment_automation_rule(
 def list_comment_automation_rules(tenant_id: str, page_id: str | None = None, post_id: str | None = None, enabled: bool | None = None):
     params = {
         "tenant_id": f"eq.{_clean(tenant_id)}",
-        "select": "rule_id,tenant_id,page_id,post_id,keyword,match_mode,public_reply_message,private_reply_message,hide_comment,enabled,created_at,updated_at",
+        "select": "rule_id,tenant_id,page_id,post_id,keyword,match_mode,public_reply_message,private_reply_message,hide_comment,ad_id,ad_name,creative_id,creative_name,effective_object_story_id,trusted_post_ids,auto_link_ad_variants,enabled,created_at,updated_at",
         "order": "updated_at.desc",
     }
     if page_id:
@@ -623,6 +632,31 @@ def create_comment_post_alias(tenant_id: str, rule_id: str, page_id: str, canoni
     return rows[0] if rows else payload
 
 
+def create_verified_comment_post_alias(
+    tenant_id: str,
+    rule_id: str,
+    page_id: str,
+    canonical_post_id: str,
+    source_post_id: str | None = None,
+):
+    payload = {
+        "alias_id": "alias_" + secrets.token_urlsafe(12),
+        "tenant_id": _clean(tenant_id),
+        "rule_id": _clean(rule_id),
+        "page_id": _clean(page_id),
+        "canonical_post_id": _clean(canonical_post_id),
+        "source_post_id": _clean(source_post_id),
+        "source_type": "verified_ad_story_match",
+    }
+    rows = _post(
+        "comment_post_aliases",
+        payload,
+        params={"on_conflict": "tenant_id,page_id,canonical_post_id"},
+        prefer="resolution=merge-duplicates,return=representation",
+    ) or []
+    return rows[0] if rows else payload
+
+
 def list_comment_post_aliases(tenant_id: str, page_id: str | None = None):
     params = {
         "tenant_id": f"eq.{_clean(tenant_id)}",
@@ -680,6 +714,25 @@ def set_comment_automation_rule_enabled(tenant_id: str, rule_id: str, enabled: b
         "comment_automation_rules",
         params={"tenant_id": f"eq.{_clean(tenant_id)}", "rule_id": f"eq.{_clean(rule_id)}"},
         payload={"enabled": bool(enabled), "updated_at": _dt(datetime.now(timezone.utc))},
+    ) or []
+    return rows[0] if rows else None
+
+
+def set_comment_automation_rule_ad_scope(tenant_id: str, rule_id: str, ad_scope: dict):
+    payload = {
+        "ad_id": _clean(ad_scope.get("ad_id")),
+        "ad_name": _clean(ad_scope.get("ad_name")),
+        "creative_id": _clean(ad_scope.get("creative_id")),
+        "creative_name": _clean(ad_scope.get("creative_name")),
+        "effective_object_story_id": _clean(ad_scope.get("effective_object_story_id")),
+        "trusted_post_ids": ad_scope.get("trusted_post_ids") or [],
+        "auto_link_ad_variants": bool(ad_scope.get("ad_id")),
+        "updated_at": _dt(datetime.now(timezone.utc)),
+    }
+    rows = _patch(
+        "comment_automation_rules",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "rule_id": f"eq.{_clean(rule_id)}"},
+        payload=payload,
     ) or []
     return rows[0] if rows else None
 

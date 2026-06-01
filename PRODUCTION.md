@@ -67,12 +67,13 @@ To enable automatic public replies and Messenger private replies:
    The server also requests `pages_manage_metadata` so it can subscribe the selected Page to webhook events.
 
 ChatGPT uses `POST /comment_automations/manage` to list pages and posts, subscribe a Page,
-create a per-post rule, inspect recent execution logs, disable a rule, or delete it.
+create a post or ad-scoped rule, inspect recent execution logs, disable a rule, or delete it.
 
 If an automation does not reply, run the latest SQL again and ask ChatGPT to diagnose the Page
 automation. The `diagnose_page` action reports the Page subscription, saved rules, webhook
 deliveries, execution attempts, and Meta error messages separately.
 
-For ad posts, dark posts, or reused creatives, Meta may deliver a canonical webhook `post_id`
-that differs from the visible post link. Use `list_unmapped_posts`, review the result, then
-approve it with `link_post_alias`. Replies begin automatically for future comments after approval.
+For an ad rule, pass `ad_id` while creating it or call `set_rule_ad_scope` for an existing rule.
+The server reads the creative story IDs from Meta and automatically links verified internal post
+variants. If Meta cannot prove that a webhook `post_id` belongs to the same ad, use
+`list_unmapped_posts`, review the result, then approve it with `link_post_alias`.

@@ -5,9 +5,11 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from app.config import IS_PRODUCTION, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN
+from app.core.meta_ad_post_resolver import story_ids_match
 from app.core.meta_client import meta_call
 from app.core.oauth_store import (
     begin_comment_automation_log,
+    create_verified_comment_post_alias,
     find_tenant_meta_app_by_webhook_verify_token,
     finish_comment_automation_log,
     get_active_meta_connection_for_tenant,
@@ -65,6 +67,24 @@ def rule_matches_comment(rule: dict, event: dict) -> bool:
         return True
     keyword = str(rule.get("keyword") or "").strip().casefold()
     return bool(keyword and keyword in str(event.get("message") or "").casefold())
+
+
+def _auto_link_verified_ad_post(event: dict) -> list[dict]:
+    matched_rules = []
+    for rule in list_enabled_comment_automation_rules_for_page(event["page_id"]):
+        if not rule.get("auto_link_ad_variants") or not rule.get("ad_id"):
+            continue
+        if not story_ids_match(event["post_id"], rule.get("trusted_post_ids")):
+            continue
+        create_verified_comment_post_alias(
+            tenant_id=str(rule.get("tenant_id") or ""),
+            rule_id=str(rule.get("rule_id") or ""),
+            page_id=event["page_id"],
+            canonical_post_id=event["post_id"],
+            source_post_id=str(rule.get("effective_object_story_id") or rule.get("post_id") or ""),
+        )
+        matched_rules.append(rule)
+    return matched_rules
 
 
 def is_valid_meta_webhook_signature(payload: bytes, signature: str | None, events: list[dict[str, str]]) -> bool:
@@ -198,6 +218,8 @@ def process_comment_events(payload: dict[str, Any]) -> None:
         rules = list_enabled_comment_automation_rules_for_post(event["page_id"], event["post_id"])
         if not rules:
             rules = list_enabled_comment_automation_rules_for_alias(event["page_id"], event["post_id"])
+        if not rules:
+            rules = _auto_link_verified_ad_post(event)
         matched_rules = [rule for rule in rules if rule_matches_comment(rule, event)]
         tenant_id = str((matched_rules or rules or [{}])[0].get("tenant_id") or "").strip() or None
         if not rules:

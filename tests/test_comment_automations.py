@@ -191,6 +191,7 @@ def test_process_comment_events_logs_missing_rule(monkeypatch):
     }
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_page", lambda page_id: [])
     monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((event, status, kwargs)))
 
     webhooks.process_comment_events(payload)
@@ -273,6 +274,37 @@ def test_process_comment_events_uses_approved_alias(monkeypatch):
     assert processed == [(rule, event)]
 
 
+def test_process_comment_events_auto_links_verified_ad_story(monkeypatch):
+    processed = []
+    aliases = []
+    logged = []
+    event = {"page_id": "page_1", "post_id": "page_1_story_1", "comment_id": "comment_1", "message": "hello"}
+    rule = {
+        "rule_id": "rule_1",
+        "tenant_id": "tenant_1",
+        "post_id": "visible_post",
+        "ad_id": "ad_1",
+        "effective_object_story_id": "another_page_story_1",
+        "trusted_post_ids": ["another_page_story_1"],
+        "auto_link_ad_variants": True,
+        "match_mode": "all_comments",
+    }
+    monkeypatch.setattr(webhooks, "extract_comment_events", lambda payload: [event])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_page", lambda page_id: [rule])
+    monkeypatch.setattr(webhooks, "create_verified_comment_post_alias", lambda **kwargs: aliases.append(kwargs))
+    monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append(status))
+    monkeypatch.setattr(webhooks, "_process_rule", lambda rule, event: processed.append((rule, event)))
+
+    webhooks.process_comment_events({})
+
+    assert aliases[0]["canonical_post_id"] == "page_1_story_1"
+    assert aliases[0]["source_post_id"] == "another_page_story_1"
+    assert logged == ["processing"]
+    assert processed == [(rule, event)]
+
+
 def test_link_post_alias_requires_rule_and_canonical_post():
     with pytest.raises(ValidationError):
         CommentAutomationManageRequest(action="link_post_alias", page_id="page_1", rule_id="rule_1")
@@ -284,3 +316,11 @@ def test_link_post_alias_requires_rule_and_canonical_post():
         rule_id="rule_1",
     )
     assert request.post_id == "canonical_dark_post"
+
+
+def test_set_rule_ad_scope_requires_rule_and_ad_ids():
+    with pytest.raises(ValidationError):
+        CommentAutomationManageRequest(action="set_rule_ad_scope", rule_id="rule_1")
+
+    request = CommentAutomationManageRequest(action="set_rule_ad_scope", rule_id="rule_1", ad_id="ad_1")
+    assert request.ad_id == "ad_1"

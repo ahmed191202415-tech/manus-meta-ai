@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core.auth import resolve_access_token
+from app.core.meta_ad_post_resolver import fetch_verified_ad_story_scope
 from app.core.meta_client import meta_call
 from app.core.oauth_store import (
     create_comment_automation_rule,
@@ -10,18 +11,28 @@ from app.core.oauth_store import (
     get_active_meta_connection_for_tenant,
     get_app_token_data,
     get_comment_automation_rule,
+    get_tenant_meta_app,
     list_comment_automation_logs,
     list_comment_automation_rules,
     list_comment_post_aliases,
     list_comment_webhook_events,
     list_unmapped_comment_posts,
     set_comment_automation_rule_enabled,
+    set_comment_automation_rule_ad_scope,
     set_selected_page,
 )
 from app.core.token_router import resolve_page_token_for_page_id
 from app.schemas.comment_automation_requests import CommentAutomationManageRequest
 
 router = APIRouter(prefix="/comment_automations", tags=["comment automations"])
+
+
+def _meta_app_secret_for_tenant(tenant_id: str) -> str | None:
+    connection = get_active_meta_connection_for_tenant(tenant_id)
+    if not connection or connection.get("connection_mode") == "manual_token":
+        return None
+    app = get_tenant_meta_app(tenant_id)
+    return str((app or {}).get("meta_app_secret") or "").strip() or None
 
 
 def _bearer_token(request: Request) -> str:
@@ -211,6 +222,13 @@ async def manage_comment_automations(
                 "page_id": page_id,
                 "subscription": subscription,
             }
+        ad_scope = {}
+        if body.ad_id:
+            ad_scope = fetch_verified_ad_story_scope(
+                body.ad_id,
+                token,
+                app_secret=_meta_app_secret_for_tenant(tenant_id),
+            )
         rule = create_comment_automation_rule(
             tenant_id=tenant_id,
             page_id=page_id,
@@ -221,6 +239,7 @@ async def manage_comment_automations(
             public_reply_message=body.public_reply_message,
             private_reply_message=body.private_reply_message,
             hide_comment=body.hide_comment,
+            ad_scope=ad_scope,
         )
         rule.pop("page_access_token", None)
         return {
@@ -243,6 +262,28 @@ async def manage_comment_automations(
             raise HTTPException(status_code=404, detail="Comment automation rule was not found.")
         rule.pop("page_access_token", None)
         return {"success": True, "rule": rule}
+
+    if body.action == "set_rule_ad_scope":
+        existing_rule = get_comment_automation_rule(tenant_id, str(body.rule_id or ""))
+        if not existing_rule:
+            raise HTTPException(status_code=404, detail="Comment automation rule was not found.")
+        ad_scope = fetch_verified_ad_story_scope(
+            str(body.ad_id or ""),
+            token,
+            app_secret=_meta_app_secret_for_tenant(tenant_id),
+        )
+        rule = set_comment_automation_rule_ad_scope(tenant_id, str(body.rule_id or ""), ad_scope)
+        if not rule:
+            raise HTTPException(status_code=404, detail="Comment automation rule was not found.")
+        rule.pop("page_access_token", None)
+        return {
+            "success": True,
+            "message": (
+                "The rule is now attached to the Meta ad. Verified internal story IDs will be linked automatically. "
+                "Unverified IDs will remain pending for manual review."
+            ),
+            "rule": rule,
+        }
 
     if body.action == "delete_rule":
         delete_comment_automation_rule(tenant_id, str(body.rule_id or ""))
