@@ -12,7 +12,9 @@ from app.core.oauth_store import (
     finish_comment_automation_log,
     get_active_meta_connection_for_tenant,
     get_tenant_meta_app,
+    list_enabled_comment_automation_rules_for_page,
     list_enabled_comment_automation_rules_for_post,
+    save_comment_webhook_event,
 )
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -70,8 +72,8 @@ def is_valid_meta_webhook_signature(payload: bytes, signature: str | None, event
         return not IS_PRODUCTION
     expected_digest = clean_signature.split("=", 1)[1]
     secrets = {str(META_APP_SECRET or "").strip()}
-    for event in events:
-        for rule in list_enabled_comment_automation_rules_for_post(event["page_id"], event["post_id"]):
+    for page_id in {event["page_id"] for event in events}:
+        for rule in list_enabled_comment_automation_rules_for_page(page_id):
             app = get_tenant_meta_app(str(rule.get("tenant_id") or ""))
             secrets.add(str((app or {}).get("meta_app_secret") or "").strip())
     for secret in secrets:
@@ -158,9 +160,32 @@ def _process_rule(rule: dict, event: dict) -> None:
 def process_comment_events(payload: dict[str, Any]) -> None:
     for event in extract_comment_events(payload):
         rules = list_enabled_comment_automation_rules_for_post(event["page_id"], event["post_id"])
-        for rule in rules:
-            if rule_matches_comment(rule, event):
-                _process_rule(rule, event)
+        matched_rules = [rule for rule in rules if rule_matches_comment(rule, event)]
+        tenant_id = str((matched_rules or rules or [{}])[0].get("tenant_id") or "").strip() or None
+        if not rules:
+            save_comment_webhook_event(
+                event,
+                "no_rule_for_post",
+                diagnostic_message="Webhook arrived, but no enabled automation rule matches this page_id and post_id.",
+            )
+            continue
+        if not matched_rules:
+            save_comment_webhook_event(
+                event,
+                "keyword_not_matched",
+                diagnostic_message="Webhook arrived and the post rule exists, but the comment did not contain the configured keyword.",
+                tenant_id=tenant_id,
+            )
+            continue
+        save_comment_webhook_event(
+            event,
+            "processing",
+            matched_rule_count=len(matched_rules),
+            diagnostic_message="Webhook arrived and matching automation rules are being executed.",
+            tenant_id=tenant_id,
+        )
+        for rule in matched_rules:
+            _process_rule(rule, event)
 
 
 @router.get("/meta")

@@ -133,6 +133,18 @@ create table if not exists public.comment_automation_logs (
   unique (rule_id, comment_id)
 );
 
+create table if not exists public.comment_webhook_events (
+  event_id text primary key,
+  tenant_id text references public.tenant_accounts(tenant_id) on delete cascade,
+  page_id text,
+  post_id text,
+  comment_id text,
+  delivery_status text not null,
+  matched_rule_count integer default 0,
+  diagnostic_message text,
+  created_at timestamptz default now()
+);
+
 alter table public.comment_automation_rules add column if not exists page_access_token text;
 
 create index if not exists idx_meta_connections_tenant_updated_at
@@ -164,6 +176,12 @@ create index if not exists idx_comment_automation_rules_tenant_updated
 
 create index if not exists idx_comment_automation_logs_tenant_created
   on public.comment_automation_logs (tenant_id, created_at desc);
+
+create index if not exists idx_comment_webhook_events_page_created
+  on public.comment_webhook_events (page_id, created_at desc);
+
+create index if not exists idx_comment_webhook_events_tenant_created
+  on public.comment_webhook_events (tenant_id, created_at desc);
 
 do $$
 begin
@@ -236,6 +254,7 @@ alter table public.oauth_codes enable row level security;
 alter table public.app_tokens enable row level security;
 alter table public.comment_automation_rules enable row level security;
 alter table public.comment_automation_logs enable row level security;
+alter table public.comment_webhook_events enable row level security;
 
 -- The FastAPI server uses SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS.
 -- No anon/authenticated policies are created here, so browser clients cannot

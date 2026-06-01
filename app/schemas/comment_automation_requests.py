@@ -15,6 +15,7 @@ class CommentAutomationManageRequest(BaseModel):
         "disable_rule",
         "delete_rule",
         "list_logs",
+        "diagnose_page",
     ]
     tenant_id: str | None = None
     page_id: str | None = None
@@ -29,7 +30,7 @@ class CommentAutomationManageRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_action_fields(self):
-        if self.action in {"list_posts", "list_comments", "subscribe_page", "create_rule"} and not self.page_id:
+        if self.action in {"list_posts", "list_comments", "subscribe_page", "create_rule", "diagnose_page"} and not self.page_id:
             raise ValueError("page_id is required for this action.")
         if self.action == "list_comments" and not self.post_id:
             raise ValueError("post_id is required for list_comments.")

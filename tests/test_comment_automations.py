@@ -140,8 +140,8 @@ def test_signature_validation_uses_tenant_meta_app_secret(monkeypatch):
     monkeypatch.setattr(webhooks, "META_APP_SECRET", "")
     monkeypatch.setattr(
         webhooks,
-        "list_enabled_comment_automation_rules_for_post",
-        lambda page_id, post_id: [{"tenant_id": "tenant_1"}],
+        "list_enabled_comment_automation_rules_for_page",
+        lambda page_id: [{"tenant_id": "tenant_1"}],
     )
     monkeypatch.setattr(webhooks, "get_tenant_meta_app", lambda tenant_id: {"meta_app_secret": "tenant-secret"})
 
@@ -158,3 +158,48 @@ def test_list_comments_requires_page_and_post_ids():
 
     request = CommentAutomationManageRequest(action="list_comments", page_id="page_1", post_id="post_1")
     assert request.action == "list_comments"
+
+
+def test_process_comment_events_logs_missing_rule(monkeypatch):
+    logged = []
+    payload = {
+        "entry": [
+            {
+                "id": "page_1",
+                "changes": [
+                    {
+                        "field": "feed",
+                        "value": {
+                            "item": "comment",
+                            "verb": "add",
+                            "comment_id": "comment_1",
+                            "post_id": "post_1",
+                            "from": {"id": "customer_1"},
+                            "message": "hello",
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((event, status, kwargs)))
+
+    webhooks.process_comment_events(payload)
+
+    assert logged[0][1] == "no_rule_for_post"
+
+
+def test_process_comment_events_logs_keyword_mismatch(monkeypatch):
+    logged = []
+    monkeypatch.setattr(webhooks, "extract_comment_events", lambda payload: [{"page_id": "page_1", "post_id": "post_1", "comment_id": "comment_1", "message": "hello"}])
+    monkeypatch.setattr(
+        webhooks,
+        "list_enabled_comment_automation_rules_for_post",
+        lambda page_id, post_id: [{"tenant_id": "tenant_1", "match_mode": "contains_keyword", "keyword": "price"}],
+    )
+    monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((event, status, kwargs)))
+
+    webhooks.process_comment_events({})
+
+    assert logged[0][1] == "keyword_not_matched"

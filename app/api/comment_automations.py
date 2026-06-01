@@ -10,6 +10,7 @@ from app.core.oauth_store import (
     get_app_token_data,
     list_comment_automation_logs,
     list_comment_automation_rules,
+    list_comment_webhook_events,
     set_comment_automation_rule_enabled,
     set_selected_page,
 )
@@ -152,5 +153,38 @@ async def manage_comment_automations(
 
     if body.action == "list_logs":
         return {"tenant_id": tenant_id, "logs": list_comment_automation_logs(tenant_id, limit=body.limit)}
+
+    if body.action == "diagnose_page":
+        page_id = str(body.page_id or "").strip()
+        page_token = resolve_page_token_for_page_id(token, page_id)
+        _select_page(tenant_id, page_id, page_token)
+        try:
+            subscription = meta_call("GET", f"{page_id}/subscribed_apps", page_token)
+            subscription_error = None
+        except HTTPException as exc:
+            subscription = None
+            subscription_error = exc.detail
+        rules = list_comment_automation_rules(tenant_id, page_id=page_id)
+        deliveries = list_comment_webhook_events(page_id=page_id, limit=body.limit)
+        executions = list_comment_automation_logs(tenant_id, limit=body.limit)
+        return {
+            "tenant_id": tenant_id,
+            "page_id": page_id,
+            "diagnosis": {
+                "page_token_available": True,
+                "page_subscribed_apps": subscription,
+                "page_subscription_error": subscription_error,
+                "enabled_rule_count": len([rule for rule in rules if rule.get("enabled")]),
+                "webhook_delivery_count": len(deliveries),
+                "automation_execution_count": len(executions),
+                "next_check": (
+                    "If webhook_delivery_count is zero after a new external comment, verify the Meta Page webhook feed subscription. "
+                    "If a delivery exists, inspect delivery_status. If an execution exists, inspect error_message."
+                ),
+            },
+            "rules": rules,
+            "recent_webhook_deliveries": deliveries,
+            "recent_automation_executions": executions,
+        }
 
     raise HTTPException(status_code=400, detail="Unsupported comment automation action.")

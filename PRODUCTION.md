@@ -68,3 +68,7 @@ To enable automatic public replies and Messenger private replies:
 
 ChatGPT uses `POST /comment_automations/manage` to list pages and posts, subscribe a Page,
 create a per-post rule, inspect recent execution logs, disable a rule, or delete it.
+
+If an automation does not reply, run the latest SQL again and ask ChatGPT to diagnose the Page
+automation. The `diagnose_page` action reports the Page subscription, saved rules, webhook
+deliveries, execution attempts, and Meta error messages separately.

@@ -569,6 +569,18 @@ def list_enabled_comment_automation_rules_for_post(page_id: str, post_id: str):
     )
 
 
+def list_enabled_comment_automation_rules_for_page(page_id: str):
+    return _get_many(
+        "comment_automation_rules",
+        params={
+            "page_id": f"eq.{_clean(page_id)}",
+            "enabled": "eq.true",
+            "select": "*",
+            "order": "updated_at.desc",
+        },
+    )
+
+
 def find_tenant_meta_app_by_webhook_verify_token(verify_token: str):
     return _get_single(
         "tenant_meta_apps",
@@ -637,6 +649,34 @@ def list_comment_automation_logs(tenant_id: str, limit: int = 30):
             "limit": str(max(1, min(int(limit), 100))),
         },
     )
+
+
+def save_comment_webhook_event(event: dict, delivery_status: str, matched_rule_count: int = 0, diagnostic_message: str | None = None, tenant_id: str | None = None):
+    payload = {
+        "event_id": "event_" + secrets.token_urlsafe(12),
+        "tenant_id": _clean(tenant_id) or None,
+        "page_id": _clean(event.get("page_id")),
+        "post_id": _clean(event.get("post_id")),
+        "comment_id": _clean(event.get("comment_id")),
+        "delivery_status": _clean(delivery_status),
+        "matched_rule_count": max(0, int(matched_rule_count or 0)),
+        "diagnostic_message": _clean(diagnostic_message)[:2000],
+    }
+    rows = _post("comment_webhook_events", payload, prefer="return=representation") or []
+    return rows[0] if rows else payload
+
+
+def list_comment_webhook_events(tenant_id: str | None = None, page_id: str | None = None, limit: int = 30):
+    params = {
+        "select": "*",
+        "order": "created_at.desc",
+        "limit": str(max(1, min(int(limit), 100))),
+    }
+    if tenant_id:
+        params["tenant_id"] = f"eq.{_clean(tenant_id)}"
+    if page_id:
+        params["page_id"] = f"eq.{_clean(page_id)}"
+    return _get_many("comment_webhook_events", params=params)
 
 
 def save_google_connection(tenant_id: str, payload: dict):
@@ -842,6 +882,7 @@ def purge_tenant_integrations(tenant_id: str):
     _delete("google_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("clarity_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_automation_logs", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("comment_webhook_events", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_automation_rules", {"tenant_id": f"eq.{clean_tenant_id}"})
     return True
 
