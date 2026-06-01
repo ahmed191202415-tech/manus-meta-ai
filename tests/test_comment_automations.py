@@ -107,9 +107,9 @@ def test_process_rule_sends_public_private_and_hide_once(monkeypatch):
         ("POST", "comment_1/comments", "page_token", {"message": "Public answer"}, "secret"),
         (
             "POST",
-            "page_1/private_replies",
+            "comment_1/private_replies",
             "page_token",
-            {"object_id": "comment_1", "message": "Private answer"},
+            {"message": "Private answer"},
             "secret",
         ),
         ("POST", "comment_1", "page_token", {"is_hidden": True}, "secret"),

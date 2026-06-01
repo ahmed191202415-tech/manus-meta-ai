@@ -125,12 +125,9 @@ def _process_rule(rule: dict, event: dict) -> None:
             try:
                 meta_call(
                     "POST",
-                    f"{event['page_id']}/private_replies",
+                    f"{event['comment_id']}/private_replies",
                     page_token,
-                    data={
-                        "object_id": event["comment_id"],
-                        "message": rule["private_reply_message"],
-                    },
+                    data={"message": rule["private_reply_message"]},
                     app_secret=app_secret,
                 )
                 private_status = "sent"
