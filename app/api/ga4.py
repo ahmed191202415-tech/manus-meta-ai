@@ -129,6 +129,8 @@ async def ga4_custom_report(body: GA4CustomReportRequest, request: Request):
         limit=body.limit,
         filters=body.filters,
         order_by=body.order_by,
+        offset=body.offset,
+        metric_aggregations=body.metric_aggregations,
     )
     normalized_rows = normalize_ga4_report(payload)
     return build_custom_report_output(payload, normalized_rows, validation)

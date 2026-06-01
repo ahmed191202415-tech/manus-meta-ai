@@ -27,13 +27,20 @@ class GA4CustomReportRequest(GA4DateRangeRequest):
     filters: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "GA4 filters. For page lookup prefer the simple form "
-            '{"page_path_contains":"verify-otp"}. For generic text filters use '
-            '{"dimension_string_filters":[{"dimension":"pagePathPlusQueryString",'
-            '"operator":"contains","value":"verify-otp"}]}. Raw GA4 dimensionFilter and metricFilter are also supported.'
+            "Optional custom GA4 filters. Supports page_path_contains, dimension_string_filters, "
+            "dimension_in_list_filters, dimension_empty_filters, metric_numeric_filters, and "
+            "metric_between_filters. Raw GA4 dimensionFilter and metricFilter are also supported."
         ),
     )
-    order_by: list[dict[str, Any]] = Field(default_factory=list)
+    order_by: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            'Optional sorting. Simple example: [{"type":"metric","name":"sessions","descending":true}]. '
+            "Raw GA4 orderBys are also supported."
+        ),
+    )
+    offset: int = Field(default=0, ge=0, le=100000)
+    metric_aggregations: list[Literal["TOTAL", "MINIMUM", "MAXIMUM", "COUNT"]] = Field(default_factory=list)
 
     @field_validator("dimensions", "metrics")
     @classmethod

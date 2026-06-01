@@ -108,7 +108,10 @@ def openapi_gpt_schema():
             "limit or request one specific entity instead of repeating the same broad request. For creatives, list "
             "lightweight rows first and use creative_id with include_details=true for one selected creative only. "
             "For a GA4 page lookup, use /ga4/custom_report with a small limit and "
-            'filters={"page_path_contains":"the-page-fragment"} instead of fetching all page URLs.'
+            'filters={"page_path_contains":"the-page-fragment"} instead of fetching all page URLs. '
+            "For any GA4 custom question, choose the needed dimensions and metrics and use the simplified "
+            "dimension_string_filters, dimension_in_list_filters, dimension_empty_filters, "
+            "metric_numeric_filters, metric_between_filters, order_by, offset, and metric_aggregations fields."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
