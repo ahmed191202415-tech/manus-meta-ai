@@ -115,6 +115,36 @@ def _with_rows(payload: dict) -> dict:
     return {**payload, "normalized_rows": normalize_ga4_report(payload)}
 
 
+def _custom_report_filters(body: GA4CustomReportRequest) -> dict:
+    filters = dict(body.filters)
+    if body.page_path_contains:
+        filters["page_path_contains"] = body.page_path_contains
+    for item in body.dimension_filters:
+        target = (
+            "dimension_in_list_filters"
+            if item.operator == "in_list"
+            else "dimension_empty_filters"
+            if item.operator == "is_empty"
+            else "dimension_string_filters"
+        )
+        payload = item.model_dump(exclude_none=True)
+        if target == "dimension_string_filters":
+            payload["operator"] = item.operator
+        filters.setdefault(target, []).append(payload)
+    for item in body.metric_filters:
+        target = "metric_between_filters" if item.operator == "between" else "metric_numeric_filters"
+        payload = item.model_dump(exclude_none=True)
+        if target == "metric_between_filters":
+            payload["from"] = payload.pop("from_value", None)
+            payload["to"] = payload.pop("to_value", None)
+        filters.setdefault(target, []).append(payload)
+    return filters
+
+
+def _custom_report_order_by(body: GA4CustomReportRequest) -> list[dict]:
+    return body.order_by or [item.model_dump() for item in body.sort]
+
+
 @router.post("/custom_report")
 async def ga4_custom_report(body: GA4CustomReportRequest, request: Request):
     tenant_id = _resolve_tenant_id(request, body.tenant_id)
@@ -127,8 +157,8 @@ async def ga4_custom_report(body: GA4CustomReportRequest, request: Request):
         start_date=body.start_date,
         end_date=body.end_date,
         limit=body.limit,
-        filters=body.filters,
-        order_by=body.order_by,
+        filters=_custom_report_filters(body),
+        order_by=_custom_report_order_by(body),
         offset=body.offset,
         metric_aggregations=body.metric_aggregations,
     )

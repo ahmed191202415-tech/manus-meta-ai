@@ -21,9 +21,50 @@ class GA4DateRangeRequest(BaseModel):
     limit: int = Field(default=100, ge=1, le=1000)
 
 
+class GA4DimensionFilterRequest(BaseModel):
+    dimension: str
+    operator: Literal["exact", "begins_with", "ends_with", "contains", "full_regexp", "partial_regexp", "in_list", "is_empty"] = "contains"
+    value: str | None = None
+    values: list[str] = Field(default_factory=list)
+    case_sensitive: bool = False
+    exclude: bool = False
+
+
+class GA4MetricFilterRequest(BaseModel):
+    metric: str
+    operator: Literal["equal", "less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal", "between"] = "equal"
+    value: float | None = None
+    from_value: float | None = None
+    to_value: float | None = None
+    exclude: bool = False
+
+
+class GA4SortRequest(BaseModel):
+    type: Literal["metric", "dimension"] = "metric"
+    name: str
+    descending: bool = False
+    order_type: Literal["alphanumeric", "case_insensitive_alphanumeric", "numeric"] = "alphanumeric"
+
+
 class GA4CustomReportRequest(GA4DateRangeRequest):
     dimensions: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
+    page_path_contains: str | None = Field(
+        default=None,
+        description="Optional direct page URL/path search fragment, for example verify-otp.",
+    )
+    dimension_filters: list[GA4DimensionFilterRequest] = Field(
+        default_factory=list,
+        description="Optional typed dimension filters for source, campaign, page, device, event, country, or any GA4 dimension.",
+    )
+    metric_filters: list[GA4MetricFilterRequest] = Field(
+        default_factory=list,
+        description="Optional typed numeric metric filters, for example sessions greater_than 100.",
+    )
+    sort: list[GA4SortRequest] = Field(
+        default_factory=list,
+        description="Optional typed sorting. Prefer this field in GPT actions.",
+    )
     filters: dict[str, Any] = Field(
         default_factory=dict,
         description=(
