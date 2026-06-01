@@ -48,11 +48,52 @@ def _resolve_tenant_id(request: Request, supplied_tenant_id: str | None, resolve
 
 
 def _subscribe_page(page_id: str, page_token: str) -> dict:
-    return meta_call(
-        "POST",
-        f"{page_id}/subscribed_apps",
-        page_token,
-        data={"subscribed_fields": "feed"},
+    try:
+        return meta_call(
+            "POST",
+            f"{page_id}/subscribed_apps",
+            page_token,
+            data={"subscribed_fields": "feed"},
+        )
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "message": "Could not subscribe this Facebook Page to comment webhooks.",
+                "operation": "subscribe_page_webhook",
+                "page_id": page_id,
+                "required_permission": "pages_manage_metadata",
+                "next_step": (
+                    "Confirm that this is the Page ID returned by list_pages, not a post ID. "
+                    "Then reconnect Meta so pages_manage_metadata is granted and try subscribe_page again."
+                ),
+                "meta_error": exc.detail,
+            },
+        ) from exc
+
+
+def _resolve_managed_page(page_id: str, user_token: str) -> tuple[dict, str]:
+    clean_page_id = str(page_id or "").strip()
+    payload = meta_call(
+        "GET",
+        "me/accounts",
+        user_token,
+        params={"fields": "id,name,access_token", "limit": 200},
+    )
+    for page in payload.get("data", []):
+        if str(page.get("id") or "").strip() != clean_page_id:
+            continue
+        page_token = str(page.get("access_token") or "").strip()
+        if not page_token:
+            break
+        return page, page_token
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "message": "The supplied page_id is not available among the Facebook Pages managed by this connection.",
+            "page_id": clean_page_id,
+            "next_step": "Call list_pages and use the id returned for the Page itself. Do not use a post ID or ad ID.",
+        },
     )
 
 
@@ -103,7 +144,7 @@ async def manage_comment_automations(
 
     if body.action in {"subscribe_page", "create_rule"}:
         page_id = str(body.page_id or "").strip()
-        page_token = resolve_page_token_for_page_id(token, page_id)
+        _, page_token = _resolve_managed_page(page_id, token)
         subscription = _subscribe_page(page_id, page_token)
         _select_page(tenant_id, page_id, page_token)
         if body.action == "subscribe_page":
