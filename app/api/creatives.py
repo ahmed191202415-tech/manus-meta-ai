@@ -8,12 +8,19 @@ from app.core.meta_client import meta_call, normalize_account_id
 from app.schemas.meta_requests import CreativeCreateRequest
 
 router = APIRouter(tags=["creatives"])
+CREATIVE_LIST_FIELDS = "id,name,effective_object_story_id,thumbnail_url,image_hash,url_tags,created_time"
+CREATIVE_DETAIL_FIELDS = (
+    "id,name,object_story_spec,asset_feed_spec,effective_object_story_id,"
+    "thumbnail_url,image_hash,url_tags,created_time"
+)
 
 
 @router.get("/adcreatives")
 async def list_adcreatives(
     account_id: str,
-    fields: str = "id,name,object_story_spec,asset_feed_spec,effective_object_story_id,thumbnail_url,image_hash,url_tags,created_time",
+    creative_id: Optional[str] = None,
+    include_details: bool = False,
+    fields: Optional[str] = None,
     limit: int = DEFAULT_PAGE_LIMIT,
     after: Optional[str] = None,
     fetch_all: bool = False,
@@ -21,7 +28,11 @@ async def list_adcreatives(
     token: str = Depends(resolve_access_token),
 ):
     account_id = normalize_account_id(account_id)
-    params = {"fields": fields, "limit": limit}
+    selected_fields = fields or (CREATIVE_DETAIL_FIELDS if include_details else CREATIVE_LIST_FIELDS)
+    if creative_id:
+        return meta_call("GET", creative_id, token, params={"fields": selected_fields})
+
+    params = {"fields": selected_fields, "limit": limit}
     if after:
         params["after"] = after
 

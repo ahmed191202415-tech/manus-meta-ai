@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.config import ALLOW_ORIGINS, PUBLIC_BASE_URL, SESSION_SECRET
+from app.config import ALLOW_ORIGINS, GPT_RESPONSE_MAX_BYTES, PUBLIC_BASE_URL, SESSION_SECRET
+from app.core.response_guard import ResponseGuardMiddleware
 from app.api.health import router as health_router
 from app.api.reports import router as reports_router
 from app.api.analysis import router as analysis_router
@@ -37,6 +38,33 @@ from app.api.legal import router as legal_router
 from app.api.comment_automations import router as comment_automations_router
 
 openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
+GPT_DATA_PATHS = {
+    "/comment_automations/manage",
+    "/accounts",
+    "/insights",
+    "/campaigns",
+    "/adsets",
+    "/ads",
+    "/adcreatives",
+    "/analysis/run",
+    "/ga4/properties",
+    "/ga4/select_property",
+    "/ga4/custom_report",
+    "/clarity/behavior_audit",
+    "/ga4/landing_pages",
+    "/ga4/traffic_sources",
+    "/ga4/devices",
+    "/website/analyze",
+    "/website/tracking_audit",
+    "/website/landing_pages_audit",
+    "/website/traffic_quality",
+    "/website/device_analysis",
+    "/website/conversion_analysis",
+    "/journey/analyze",
+    "/journey/analyze_from_payload",
+    "/journey/utm_audit",
+    "/journey/decision",
+}
 
 app = FastAPI(
     title="Super Ad Analysis",
@@ -47,33 +75,8 @@ app = FastAPI(
 
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
-    allowed_paths = {
-        "/comment_automations/manage",
-        "/accounts",
-        "/insights",
-        "/campaigns",
-        "/adsets",
-        "/ads",
-        "/adcreatives",
-        "/analysis/run",
-        "/ga4/properties",
-        "/ga4/select_property",
-        "/ga4/custom_report",
+    allowed_paths = GPT_DATA_PATHS | {
         "/clarity/connect_token",
-        "/clarity/behavior_audit",
-        "/ga4/landing_pages",
-        "/ga4/traffic_sources",
-        "/ga4/devices",
-        "/website/analyze",
-        "/website/tracking_audit",
-        "/website/landing_pages_audit",
-        "/website/traffic_quality",
-        "/website/device_analysis",
-        "/website/conversion_analysis",
-        "/journey/analyze",
-        "/journey/analyze_from_payload",
-        "/journey/utm_audit",
-        "/journey/decision",
         "/reports/save_excel",
         "/reports/save_website_html",
         "/reports/save_website_docx",
@@ -96,7 +99,9 @@ def openapi_gpt_schema():
             "Do not judge messages campaigns mainly by purchases or website leads."
             " For Facebook Page comments, always use /comment_automations/manage with list_pages, list_posts, "
             "list_comments, subscribe_page, create_rule, list_rules, disable_rule, or delete_rule. "
-            "Do not attempt raw Page Graph calls."
+            "Do not attempt raw Page Graph calls. If response_guard.compacted is true, continue with a smaller "
+            "limit or request one specific entity instead of repeating the same broad request. For creatives, list "
+            "lightweight rows first and use creative_id with include_details=true for one selected creative only."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
@@ -124,6 +129,12 @@ app.add_middleware(
     secret_key=SESSION_SECRET,
     same_site="lax",
     https_only=True,
+)
+
+app.add_middleware(
+    ResponseGuardMiddleware,
+    max_bytes=GPT_RESPONSE_MAX_BYTES,
+    guarded_paths=GPT_DATA_PATHS,
 )
 
 app.include_router(health_router)

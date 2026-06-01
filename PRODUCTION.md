@@ -30,6 +30,7 @@ Optional:
 - `META_OAUTH_REDIRECT_URI`
 - `META_TEST_ACCESS_TOKEN` for temporary testing only; do not use it for multi-client production.
 - `META_WEBHOOK_VERIFY_TOKEN` for Meta webhook verification. Use a long random value.
+- `GPT_RESPONSE_MAX_BYTES=350000` to compact oversized GPT data responses automatically.
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`
