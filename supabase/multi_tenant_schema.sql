@@ -101,6 +101,40 @@ create table if not exists public.app_tokens (
   expires_at timestamptz not null
 );
 
+create table if not exists public.comment_automation_rules (
+  rule_id text primary key,
+  tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
+  page_id text not null,
+  page_access_token text not null,
+  post_id text not null,
+  keyword text,
+  match_mode text not null default 'all_comments',
+  public_reply_message text,
+  private_reply_message text,
+  hide_comment boolean default false,
+  enabled boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.comment_automation_logs (
+  log_id text primary key,
+  rule_id text references public.comment_automation_rules(rule_id) on delete set null,
+  tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
+  page_id text not null,
+  post_id text not null,
+  comment_id text not null,
+  commenter_id text,
+  public_reply_status text,
+  private_reply_status text,
+  hide_status text,
+  error_message text,
+  created_at timestamptz default now(),
+  unique (rule_id, comment_id)
+);
+
+alter table public.comment_automation_rules add column if not exists page_access_token text;
+
 create index if not exists idx_meta_connections_tenant_updated_at
   on public.meta_connections (tenant_id, updated_at desc);
 
@@ -122,6 +156,15 @@ create index if not exists idx_app_tokens_tenant_meta_user
 create index if not exists idx_oauth_codes_tenant_used_expires
   on public.oauth_codes (tenant_id, used, expires_at);
 
+create index if not exists idx_comment_automation_rules_page_post_enabled
+  on public.comment_automation_rules (page_id, post_id, enabled);
+
+create index if not exists idx_comment_automation_rules_tenant_updated
+  on public.comment_automation_rules (tenant_id, updated_at desc);
+
+create index if not exists idx_comment_automation_logs_tenant_created
+  on public.comment_automation_logs (tenant_id, created_at desc);
+
 do $$
 begin
   if not exists (
@@ -130,6 +173,17 @@ begin
     alter table public.tenant_accounts
       add constraint tenant_accounts_status_check
       check (status in ('active', 'disabled', 'deleted'));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'comment_automation_rules_match_mode_check'
+  ) then
+    alter table public.comment_automation_rules
+      add constraint comment_automation_rules_match_mode_check
+      check (match_mode in ('all_comments', 'contains_keyword'));
   end if;
 end $$;
 
@@ -168,6 +222,11 @@ create trigger trg_clarity_connections_updated_at
 before update on public.clarity_connections
 for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_comment_automation_rules_updated_at on public.comment_automation_rules;
+create trigger trg_comment_automation_rules_updated_at
+before update on public.comment_automation_rules
+for each row execute function public.set_updated_at();
+
 alter table public.tenant_accounts enable row level security;
 alter table public.tenant_meta_apps enable row level security;
 alter table public.meta_connections enable row level security;
@@ -175,6 +234,8 @@ alter table public.google_connections enable row level security;
 alter table public.clarity_connections enable row level security;
 alter table public.oauth_codes enable row level security;
 alter table public.app_tokens enable row level security;
+alter table public.comment_automation_rules enable row level security;
+alter table public.comment_automation_logs enable row level security;
 
 -- The FastAPI server uses SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS.
 -- No anon/authenticated policies are created here, so browser clients cannot

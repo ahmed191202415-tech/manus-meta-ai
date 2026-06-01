@@ -34,6 +34,7 @@ from app.api.website_analysis import router as website_analysis_router
 from app.api.journey import router as journey_router
 from app.api.clarity import router as clarity_router
 from app.api.legal import router as legal_router
+from app.api.comment_automations import router as comment_automations_router
 
 openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
 
@@ -47,7 +48,7 @@ app = FastAPI(
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
     allowed_paths = {
-        "/meta/request",
+        "/comment_automations/manage",
         "/accounts",
         "/insights",
         "/campaigns",
@@ -151,3 +152,4 @@ app.include_router(website_analysis_router)
 app.include_router(journey_router)
 app.include_router(clarity_router)
 app.include_router(legal_router)
+app.include_router(comment_automations_router)

@@ -499,6 +499,146 @@ def set_selected_page(
     return rows[0] if rows else None
 
 
+def get_meta_connection_for_selected_page(tenant_id: str, page_id: str):
+    return _get_single(
+        "meta_connections",
+        params={
+            "tenant_id": f"eq.{_clean(tenant_id)}",
+            "selected_page_id": f"eq.{_clean(page_id)}",
+            "select": "*",
+            "limit": "1",
+            "order": "updated_at.desc",
+        },
+    )
+
+
+def create_comment_automation_rule(
+    tenant_id: str,
+    page_id: str,
+    page_access_token: str,
+    post_id: str,
+    keyword: str | None = None,
+    match_mode: str = "all_comments",
+    public_reply_message: str | None = None,
+    private_reply_message: str | None = None,
+    hide_comment: bool = False,
+):
+    payload = {
+        "rule_id": "rule_" + secrets.token_urlsafe(12),
+        "tenant_id": _clean(tenant_id),
+        "page_id": _clean(page_id),
+        "page_access_token": _clean(page_access_token),
+        "post_id": _clean(post_id),
+        "keyword": _clean(keyword),
+        "match_mode": _clean(match_mode) or "all_comments",
+        "public_reply_message": _clean(public_reply_message),
+        "private_reply_message": _clean(private_reply_message),
+        "hide_comment": bool(hide_comment),
+        "enabled": True,
+        "updated_at": _dt(datetime.now(timezone.utc)),
+    }
+    rows = _post("comment_automation_rules", payload, prefer="return=representation") or []
+    return rows[0] if rows else payload
+
+
+def list_comment_automation_rules(tenant_id: str, page_id: str | None = None, post_id: str | None = None, enabled: bool | None = None):
+    params = {
+        "tenant_id": f"eq.{_clean(tenant_id)}",
+        "select": "rule_id,tenant_id,page_id,post_id,keyword,match_mode,public_reply_message,private_reply_message,hide_comment,enabled,created_at,updated_at",
+        "order": "updated_at.desc",
+    }
+    if page_id:
+        params["page_id"] = f"eq.{_clean(page_id)}"
+    if post_id:
+        params["post_id"] = f"eq.{_clean(post_id)}"
+    if enabled is not None:
+        params["enabled"] = f"eq.{str(bool(enabled)).lower()}"
+    return _get_many("comment_automation_rules", params=params)
+
+
+def list_enabled_comment_automation_rules_for_post(page_id: str, post_id: str):
+    return _get_many(
+        "comment_automation_rules",
+        params={
+            "page_id": f"eq.{_clean(page_id)}",
+            "post_id": f"eq.{_clean(post_id)}",
+            "enabled": "eq.true",
+            "select": "*",
+            "order": "updated_at.desc",
+        },
+    )
+
+
+def find_tenant_meta_app_by_webhook_verify_token(verify_token: str):
+    return _get_single(
+        "tenant_meta_apps",
+        params={
+            "webhook_verify_token": f"eq.{_clean(verify_token)}",
+            "select": "tenant_id,webhook_verify_token",
+            "limit": "1",
+        },
+    )
+
+
+def set_comment_automation_rule_enabled(tenant_id: str, rule_id: str, enabled: bool):
+    rows = _patch(
+        "comment_automation_rules",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "rule_id": f"eq.{_clean(rule_id)}"},
+        payload={"enabled": bool(enabled), "updated_at": _dt(datetime.now(timezone.utc))},
+    ) or []
+    return rows[0] if rows else None
+
+
+def delete_comment_automation_rule(tenant_id: str, rule_id: str):
+    return _delete(
+        "comment_automation_rules",
+        {"tenant_id": f"eq.{_clean(tenant_id)}", "rule_id": f"eq.{_clean(rule_id)}"},
+    )
+
+
+def begin_comment_automation_log(rule: dict, event: dict):
+    payload = {
+        "log_id": "log_" + secrets.token_urlsafe(12),
+        "rule_id": _clean(rule.get("rule_id")),
+        "tenant_id": _clean(rule.get("tenant_id")),
+        "page_id": _clean(event.get("page_id")),
+        "post_id": _clean(event.get("post_id")),
+        "comment_id": _clean(event.get("comment_id")),
+        "commenter_id": _clean(event.get("commenter_id")),
+        "public_reply_status": "pending",
+        "private_reply_status": "pending",
+        "hide_status": "pending",
+    }
+    rows = _post(
+        "comment_automation_logs",
+        payload,
+        params={"on_conflict": "rule_id,comment_id"},
+        prefer="resolution=ignore-duplicates,return=representation",
+    ) or []
+    return rows[0] if rows else None
+
+
+def finish_comment_automation_log(log_id: str, payload: dict):
+    rows = _patch(
+        "comment_automation_logs",
+        params={"log_id": f"eq.{_clean(log_id)}"},
+        payload=payload,
+    ) or []
+    return rows[0] if rows else None
+
+
+def list_comment_automation_logs(tenant_id: str, limit: int = 30):
+    return _get_many(
+        "comment_automation_logs",
+        params={
+            "tenant_id": f"eq.{_clean(tenant_id)}",
+            "select": "*",
+            "order": "created_at.desc",
+            "limit": str(max(1, min(int(limit), 100))),
+        },
+    )
+
+
 def save_google_connection(tenant_id: str, payload: dict):
     clean_tenant_id = _clean(tenant_id)
     existing = get_active_google_connection_for_tenant(clean_tenant_id)
@@ -701,6 +841,8 @@ def purge_tenant_integrations(tenant_id: str):
     _delete("tenant_meta_apps", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("google_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("clarity_connections", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("comment_automation_logs", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("comment_automation_rules", {"tenant_id": f"eq.{clean_tenant_id}"})
     return True
 
 

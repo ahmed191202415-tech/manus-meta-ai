@@ -17,6 +17,7 @@ META_GRAPH_BASE = os.getenv("META_GRAPH_BASE", "https://graph.facebook.com")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 META_APP_ID = os.getenv("META_APP_ID", "")
 META_TEST_ACCESS_TOKEN = os.getenv("META_TEST_ACCESS_TOKEN", "").strip()
+META_WEBHOOK_VERIFY_TOKEN = os.getenv("META_WEBHOOK_VERIFY_TOKEN", "").strip()
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 META_OAUTH_REDIRECT_URI = os.getenv(
     "META_OAUTH_REDIRECT_URI",
@@ -24,7 +25,7 @@ META_OAUTH_REDIRECT_URI = os.getenv(
 )
 META_OAUTH_SCOPES = os.getenv(
     "META_OAUTH_SCOPES",
-    "ads_management,ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement"
+    "ads_management,ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement,pages_messaging"
 )
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")

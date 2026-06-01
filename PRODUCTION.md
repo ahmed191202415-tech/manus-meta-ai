@@ -15,6 +15,7 @@ This project is currently prepared for:
 - `SESSION_SECRET`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `META_WEBHOOK_VERIFY_TOKEN` as a long random value for Meta webhook verification
 - `GPT_OAUTH_CLIENT_ID`
 - `GPT_OAUTH_CLIENT_SECRET`
 - `ADMIN_EMAIL`
@@ -28,6 +29,7 @@ Optional:
 - `META_APP_SECRET`
 - `META_OAUTH_REDIRECT_URI`
 - `META_TEST_ACCESS_TOKEN` for temporary testing only; do not use it for multi-client production.
+- `META_WEBHOOK_VERIFY_TOKEN` for Meta webhook verification. Use a long random value.
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`
@@ -50,3 +52,17 @@ Run:
 7. Verify `/accounts`, `/campaigns`, `/ads`, `/insights`
 
 No intelligence layer should be tested before Phase 1 passes end-to-end.
+
+## Facebook comment automations
+
+To enable automatic public replies and Messenger private replies:
+
+1. Run the latest `supabase/multi_tenant_schema.sql`.
+2. Add `META_WEBHOOK_VERIFY_TOKEN` to Railway.
+3. In the Meta app Webhooks product, subscribe to the Page object and its `feed` field.
+4. Set the callback URL to `https://your-domain.com/webhooks/meta`.
+5. Use the same `META_WEBHOOK_VERIFY_TOKEN` value as the webhook verify token.
+6. Reconnect Meta so the granted scopes include `pages_messaging`.
+
+ChatGPT uses `POST /comment_automations/manage` to list pages and posts, subscribe a Page,
+create a per-post rule, inspect recent execution logs, disable a rule, or delete it.

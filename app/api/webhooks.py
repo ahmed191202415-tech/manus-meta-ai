@@ -1,93 +1,185 @@
+import hashlib
+import hmac
+from typing import Any
 
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
-from fastapi import APIRouter, HTTPException, Query, Request
-
+from app.config import IS_PRODUCTION, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN
 from app.core.meta_client import meta_call
+from app.core.oauth_store import (
+    begin_comment_automation_log,
+    find_tenant_meta_app_by_webhook_verify_token,
+    finish_comment_automation_log,
+    get_active_meta_connection_for_tenant,
+    get_tenant_meta_app,
+    list_enabled_comment_automation_rules_for_post,
+)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
-RULES_PATH = Path(r"C:\Users\AcTivE\Desktop\manus_meta_server\comment_rules.json")
-VERIFY_TOKEN = "my_verify_token_123"
+
+def _is_valid_verify_token(token: str | None) -> bool:
+    clean_token = str(token or "").strip()
+    if not clean_token:
+        return False
+    if META_WEBHOOK_VERIFY_TOKEN and clean_token == META_WEBHOOK_VERIFY_TOKEN:
+        return True
+    try:
+        return bool(find_tenant_meta_app_by_webhook_verify_token(clean_token))
+    except Exception:
+        return False
 
 
-def load_rules() -> List[Dict[str, Any]]:
-    if not RULES_PATH.exists():
-        return []
-    import json
-    return json.loads(RULES_PATH.read_text(encoding="utf-8"))
+def extract_comment_events(payload: dict[str, Any]) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    for entry in payload.get("entry", []):
+        page_id = str(entry.get("id") or "").strip()
+        for change in entry.get("changes", []):
+            value = change.get("value") or {}
+            if change.get("field") != "feed":
+                continue
+            if value.get("item") != "comment" or value.get("verb") != "add":
+                continue
+            comment_id = str(value.get("comment_id") or "").strip()
+            post_id = str(value.get("post_id") or "").strip()
+            commenter_id = str((value.get("from") or {}).get("id") or "").strip()
+            if not page_id or not post_id or not comment_id or commenter_id == page_id:
+                continue
+            events.append(
+                {
+                    "page_id": page_id,
+                    "post_id": post_id,
+                    "comment_id": comment_id,
+                    "commenter_id": commenter_id,
+                    "message": str(value.get("message") or "").strip(),
+                }
+            )
+    return events
 
 
-def save_rules(rules: List[Dict[str, Any]]) -> None:
-    import json
-    RULES_PATH.write_text(json.dumps(rules, ensure_ascii=False, indent=2), encoding="utf-8")
+def rule_matches_comment(rule: dict, event: dict) -> bool:
+    if rule.get("match_mode") == "all_comments":
+        return True
+    keyword = str(rule.get("keyword") or "").strip().casefold()
+    return bool(keyword and keyword in str(event.get("message") or "").casefold())
+
+
+def is_valid_meta_webhook_signature(payload: bytes, signature: str | None, events: list[dict[str, str]]) -> bool:
+    clean_signature = str(signature or "").strip()
+    if not clean_signature.startswith("sha256="):
+        return not IS_PRODUCTION
+    expected_digest = clean_signature.split("=", 1)[1]
+    secrets = {str(META_APP_SECRET or "").strip()}
+    for event in events:
+        for rule in list_enabled_comment_automation_rules_for_post(event["page_id"], event["post_id"]):
+            app = get_tenant_meta_app(str(rule.get("tenant_id") or ""))
+            secrets.add(str((app or {}).get("meta_app_secret") or "").strip())
+    for secret in secrets:
+        if not secret:
+            continue
+        actual_digest = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(actual_digest, expected_digest):
+            return True
+    return False
+
+
+def _meta_app_secret_for_rule(rule: dict) -> str | None:
+    connection = get_active_meta_connection_for_tenant(str(rule.get("tenant_id") or ""))
+    if not connection or connection.get("connection_mode") == "manual_token":
+        return None
+    app = get_tenant_meta_app(str(rule.get("tenant_id") or ""))
+    return str((app or {}).get("meta_app_secret") or "").strip() or None
+
+
+def _process_rule(rule: dict, event: dict) -> None:
+    log = begin_comment_automation_log(rule, event)
+    if not log:
+        return
+    page_token = str(rule.get("page_access_token") or "").strip()
+    app_secret = _meta_app_secret_for_rule(rule)
+    public_status = "skipped"
+    private_status = "skipped"
+    hide_status = "skipped"
+    errors: list[str] = []
+
+    if not page_token:
+        errors.append("Page access token is missing.")
+    else:
+        if rule.get("public_reply_message"):
+            try:
+                meta_call(
+                    "POST",
+                    f"{event['comment_id']}/comments",
+                    page_token,
+                    data={"message": rule["public_reply_message"]},
+                    app_secret=app_secret,
+                )
+                public_status = "sent"
+            except Exception as exc:
+                public_status = "failed"
+                errors.append(f"Public reply failed: {exc}")
+
+        if rule.get("private_reply_message"):
+            try:
+                meta_call(
+                    "POST",
+                    f"{event['page_id']}/private_replies",
+                    page_token,
+                    data={
+                        "object_id": event["comment_id"],
+                        "message": rule["private_reply_message"],
+                    },
+                    app_secret=app_secret,
+                )
+                private_status = "sent"
+            except Exception as exc:
+                private_status = "failed"
+                errors.append(f"Private reply failed: {exc}")
+
+        if rule.get("hide_comment"):
+            try:
+                meta_call("POST", event["comment_id"], page_token, data={"is_hidden": True}, app_secret=app_secret)
+                hide_status = "hidden"
+            except Exception as exc:
+                hide_status = "failed"
+                errors.append(f"Hide comment failed: {exc}")
+
+    finish_comment_automation_log(
+        str(log["log_id"]),
+        {
+            "public_reply_status": public_status,
+            "private_reply_status": private_status,
+            "hide_status": hide_status,
+            "error_message": " | ".join(errors)[:2000],
+        },
+    )
+
+
+def process_comment_events(payload: dict[str, Any]) -> None:
+    for event in extract_comment_events(payload):
+        rules = list_enabled_comment_automation_rules_for_post(event["page_id"], event["post_id"])
+        for rule in rules:
+            if rule_matches_comment(rule, event):
+                _process_rule(rule, event)
 
 
 @router.get("/meta")
 async def verify_webhook(
-    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
-    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
-    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
+    hub_mode: str | None = Query(None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(None, alias="hub.challenge"),
 ):
-    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
+    if hub_mode == "subscribe" and _is_valid_verify_token(hub_verify_token):
         return int(hub_challenge) if hub_challenge and hub_challenge.isdigit() else (hub_challenge or "")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
 @router.post("/meta")
-async def receive_webhook(request: Request):
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
+    raw_payload = await request.body()
     payload = await request.json()
-
-    rules = load_rules()
-
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            comment_id = value.get("comment_id") or value.get("post_id")
-            message = (value.get("message") or "").strip().lower()
-            access_token = value.get("access_token")
-
-            if not comment_id or not message or not access_token:
-                continue
-
-            for rule in rules:
-                keyword = str(rule.get("keyword", "")).strip().lower()
-                reply_message = rule.get("reply_message", "")
-                hide_comment = bool(rule.get("hide_comment", False))
-
-                if keyword and keyword in message:
-                    if reply_message:
-                        try:
-                            meta_call("POST", f"{comment_id}/comments", access_token, data={"message": reply_message})
-                        except Exception:
-                            pass
-
-                    if hide_comment:
-                        try:
-                            meta_call("POST", comment_id, access_token, data={"is_hidden": True})
-                        except Exception:
-                            pass
-
-                    break
-
+    events = extract_comment_events(payload)
+    if not is_valid_meta_webhook_signature(raw_payload, request.headers.get("x-hub-signature-256"), events):
+        raise HTTPException(status_code=403, detail="Invalid Meta webhook signature.")
+    background_tasks.add_task(process_comment_events, payload)
     return {"ok": True}
-
-
-@router.get("/rules")
-async def list_rules():
-    return {"rules": load_rules()}
-
-
-@router.post("/rules")
-async def add_rule(body: dict):
-    rules = load_rules()
-    rules.append(body)
-    save_rules(rules)
-    return {"success": True, "rules": rules}
-
-
-@router.delete("/rules")
-async def clear_rules():
-    save_rules([])
-    return {"success": True, "rules": []}
