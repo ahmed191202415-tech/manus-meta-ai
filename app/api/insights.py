@@ -1,11 +1,11 @@
 import json
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.config import DEFAULT_PAGE_LIMIT, DEFAULT_MAX_PAGES
 from app.core.auth import resolve_access_token
-from app.core.meta_client import meta_call, normalize_account_id
+from app.core.meta_client import normalize_account_id
 from app.analytics.preprocessing import DEFAULT_INSIGHTS_FIELDS, fetch_insights_payload
 
 router = APIRouter(tags=["insights"])
@@ -59,14 +59,34 @@ async def get_insights(
     if after:
         params["after"] = after
 
-    if fetch_all:
-        return fetch_insights_payload(account_id, token, params=params, max_pages=max_pages)
     try:
-        return meta_call("GET", f"{account_id}/insights", token, params=params)
-    except HTTPException:
-        payload = fetch_insights_payload(account_id, token, params=params, max_pages=min(max_pages, 3))
-        payload["data"] = payload.get("data", [])[: int(limit or DEFAULT_PAGE_LIMIT)]
+        payload = fetch_insights_payload(
+            account_id,
+            token,
+            params=params,
+            max_pages=max_pages if fetch_all else min(max_pages, 3),
+        )
+        if not fetch_all:
+            payload["data"] = payload.get("data", [])[: int(limit or DEFAULT_PAGE_LIMIT)]
         return payload
+    except Exception as exc:
+        return {
+            "data": [],
+            "available": False,
+            "source": "meta_insights",
+            "diagnostic": {
+                "message": "Meta Insights remained unavailable after the server tried direct object, lightweight, minimal, and local-filter fallbacks.",
+                "account_id": account_id,
+                "level": level,
+                "campaign_id": campaign_id,
+                "adset_id": adset_id,
+                "ad_id": ad_id,
+                "date_preset": date_preset,
+                "time_range": time_range,
+                "error": str(getattr(exc, "detail", exc))[:4000],
+                "next_step": "Use this diagnostic to identify the Meta Graph rejection. Do not retry the same broad request.",
+            },
+        }
 
 
 def _build_insights_filters(
