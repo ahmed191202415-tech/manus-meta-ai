@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.meta_requests import RawMetaRequest, ReadOnlyMetaQueryRequest
 from app.core.auth import resolve_access_token
@@ -10,7 +10,22 @@ router = APIRouter(prefix="/meta", tags=["meta"])
 
 @router.post("/query")
 async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depends(resolve_access_token)):
-    return meta_call("GET", body.path, token, params=body.params)
+    try:
+        return {
+            "ok": True,
+            "path": body.path,
+            "data": meta_call("GET", body.path, token, params=body.params),
+        }
+    except HTTPException as exc:
+        return {
+            "ok": False,
+            "path": body.path,
+            "error": exc.detail,
+            "next_step": (
+                "Inspect this Meta Graph error. If the path is an insights edge, retry only after correcting "
+                "the rejected token, permission, field, or parameter. Do not repeat the same request unchanged."
+            ),
+        }
 
 
 @router.post("/request")

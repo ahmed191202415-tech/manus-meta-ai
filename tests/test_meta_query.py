@@ -22,7 +22,7 @@ def test_meta_query_is_read_only_get(monkeypatch):
         )
     )
 
-    assert result == {"data": []}
+    assert result == {"ok": True, "path": "120246445412420505/insights", "data": {"data": []}}
     assert calls == [
         (
             "GET",
@@ -31,3 +31,23 @@ def test_meta_query_is_read_only_get(monkeypatch):
             {"date_preset": "today", "fields": "spend,impressions"},
         )
     ]
+
+
+def test_meta_query_returns_graph_error_as_data(monkeypatch):
+    monkeypatch.setattr(
+        meta_raw,
+        "meta_call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            meta_raw.HTTPException(status_code=400, detail={"message": "Invalid field", "code": 100})
+        ),
+    )
+
+    result = asyncio.run(
+        meta_raw.read_only_meta_query(
+            ReadOnlyMetaQueryRequest(path="120246445412420505/insights"),
+            token="user_token",
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == {"message": "Invalid field", "code": 100}
