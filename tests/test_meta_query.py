@@ -1,7 +1,7 @@
 import asyncio
 
 from app.api import meta_raw
-from app.schemas.meta_requests import ReadOnlyMetaQueryRequest
+from app.schemas.meta_requests import RawMetaRequest, ReadOnlyMetaQueryRequest
 
 
 def test_meta_query_is_read_only_get(monkeypatch):
@@ -71,3 +71,34 @@ def test_meta_query_uses_routed_token_for_page_reads(monkeypatch):
 
     assert result["ok"] is True
     assert calls == [("GET", "487462921107773/posts", "page_token", {"fields": "id,message"})]
+
+
+def test_meta_write_passes_explicit_page_id_to_token_router(monkeypatch):
+    routing_calls = []
+    graph_calls = []
+    monkeypatch.setattr(
+        meta_raw,
+        "choose_token_for_meta_path",
+        lambda **kwargs: routing_calls.append(kwargs) or "page_token",
+    )
+    monkeypatch.setattr(
+        meta_raw,
+        "meta_call",
+        lambda method, path, token, params=None, data=None: graph_calls.append((method, path, token, params, data)) or {"id": "reply_1"},
+    )
+
+    result = asyncio.run(
+        meta_raw.raw_meta_request(
+            RawMetaRequest(
+                method="POST",
+                path="comment_1/comments",
+                page_id="page_1",
+                data={"message": "Thanks"},
+            ),
+            token="user_token",
+        )
+    )
+
+    assert result == {"id": "reply_1"}
+    assert routing_calls[0]["page_id"] == "page_1"
+    assert graph_calls == [("POST", "comment_1/comments", "page_token", {}, {"message": "Thanks"})]

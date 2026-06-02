@@ -40,3 +40,16 @@ def test_resolve_page_token_rejects_user_token_fallback(monkeypatch):
 
 def test_campaign_insights_keep_user_token():
     assert token_router.choose_token_for_meta_path("user_token", "120246445412420505/insights", "GET") == "user_token"
+
+
+def test_explicit_page_id_routes_comment_reply_to_page_token(monkeypatch):
+    monkeypatch.setattr(token_router, "resolve_page_token_for_page_id", lambda token, page_id: f"page_token:{page_id}")
+
+    token = token_router.choose_token_for_meta_path(
+        "user_token",
+        "122203346432562448_1975696023047996/comments",
+        "POST",
+        page_id="487462921107773",
+    )
+
+    assert token == "page_token:487462921107773"

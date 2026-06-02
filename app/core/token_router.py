@@ -102,12 +102,17 @@ def choose_token_for_meta_path(
     method: str,
     params: Optional[Dict[str, Any]] = None,
     data: Optional[Dict[str, Any]] = None,
+    page_id: Optional[str] = None,
 ) -> str:
     del method, params, data
 
     clean_path = str(path or "").strip().strip("/")
     if not clean_path:
         return user_token
+
+    clean_page_id = str(page_id or "").strip()
+    if clean_page_id:
+        return resolve_page_token_for_page_id(user_token, clean_page_id)
 
     if clean_path.endswith("/leadgen_forms"):
         page_id = _first_path_segment(clean_path)

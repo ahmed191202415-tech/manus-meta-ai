@@ -12,6 +12,10 @@ class RawMetaRequest(BaseModel):
         min_length=1,
         description="Meta Graph path without domain or API version, for example act_123/campaigns, 456, or 789/feed.",
     )
+    page_id: Optional[str] = Field(
+        default=None,
+        description="Facebook Page ID when the write targets a Page post or comment. This selects the required Page access token.",
+    )
     params: Dict[str, Any] = Field(default_factory=dict, description="Optional Meta Graph query parameters.")
     data: Dict[str, Any] = Field(default_factory=dict, description="Confirmed Meta Graph write payload.")
 
@@ -25,6 +29,10 @@ class ReadOnlyMetaQueryRequest(BaseModel):
             "Meta Graph path without domain or API version. Build it from the user's question. Examples: "
             "me/adaccounts, act_123/campaigns, 456/adsets, 789/ads, 456/insights, or act_123/insights."
         ),
+    )
+    page_id: Optional[str] = Field(
+        default=None,
+        description="Facebook Page ID when reading Page posts, comments, or Page insights. This selects the required Page access token.",
     )
     params: Dict[str, Any] = Field(
         default_factory=dict,

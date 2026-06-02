@@ -122,7 +122,9 @@ def openapi_gpt_schema():
             "separate capability limits; they do not mean campaign, ad set, or ad insights are unavailable. "
             "Use /meta/request only when the user explicitly asks to create, edit, publish, pause, resume, delete, "
             "or reply through Meta. Confirm the intended write action with the user before sending it. Never use "
-            "/meta/request for ordinary analysis or discovery reads."
+            "/meta/request for ordinary analysis or discovery reads. For Facebook Page post or comment operations, "
+            "provide page_id to /meta/query or /meta/request so the server selects the Page access token. The dynamic "
+            "tools also cover media, lead forms, leads, pixels, audiences, and Instagram Graph paths when requested."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []

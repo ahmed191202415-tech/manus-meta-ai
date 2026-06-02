@@ -147,7 +147,8 @@ async def smart_meta_insights(body: SmartMetaInsightsRequest, token: str = Depen
         "from the user's request, then read Meta directly. Use discovery paths such as me/adaccounts, "
         "act_<ACCOUNT_ID>/campaigns, <CAMPAIGN_ID>/adsets, or <ADSET_ID>/ads when IDs are unknown. For performance "
         "data, prefer direct <CAMPAIGN_ID>/insights, <ADSET_ID>/insights, or <AD_ID>/insights paths once the entity "
-        "is known. This tool is read-only."
+        "is known. For Facebook Page comments or post reads, provide page_id so the server selects the Page token. "
+        "This tool is read-only."
     ),
 )
 async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depends(resolve_access_token)):
@@ -156,6 +157,7 @@ async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depe
         path=body.path,
         method="GET",
         params=body.params,
+        page_id=body.page_id,
     )
     try:
         return {
@@ -181,7 +183,8 @@ async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depe
     description=(
         "Meta Graph write tool for explicit user commands only. Use it to create, edit, publish, pause, resume, "
         "delete, or reply through Meta after confirming the intended write action with the user. Do not use this "
-        "tool for analysis or discovery reads; use /meta/query for those."
+        "tool for analysis or discovery reads; use /meta/query for those. For Page publishing, comment replies, "
+        "hiding, or deletion, provide page_id so the server selects the Page token."
     ),
 )
 async def raw_meta_request(body: RawMetaRequest, token: str = Depends(resolve_access_token)):
@@ -191,5 +194,6 @@ async def raw_meta_request(body: RawMetaRequest, token: str = Depends(resolve_ac
         method=body.method,
         params=body.params,
         data=body.data,
+        page_id=body.page_id,
     )
     return meta_call(body.method, body.path, effective_token, params=body.params, data=body.data)
