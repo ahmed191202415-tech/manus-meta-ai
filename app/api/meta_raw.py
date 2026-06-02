@@ -139,13 +139,29 @@ async def smart_meta_insights(body: SmartMetaInsightsRequest, token: str = Depen
     }
 
 
-@router.post("/query")
+@router.post(
+    "/query",
+    summary="Dynamic Meta Graph read",
+    description=(
+        "Primary Meta tool for natural-language user questions. Build the Meta Graph path and focused GET params "
+        "from the user's request, then read Meta directly. Use discovery paths such as me/adaccounts, "
+        "act_<ACCOUNT_ID>/campaigns, <CAMPAIGN_ID>/adsets, or <ADSET_ID>/ads when IDs are unknown. For performance "
+        "data, prefer direct <CAMPAIGN_ID>/insights, <ADSET_ID>/insights, or <AD_ID>/insights paths once the entity "
+        "is known. This tool is read-only."
+    ),
+)
 async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depends(resolve_access_token)):
+    effective_token = choose_token_for_meta_path(
+        user_token=token,
+        path=body.path,
+        method="GET",
+        params=body.params,
+    )
     try:
         return {
             "ok": True,
             "path": body.path,
-            "data": meta_call("GET", body.path, token, params=body.params),
+            "data": meta_call("GET", body.path, effective_token, params=body.params),
         }
     except HTTPException as exc:
         return {

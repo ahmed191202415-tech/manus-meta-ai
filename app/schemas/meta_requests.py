@@ -10,13 +10,21 @@ class RawMetaRequest(BaseModel):
 
 
 class ReadOnlyMetaQueryRequest(BaseModel):
+    """Dynamic read-only Meta Graph request for runtime discovery and fetching."""
+
     path: str = Field(
         min_length=1,
-        description="Meta Graph path only, for example act_123/insights, 456/insights, or act_123/campaigns.",
+        description=(
+            "Meta Graph path without domain or API version. Build it from the user's question. Examples: "
+            "me/adaccounts, act_123/campaigns, 456/adsets, 789/ads, 456/insights, or act_123/insights."
+        ),
     )
     params: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Meta Graph GET parameters such as fields, date_preset, time_range, level, filtering, breakdowns, and limit.",
+        description=(
+            "Focused Meta Graph GET parameters such as fields, date_preset, time_range, level, filtering, "
+            "breakdowns, and limit. Ask for a small useful field list first, then expand with another focused query."
+        ),
     )
 
 
