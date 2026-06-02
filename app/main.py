@@ -41,7 +41,7 @@ openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
 GPT_DATA_PATHS = {
     "/comment_automations/manage",
     "/accounts",
-    "/insights",
+    "/meta/smart_insights",
     "/meta/query",
     "/campaigns",
     "/adsets",
@@ -114,7 +114,11 @@ def openapi_gpt_schema():
             "Do not invent a sort field inside filters and do not fetch all rows before filtering."
             " For flexible Meta reads, use /meta/query with a precise Graph path and small field list. "
             "Prefer direct campaign_id/insights, adset_id/insights, or ad_id/insights paths when the entity is known. "
-            "The /meta/query tool is read-only: never use it for write operations."
+            "The /meta/query tool is read-only: never use it for write operations. "
+            "For normal user questions about Meta performance, use /meta/smart_insights first. It resolves the named "
+            "account and selects direct campaign, ad set, ad, or account insights automatically. Do not ask the user "
+            "to choose Graph paths. Treat Pixel or Events Manager permission errors as separate capability limits; "
+            "they do not mean campaign insights are unavailable."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []

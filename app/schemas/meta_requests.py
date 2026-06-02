@@ -20,6 +20,27 @@ class ReadOnlyMetaQueryRequest(BaseModel):
     )
 
 
+class SmartMetaInsightsRequest(BaseModel):
+    account_id: Optional[str] = Field(
+        default=None,
+        description="Optional Meta ad account ID. Pass act_123 or 123 when known.",
+    )
+    account_name: Optional[str] = Field(
+        default=None,
+        description="Optional ad account name such as BeOn. Use when the user names the account instead of its ID.",
+    )
+    campaign_id: Optional[str] = None
+    adset_id: Optional[str] = None
+    ad_id: Optional[str] = None
+    date_preset: Optional[str] = Field(default="last_7d", description="Meta date preset such as today, yesterday, last_7d, or last_30d.")
+    since: Optional[str] = Field(default=None, description="Optional YYYY-MM-DD start date. Use with until instead of date_preset.")
+    until: Optional[str] = Field(default=None, description="Optional YYYY-MM-DD end date. Use with since instead of date_preset.")
+    level: Optional[Literal["campaign", "adset", "ad"]] = None
+    time_increment: Optional[str] = Field(default=None, description="Optional Meta time increment, for example 1 for daily rows.")
+    breakdowns: Optional[str] = Field(default=None, description="Optional comma-separated Meta breakdowns.")
+    limit: int = Field(default=100, ge=1, le=500)
+
+
 class CampaignCreateRequest(BaseModel):
     account_id: str
     name: str
