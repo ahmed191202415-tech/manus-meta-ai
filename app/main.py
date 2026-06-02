@@ -36,35 +36,19 @@ from app.api.journey import router as journey_router
 from app.api.clarity import router as clarity_router
 from app.api.legal import router as legal_router
 from app.api.comment_automations import router as comment_automations_router
+from app.api.gpt_tools import router as gpt_tools_router
 
 openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
 GPT_DATA_PATHS = {
     "/comment_automations/manage",
-    "/accounts",
     "/meta/query",
     "/meta/request",
-    "/campaigns",
-    "/adsets",
-    "/ads",
-    "/adcreatives",
     "/analysis/run",
-    "/ga4/properties",
-    "/ga4/select_property",
-    "/ga4/custom_report",
-    "/clarity/behavior_audit",
-    "/ga4/landing_pages",
-    "/ga4/traffic_sources",
-    "/ga4/devices",
-    "/website/analyze",
-    "/website/tracking_audit",
-    "/website/landing_pages_audit",
-    "/website/traffic_quality",
-    "/website/device_analysis",
-    "/website/conversion_analysis",
-    "/journey/analyze",
-    "/journey/analyze_from_payload",
-    "/journey/utm_audit",
-    "/journey/decision",
+    "/tools/ga4",
+    "/tools/website",
+    "/tools/journey",
+    "/tools/clarity",
+    "/tools/reports",
 }
 
 app = FastAPI(
@@ -76,24 +60,15 @@ app = FastAPI(
 
 @app.get("/openapi-gpt.json", include_in_schema=False)
 def openapi_gpt_schema():
-    allowed_paths = GPT_DATA_PATHS | {
-        "/reports/save_excel",
-        "/reports/save_website_html",
-        "/reports/save_website_docx",
-        "/reports/save_journey_html",
-    }
-    allowed_methods = {
-        "/campaigns": {"get"},
-        "/adsets": {"get"},
-        "/ads": {"get"},
-        "/adcreatives": {"get"},
-    }
+    allowed_paths = GPT_DATA_PATHS
     schema = deepcopy(app.openapi())
     schema["info"] = {
         "title": "Super Ad Analysis GPT",
         "version": "1.0.0",
         "description": (
-            "Reduced schema for ChatGPT Actions. For Meta and journey analysis, use analyst_brief first: "
+            "Compact schema for ChatGPT Actions. Each exposed tool is a broad dispatcher backed by validated "
+            "server-side operations. Use the smallest number of calls needed for the user's question. "
+            "For Meta and journey analysis, use analyst_brief first: "
             "silently respect goal_context and adset_optimization_goal, present the executive judgement, "
             "strongest evidence, ranked_root_causes, prioritized next actions, and confidence limits. "
             "Do not judge messages campaigns mainly by purchases or website leads."
@@ -107,7 +82,8 @@ def openapi_gpt_schema():
             "Do not attempt raw Page Graph calls. If response_guard.compacted is true, continue with a smaller "
             "limit or request one specific entity instead of repeating the same broad request. For creatives, list "
             "lightweight rows first and use creative_id with include_details=true for one selected creative only. "
-            "For a GA4 page lookup, use /ga4/custom_report with a small limit and "
+            "For GA4 setup, custom reports, standard reports, funnel, realtime, or metadata, use /tools/ga4 with "
+            "the matching action. For a GA4 page lookup, use action=custom_report with a small limit and "
             'page_path_contains="the-page-fragment" instead of fetching all page URLs. '
             "For any GA4 custom question, choose the needed dimensions and metrics and use the simplified "
             "dimension_filters, metric_filters, sort, offset, and metric_aggregations fields. "
@@ -124,7 +100,9 @@ def openapi_gpt_schema():
             "or reply through Meta. Confirm the intended write action with the user before sending it. Never use "
             "/meta/request for ordinary analysis or discovery reads. For Facebook Page post or comment operations, "
             "provide page_id to /meta/query or /meta/request so the server selects the Page access token. The dynamic "
-            "tools also cover media, lead forms, leads, pixels, audiences, and Instagram Graph paths when requested."
+            "tools also cover media, lead forms, leads, pixels, audiences, and Instagram Graph paths when requested. "
+            "Use /tools/website for GA4-only site intelligence, /tools/journey for Meta plus GA4 customer-journey "
+            "analysis, /tools/clarity for behavior data, and /tools/reports for every supported report format."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
@@ -132,9 +110,6 @@ def openapi_gpt_schema():
     for path, value in schema.get("paths", {}).items():
         if path not in allowed_paths:
             continue
-        methods = allowed_methods.get(path)
-        if methods:
-            value = {method: spec for method, spec in value.items() if method in methods}
         filtered_paths[path] = value
     schema["paths"] = filtered_paths
     return schema
@@ -190,3 +165,4 @@ app.include_router(journey_router)
 app.include_router(clarity_router)
 app.include_router(legal_router)
 app.include_router(comment_automations_router)
+app.include_router(gpt_tools_router)
