@@ -86,6 +86,30 @@ def test_meta_tracking_dispatcher_routes_received_pixel_events(monkeypatch):
     assert calls[0][1] == "user_token"
 
 
+def test_meta_tracking_dispatcher_accepts_flat_pixel_id_from_chatgpt(monkeypatch):
+    async def fake_handler(body, token):
+        return {"pixel_id": body.pixel_id, "token": token}
+
+    monkeypatch.setattr(gpt_tools.pixels, "pixel_event_catalog", fake_handler)
+    result = asyncio.run(
+        gpt_tools.meta_tracking_tool(
+            MetaTrackingToolRequest(action="received_pixel_events", pixel_id="2025821897925927"),
+            token="user_token",
+        )
+    )
+
+    assert result == {"pixel_id": "2025821897925927", "token": "user_token"}
+
+
+def test_meta_tracking_schema_exposes_flat_pixel_id():
+    schema = openapi_gpt_schema()
+    properties = schema["components"]["schemas"]["MetaTrackingToolRequest"]["properties"]
+
+    assert "pixel_id" in properties
+    assert "account_id" in properties
+    assert properties["pixel_id"]["description"] == "Meta Pixel ID for received_pixel_events."
+
+
 def test_website_dispatcher_routes_focused_analysis(monkeypatch):
     async def fake_handler(body, request):
         return {"action": "device_analysis", "property_id": body.property_id}

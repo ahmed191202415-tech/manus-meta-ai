@@ -38,13 +38,43 @@ class GA4ToolRequest(GPTToolRequest):
 
 class MetaTrackingToolRequest(GPTToolRequest):
     action: Literal["list_pixels", "received_pixel_events", "custom_conversions"]
+    account_id: str | None = Field(default=None, description="Meta ad account ID for list_pixels or custom_conversions.")
+    pixel_id: str | None = Field(default=None, description="Meta Pixel ID for received_pixel_events.")
+    start_date: str | None = Field(default=None, description="Optional YYYY-MM-DD start date for received Pixel events.")
+    end_date: str | None = Field(default=None, description="Optional inclusive YYYY-MM-DD end date for received Pixel events.")
+    fallback_days: int = Field(default=28, ge=1, le=90, description="Expand an empty Pixel event lookup to this many days.")
+    include_raw: bool = Field(default=False, description="Include raw Pixel stats rows for debugging.")
+    fields: str | None = Field(default=None, description="Optional Meta fields for list_pixels or custom_conversions.")
+    limit: int = Field(default=100, ge=1, le=500, description="Maximum rows for list operations.")
+    after: str | None = Field(default=None, description="Optional Meta pagination cursor for list_pixels.")
+    fetch_all: bool = Field(default=False, description="Fetch multiple Pixel pages when true.")
+    max_pages: int = Field(default=10, ge=1, le=50, description="Maximum Pixel pages when fetch_all is true.")
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Meta tracking inputs. list_pixels and custom_conversions need account_id. received_pixel_events needs "
-            "pixel_id and optional start_date, end_date, fallback_days, include_raw."
+            "Backward-compatible nested inputs. Prefer the direct fields beside action."
         ),
     )
+
+    def merged_payload(self) -> dict[str, Any]:
+        merged = dict(self.payload)
+        for key in (
+            "account_id",
+            "pixel_id",
+            "start_date",
+            "end_date",
+            "fallback_days",
+            "include_raw",
+            "fields",
+            "limit",
+            "after",
+            "fetch_all",
+            "max_pages",
+        ):
+            value = getattr(self, key)
+            if key in self.model_fields_set and value is not None:
+                merged[key] = value
+        return merged
 
 
 class WebsiteToolRequest(GPTToolRequest):

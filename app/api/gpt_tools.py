@@ -62,23 +62,24 @@ def _required_text(payload: dict, key: str) -> str:
     ),
 )
 async def meta_tracking_tool(body: MetaTrackingToolRequest, token: str = Depends(resolve_access_token)):
+    payload = body.merged_payload()
     if body.action == "received_pixel_events":
-        return await pixels.pixel_event_catalog(_validated(PixelEventCatalogRequest, body.payload), token)
-    account_id = normalize_account_id(_required_text(body.payload, "account_id"))
+        return await pixels.pixel_event_catalog(_validated(PixelEventCatalogRequest, payload), token)
+    account_id = normalize_account_id(_required_text(payload, "account_id"))
     if body.action == "custom_conversions":
         return meta_call(
             "GET",
             f"{account_id}/customconversions",
             token,
-            params={"fields": body.payload.get("fields", "id,name,custom_event_type,rule,creation_time"), "limit": body.payload.get("limit", 100)},
+            params={"fields": payload.get("fields") or "id,name,custom_event_type,rule,creation_time", "limit": payload.get("limit", 100)},
         )
     return await pixels.list_pixels(
         account_id=account_id,
-        fields=body.payload.get("fields", "id,name,last_fired_time,creation_time,owner_ad_account,event_stats"),
-        limit=body.payload.get("limit", 100),
-        after=body.payload.get("after"),
-        fetch_all=body.payload.get("fetch_all", False),
-        max_pages=body.payload.get("max_pages", 10),
+        fields=payload.get("fields") or "id,name,last_fired_time,creation_time,owner_ad_account,event_stats",
+        limit=payload.get("limit", 100),
+        after=payload.get("after"),
+        fetch_all=payload.get("fetch_all", False),
+        max_pages=payload.get("max_pages", 10),
         token=token,
     )
 
