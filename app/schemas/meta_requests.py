@@ -3,10 +3,17 @@ from pydantic import BaseModel, Field
 
 
 class RawMetaRequest(BaseModel):
-    method: Literal["GET", "POST", "DELETE"] = "GET"
-    path: str
-    params: Dict[str, Any] = Field(default_factory=dict)
-    data: Dict[str, Any] = Field(default_factory=dict)
+    """Dynamic Meta Graph write request for explicit user commands."""
+
+    method: Literal["POST", "DELETE"] = Field(
+        description="Meta Graph write method. Use POST for create, update, publish, pause, resume, or reply; DELETE for deletion.",
+    )
+    path: str = Field(
+        min_length=1,
+        description="Meta Graph path without domain or API version, for example act_123/campaigns, 456, or 789/feed.",
+    )
+    params: Dict[str, Any] = Field(default_factory=dict, description="Optional Meta Graph query parameters.")
+    data: Dict[str, Any] = Field(default_factory=dict, description="Confirmed Meta Graph write payload.")
 
 
 class ReadOnlyMetaQueryRequest(BaseModel):

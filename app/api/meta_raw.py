@@ -175,7 +175,15 @@ async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depe
         }
 
 
-@router.post("/request")
+@router.post(
+    "/request",
+    summary="Dynamic Meta Graph write",
+    description=(
+        "Meta Graph write tool for explicit user commands only. Use it to create, edit, publish, pause, resume, "
+        "delete, or reply through Meta after confirming the intended write action with the user. Do not use this "
+        "tool for analysis or discovery reads; use /meta/query for those."
+    ),
+)
 async def raw_meta_request(body: RawMetaRequest, token: str = Depends(resolve_access_token)):
     effective_token = choose_token_for_meta_path(
         user_token=token,

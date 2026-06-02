@@ -42,6 +42,7 @@ GPT_DATA_PATHS = {
     "/comment_automations/manage",
     "/accounts",
     "/meta/query",
+    "/meta/request",
     "/campaigns",
     "/adsets",
     "/ads",
@@ -118,7 +119,10 @@ def openapi_gpt_schema():
             "<adset_id>/insights, or <ad_id>/insights once the entity is known. Request only the fields needed for "
             "the answer and expand with a second focused /meta/query call when needed. The /meta/query tool is "
             "read-only: never use it for write operations. Treat Pixel or Events Manager permission errors as "
-            "separate capability limits; they do not mean campaign, ad set, or ad insights are unavailable."
+            "separate capability limits; they do not mean campaign, ad set, or ad insights are unavailable. "
+            "Use /meta/request only when the user explicitly asks to create, edit, publish, pause, resume, delete, "
+            "or reply through Meta. Confirm the intended write action with the user before sending it. Never use "
+            "/meta/request for ordinary analysis or discovery reads."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
