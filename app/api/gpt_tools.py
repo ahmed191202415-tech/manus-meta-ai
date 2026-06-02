@@ -94,7 +94,7 @@ async def meta_tracking_tool(body: MetaTrackingToolRequest, token: str = Depends
     ),
 )
 async def ga4_tool(body: GA4ToolRequest, request: Request):
-    payload = body.payload
+    payload = body.merged_payload()
     if body.action == "list_properties":
         return await ga4.ga4_properties(request, payload.get("tenant_id"))
     if body.action == "select_property":
@@ -104,11 +104,14 @@ async def ga4_tool(body: GA4ToolRequest, request: Request):
     if body.action == "funnel":
         return await ga4.ga4_funnel(_validated(GA4FunnelReportRequest, payload), request)
     if body.action == "realtime":
+        dimensions = payload.get("dimensions")
+        if isinstance(dimensions, list):
+            dimensions = ",".join(str(item) for item in dimensions)
         return await ga4.ga4_realtime(
             request,
             payload.get("tenant_id"),
             payload.get("property_id"),
-            payload.get("dimensions"),
+            dimensions,
             payload.get("limit", 100),
         )
     if body.action == "metadata":
@@ -145,7 +148,7 @@ async def _ga4_standard_report(action: str, payload: dict, request: Request):
     ),
 )
 async def website_tool(body: WebsiteToolRequest, request: Request):
-    validated = _validated(WebsiteAnalysisRequest, body.payload)
+    validated = _validated(WebsiteAnalysisRequest, body.merged_payload())
     handler = {
         "analyze": website_analysis.website_analyze,
         "tracking_audit": website_analysis.website_tracking_audit,
@@ -167,11 +170,12 @@ async def website_tool(body: WebsiteToolRequest, request: Request):
     ),
 )
 async def journey_tool(body: JourneyToolRequest, request: Request):
+    payload = body.merged_payload()
     if body.action == "analyze_from_payload":
-        return await journey.journey_analyze_from_payload(_validated(JourneyPayloadAnalysisRequest, body.payload), request)
+        return await journey.journey_analyze_from_payload(_validated(JourneyPayloadAnalysisRequest, payload), request)
     if body.action == "utm_audit":
-        return await journey.journey_utm_audit(_validated(MetaTrackingAuditRequest, body.payload), request)
-    validated = _validated(JourneyAnalysisRequest, body.payload)
+        return await journey.journey_utm_audit(_validated(MetaTrackingAuditRequest, payload), request)
+    validated = _validated(JourneyAnalysisRequest, payload)
     handler = {
         "analyze": journey.journey_analyze,
         "tracking_integrity": journey.journey_tracking_integrity,
@@ -190,9 +194,10 @@ async def journey_tool(body: JourneyToolRequest, request: Request):
     ),
 )
 async def clarity_tool(body: ClarityToolRequest, request: Request):
+    payload = body.merged_payload()
     if body.action == "behavior_audit":
-        return await clarity.clarity_behavior_audit(_validated(ClarityBehaviorAuditRequest, body.payload), request)
-    validated = _validated(ClarityRequest, body.payload)
+        return await clarity.clarity_behavior_audit(_validated(ClarityBehaviorAuditRequest, payload), request)
+    validated = _validated(ClarityRequest, payload)
     if body.action == "pages":
         return await clarity.clarity_pages(validated, request)
     return await clarity.clarity_summary(validated, request)
@@ -222,4 +227,4 @@ async def report_tool(body: ReportToolRequest):
         "journey_pdf": (reports.save_journey_pdf_report, IntelligenceReportRequest),
         "journey_docx": (reports.save_journey_docx_report, IntelligenceReportRequest),
     }[body.action]
-    return await handler(_validated(model, body.payload))
+    return await handler(_validated(model, body.merged_payload()))

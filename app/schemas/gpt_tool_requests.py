@@ -10,6 +10,14 @@ class GPTToolRequest(BaseModel):
         description="Action-specific inputs. The server validates this payload before running the selected operation.",
     )
 
+    def merge_direct_fields(self, *keys: str) -> dict[str, Any]:
+        merged = dict(self.payload)
+        for key in keys:
+            value = getattr(self, key)
+            if key in self.model_fields_set and value is not None:
+                merged[key] = value
+        return merged
+
 
 class GA4ToolRequest(GPTToolRequest):
     action: Literal[
@@ -24,6 +32,23 @@ class GA4ToolRequest(GPTToolRequest):
         "events",
         "devices",
     ]
+    tenant_id: str | None = Field(default=None, description="Optional tenant ID.")
+    property_id: str | None = Field(default=None, description="GA4 Property ID. Required unless a selected Property is saved.")
+    property_name: str | None = Field(default=None, description="Optional GA4 Property display name for select_property.")
+    start_date: str | None = Field(default=None, description="GA4 start date such as 30daysAgo or YYYY-MM-DD.")
+    end_date: str | None = Field(default=None, description="GA4 end date such as today or YYYY-MM-DD.")
+    dimensions: list[str] | str | None = Field(default=None, description="GA4 dimensions. For realtime, a comma-separated string is also accepted.")
+    metrics: list[str] | None = Field(default=None, description="GA4 metrics for custom_report.")
+    page_path_contains: str | None = Field(default=None, description="Optional page URL/path fragment for custom_report.")
+    dimension_filters: list[dict[str, Any]] | None = Field(default=None, description="Typed GA4 dimension filters for custom_report.")
+    metric_filters: list[dict[str, Any]] | None = Field(default=None, description="Typed GA4 metric filters for custom_report.")
+    sort: list[dict[str, Any]] | None = Field(default=None, description="Typed GA4 sorting for custom_report.")
+    filters: dict[str, Any] | None = Field(default=None, description="Advanced GA4 filters for custom_report.")
+    order_by: list[dict[str, Any]] | None = Field(default=None, description="Advanced GA4 ordering for custom_report.")
+    offset: int | None = Field(default=None, ge=0, le=100000, description="GA4 custom_report row offset.")
+    metric_aggregations: list[Literal["TOTAL", "MINIMUM", "MAXIMUM", "COUNT"]] | None = Field(default=None, description="Optional GA4 aggregations.")
+    steps: list[dict[str, Any]] | None = Field(default=None, description="Funnel steps with name and event_name.")
+    limit: int | None = Field(default=None, ge=1, le=1000, description="Maximum report rows.")
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -34,6 +59,13 @@ class GA4ToolRequest(GPTToolRequest):
             "select_property accepts property_id and optional property_name. realtime accepts optional dimensions."
         ),
     )
+
+    def merged_payload(self) -> dict[str, Any]:
+        return self.merge_direct_fields(
+            "tenant_id", "property_id", "property_name", "start_date", "end_date", "dimensions", "metrics",
+            "page_path_contains", "dimension_filters", "metric_filters", "sort", "filters", "order_by", "offset",
+            "metric_aggregations", "steps", "limit",
+        )
 
 
 class MetaTrackingToolRequest(GPTToolRequest):
@@ -57,8 +89,7 @@ class MetaTrackingToolRequest(GPTToolRequest):
     )
 
     def merged_payload(self) -> dict[str, Any]:
-        merged = dict(self.payload)
-        for key in (
+        return self.merge_direct_fields(
             "account_id",
             "pixel_id",
             "start_date",
@@ -70,11 +101,7 @@ class MetaTrackingToolRequest(GPTToolRequest):
             "after",
             "fetch_all",
             "max_pages",
-        ):
-            value = getattr(self, key)
-            if key in self.model_fields_set and value is not None:
-                merged[key] = value
-        return merged
+        )
 
 
 class WebsiteToolRequest(GPTToolRequest):
@@ -86,6 +113,11 @@ class WebsiteToolRequest(GPTToolRequest):
         "device_analysis",
         "conversion_analysis",
     ]
+    tenant_id: str | None = Field(default=None, description="Optional tenant ID.")
+    property_id: str | None = Field(default=None, description="GA4 Property ID. Uses the selected Property when omitted.")
+    start_date: str | None = Field(default=None, description="GA4 start date such as 30daysAgo or YYYY-MM-DD.")
+    end_date: str | None = Field(default=None, description="GA4 end date such as today or YYYY-MM-DD.")
+    limit: int | None = Field(default=None, ge=1, le=1000, description="Maximum rows per website report.")
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -93,6 +125,9 @@ class WebsiteToolRequest(GPTToolRequest):
             'Example: {"property_id":"123","start_date":"30daysAgo","end_date":"today","limit":100}.'
         ),
     )
+
+    def merged_payload(self) -> dict[str, Any]:
+        return self.merge_direct_fields("tenant_id", "property_id", "start_date", "end_date", "limit")
 
 
 class JourneyToolRequest(GPTToolRequest):
@@ -104,6 +139,24 @@ class JourneyToolRequest(GPTToolRequest):
         "utm_audit",
         "decision",
     ]
+    tenant_id: str | None = Field(default=None, description="Optional tenant ID.")
+    meta_account_id: str | None = Field(default=None, description="Meta ad account ID.")
+    ga4_property_id: str | None = Field(default=None, description="Optional GA4 Property ID.")
+    campaign_id: str | None = Field(default=None, description="Optional Meta Campaign ID.")
+    campaign_name: str | None = Field(default=None, description="Optional Meta Campaign name.")
+    adset_id: str | None = Field(default=None, description="Optional Meta Ad Set ID.")
+    ad_id: str | None = Field(default=None, description="Optional Meta Ad ID.")
+    auto_select_latest_campaign: bool | None = Field(default=None, description="Select the latest campaign when no campaign filter is provided.")
+    include_clarity: bool | None = Field(default=None, description="Include Clarity behavior when available.")
+    clarity_num_of_days: int | None = Field(default=None, ge=1, le=3, description="Clarity lookback days.")
+    start_date: str | None = Field(default=None, description="GA4 start date.")
+    end_date: str | None = Field(default=None, description="GA4 end date.")
+    date_preset: str | None = Field(default=None, description="Meta date preset.")
+    level: Literal["campaign", "adset", "ad"] | None = Field(default=None, description="Meta analysis level.")
+    meta_rows: list[dict[str, Any]] | None = Field(default=None, description="Optional external Meta rows for analyze_from_payload.")
+    creative_rows: list[dict[str, Any]] | None = Field(default=None, description="Optional external creative rows.")
+    link_rows: list[dict[str, Any]] | None = Field(default=None, description="Optional external tracking-link rows.")
+    limit: int | None = Field(default=None, ge=1, le=1000, description="Maximum rows.")
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -114,9 +167,22 @@ class JourneyToolRequest(GPTToolRequest):
         ),
     )
 
+    def merged_payload(self) -> dict[str, Any]:
+        return self.merge_direct_fields(
+            "tenant_id", "meta_account_id", "ga4_property_id", "campaign_id", "campaign_name", "adset_id", "ad_id",
+            "auto_select_latest_campaign", "include_clarity", "clarity_num_of_days", "start_date", "end_date",
+            "date_preset", "level", "meta_rows", "creative_rows", "link_rows", "limit",
+        )
+
 
 class ClarityToolRequest(GPTToolRequest):
     action: Literal["summary", "pages", "behavior_audit"]
+    tenant_id: str | None = Field(default=None, description="Optional tenant ID.")
+    num_of_days: int | None = Field(default=None, ge=1, le=3, description="Clarity lookback days.")
+    dimensions: list[str] | None = Field(default=None, max_length=3, description="Optional Clarity dimensions.")
+    include_raw: bool | None = Field(default=None, description="Include raw Clarity rows.")
+    row_limit: int | None = Field(default=None, ge=0, le=100, description="Maximum returned rows.")
+    focus_url: str | None = Field(default=None, description="Optional URL fragment for behavior_audit.")
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -124,6 +190,9 @@ class ClarityToolRequest(GPTToolRequest):
             "focus_url for behavior_audit. Keep row_limit small first."
         ),
     )
+
+    def merged_payload(self) -> dict[str, Any]:
+        return self.merge_direct_fields("tenant_id", "num_of_days", "dimensions", "include_raw", "row_limit", "focus_url")
 
 
 class ReportToolRequest(GPTToolRequest):
@@ -142,6 +211,14 @@ class ReportToolRequest(GPTToolRequest):
         "journey_pdf",
         "journey_docx",
     ]
+    file_name: str | None = Field(default=None, description="Optional output file name.")
+    title: str | None = Field(default=None, description="Report title for custom formats.")
+    subtitle: str | None = Field(default=None, description="Optional report subtitle.")
+    sheets: list[dict[str, Any]] | None = Field(default=None, description="Excel sheet definitions.")
+    sections: list[dict[str, Any]] | None = Field(default=None, description="PDF, DOCX, or HTML sections.")
+    slides: list[dict[str, Any]] | None = Field(default=None, description="PPTX slide definitions.")
+    kpis: list[dict[str, Any]] | None = Field(default=None, description="HTML dashboard KPI definitions.")
+    report_payload: dict[str, Any] | None = Field(default=None, description="Website or Journey analysis result for intelligence formats.")
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -150,3 +227,9 @@ class ReportToolRequest(GPTToolRequest):
             "html_dashboard accepts title, kpis, and sections."
         ),
     )
+
+    def merged_payload(self) -> dict[str, Any]:
+        merged = self.merge_direct_fields("file_name", "title", "subtitle", "sheets", "sections", "slides", "kpis")
+        if "report_payload" in self.model_fields_set and self.report_payload is not None:
+            merged["payload"] = self.report_payload
+        return merged
