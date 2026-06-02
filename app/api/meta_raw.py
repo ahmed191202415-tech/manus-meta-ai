@@ -143,12 +143,9 @@ async def smart_meta_insights(body: SmartMetaInsightsRequest, token: str = Depen
     "/query",
     summary="Dynamic Meta Graph read",
     description=(
-        "Primary Meta tool for natural-language user questions. Build the Meta Graph path and focused GET params "
-        "from the user's request, then read Meta directly. Use discovery paths such as me/adaccounts, "
-        "act_<ACCOUNT_ID>/campaigns, <CAMPAIGN_ID>/adsets, or <ADSET_ID>/ads when IDs are unknown. For performance "
-        "data, prefer direct <CAMPAIGN_ID>/insights, <ADSET_ID>/insights, or <AD_ID>/insights paths once the entity "
-        "is known. For Facebook Page comments or post reads, provide page_id so the server selects the Page token. "
-        "This tool is read-only."
+        "Primary read-only Meta Graph tool. Build a focused path and GET params from the user's question. "
+        "Discover IDs when needed, then read accounts, campaigns, ads, insights, media, leads, pages, or comments. "
+        "For Page data, provide page_id."
     ),
 )
 async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depends(resolve_access_token)):
@@ -181,10 +178,8 @@ async def read_only_meta_query(body: ReadOnlyMetaQueryRequest, token: str = Depe
     "/request",
     summary="Dynamic Meta Graph write",
     description=(
-        "Meta Graph write tool for explicit user commands only. Use it to create, edit, publish, pause, resume, "
-        "delete, or reply through Meta after confirming the intended write action with the user. Do not use this "
-        "tool for analysis or discovery reads; use /meta/query for those. For Page publishing, comment replies, "
-        "hiding, or deletion, provide page_id so the server selects the Page token."
+        "Meta Graph write tool for confirmed user commands only. Create, edit, publish, pause, resume, delete, "
+        "or reply through Meta. Use /meta/query for reads. For Page posts or comments, provide page_id."
     ),
 )
 async def raw_meta_request(body: RawMetaRequest, token: str = Depends(resolve_access_token)):

@@ -30,6 +30,16 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_only():
     assert "/page_posts" in app.openapi()["paths"]
 
 
+def test_gpt_operation_descriptions_fit_chatgpt_import_limit():
+    schema = openapi_gpt_schema()
+
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            assert len(operation.get("description", "")) <= 300, f"{method.upper()} {path} description is too long"
+
+
 def test_ga4_dispatcher_routes_custom_report(monkeypatch):
     calls = []
 
