@@ -36,6 +36,17 @@ class GA4ToolRequest(GPTToolRequest):
     )
 
 
+class MetaTrackingToolRequest(GPTToolRequest):
+    action: Literal["list_pixels", "received_pixel_events", "custom_conversions"]
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Meta tracking inputs. list_pixels and custom_conversions need account_id. received_pixel_events needs "
+            "pixel_id and optional start_date, end_date, fallback_days, include_raw."
+        ),
+    )
+
+
 class WebsiteToolRequest(GPTToolRequest):
     action: Literal[
         "analyze",

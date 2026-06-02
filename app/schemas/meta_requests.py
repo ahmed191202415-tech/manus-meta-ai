@@ -134,5 +134,13 @@ class PixelCreateRequest(BaseModel):
     extra_params: Dict[str, Any] = Field(default_factory=dict)
 
 
+class PixelEventCatalogRequest(BaseModel):
+    pixel_id: str = Field(min_length=1, description="Meta Pixel ID.")
+    start_date: Optional[str] = Field(default=None, description="Optional YYYY-MM-DD start date. Defaults to the last 28 days.")
+    end_date: Optional[str] = Field(default=None, description="Optional inclusive YYYY-MM-DD end date. Defaults to today.")
+    fallback_days: int = Field(default=28, ge=1, le=90, description="Expand to this many days when the requested range has no named events.")
+    include_raw: bool = Field(default=False, description="Include raw Meta stats rows for debugging.")
+
+
 class AudienceUsersRequest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)

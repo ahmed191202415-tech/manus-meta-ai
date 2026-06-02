@@ -6,6 +6,7 @@ from app.schemas.gpt_tool_requests import (
     ClarityToolRequest,
     GA4ToolRequest,
     JourneyToolRequest,
+    MetaTrackingToolRequest,
     ReportToolRequest,
     WebsiteToolRequest,
 )
@@ -20,6 +21,7 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_only():
         "/meta/request",
         "/comment_automations/manage",
         "/tools/ga4",
+        "/tools/meta_tracking",
         "/tools/website",
         "/tools/journey",
         "/tools/clarity",
@@ -62,6 +64,26 @@ def test_ga4_dispatcher_routes_custom_report(monkeypatch):
     assert result == {"ok": True}
     assert calls[0][0].dimensions == ["eventName"]
     assert calls[0][1] is request
+
+
+def test_meta_tracking_dispatcher_routes_received_pixel_events(monkeypatch):
+    calls = []
+
+    async def fake_handler(body, token):
+        calls.append((body, token))
+        return {"event_names": ["PageView", "Lead"]}
+
+    monkeypatch.setattr(gpt_tools.pixels, "pixel_event_catalog", fake_handler)
+    result = asyncio.run(
+        gpt_tools.meta_tracking_tool(
+            MetaTrackingToolRequest(action="received_pixel_events", payload={"pixel_id": "123"}),
+            token="user_token",
+        )
+    )
+
+    assert result == {"event_names": ["PageView", "Lead"]}
+    assert calls[0][0].pixel_id == "123"
+    assert calls[0][1] == "user_token"
 
 
 def test_website_dispatcher_routes_focused_analysis(monkeypatch):

@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from app.api import clarity, ga4, journey, reports, website_analysis
+from app.api import clarity, ga4, journey, pixels, reports, website_analysis
+from app.core.auth import resolve_access_token
+from app.core.meta_client import meta_call, normalize_account_id
 from app.schemas.clarity_requests import ClarityBehaviorAuditRequest, ClarityRequest
 from app.schemas.ga4_requests import (
     GA4CustomReportRequest,
@@ -17,9 +19,11 @@ from app.schemas.gpt_tool_requests import (
     ClarityToolRequest,
     GA4ToolRequest,
     JourneyToolRequest,
+    MetaTrackingToolRequest,
     ReportToolRequest,
     WebsiteToolRequest,
 )
+from app.schemas.meta_requests import PixelEventCatalogRequest
 from app.schemas.report_requests import (
     IntelligenceReportRequest,
     SaveDocxReportRequest,
@@ -40,6 +44,43 @@ def _validated(model: type[BaseModel], payload: dict) -> BaseModel:
             status_code=422,
             detail={"message": "Invalid payload for the selected action.", "errors": exc.errors()},
         ) from exc
+
+
+def _required_text(payload: dict, key: str) -> str:
+    value = str(payload.get(key) or "").strip()
+    if not value:
+        raise HTTPException(status_code=422, detail=f"{key} is required for the selected action.")
+    return value
+
+
+@router.post(
+    "/meta_tracking",
+    summary="Meta tracking operations",
+    description=(
+        "Unified Meta tracking read tool. List Pixels, read received Pixel event names from Pixel stats, or list "
+        "Custom Conversions. Use received_pixel_events when the user asks which events Meta actually received."
+    ),
+)
+async def meta_tracking_tool(body: MetaTrackingToolRequest, token: str = Depends(resolve_access_token)):
+    if body.action == "received_pixel_events":
+        return await pixels.pixel_event_catalog(_validated(PixelEventCatalogRequest, body.payload), token)
+    account_id = normalize_account_id(_required_text(body.payload, "account_id"))
+    if body.action == "custom_conversions":
+        return meta_call(
+            "GET",
+            f"{account_id}/customconversions",
+            token,
+            params={"fields": body.payload.get("fields", "id,name,custom_event_type,rule,creation_time"), "limit": body.payload.get("limit", 100)},
+        )
+    return await pixels.list_pixels(
+        account_id=account_id,
+        fields=body.payload.get("fields", "id,name,last_fired_time,creation_time,owner_ad_account,event_stats"),
+        limit=body.payload.get("limit", 100),
+        after=body.payload.get("after"),
+        fetch_all=body.payload.get("fetch_all", False),
+        max_pages=body.payload.get("max_pages", 10),
+        token=token,
+    )
 
 
 @router.post(
