@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from app.api import clarity, ga4, journey, pixels, reports, website_analysis
+from app.api import clarity, ga4, journey, leadgen, pixels, reports, website_analysis
 from app.core.auth import resolve_access_token
 from app.core.meta_client import meta_call, normalize_account_id
+from app.core.token_router import resolve_page_token_for_page_id
 from app.schemas.clarity_requests import ClarityBehaviorAuditRequest, ClarityRequest
 from app.schemas.ga4_requests import (
     GA4CustomReportRequest,
@@ -53,6 +54,14 @@ def _required_text(payload: dict, key: str) -> str:
     return value
 
 
+LEAD_ACCESS_REQUIRED_PERMISSIONS = [
+    "leads_retrieval",
+    "pages_manage_ads",
+    "pages_show_list",
+    "pages_read_engagement",
+]
+
+
 @router.post(
     "/meta_tracking",
     summary="Meta tracking operations",
@@ -65,6 +74,32 @@ async def meta_tracking_tool(body: MetaTrackingToolRequest, token: str = Depends
     payload = body.merged_payload()
     if body.action == "received_pixel_events":
         return await pixels.pixel_event_catalog(_validated(PixelEventCatalogRequest, payload), token)
+    if body.action == "diagnose_lead_access":
+        return _diagnose_lead_access(payload, token)
+    if body.action == "lead_forms":
+        page_id = _required_text(payload, "page_id")
+        return await leadgen.list_leadgen_forms(
+            page_id=page_id,
+            fields=payload.get("fields") or "id,name,status,created_time,leads_count,questions,privacy_policy_url",
+            limit=payload.get("limit", 100),
+            after=payload.get("after"),
+            fetch_all=payload.get("fetch_all", False),
+            max_pages=payload.get("max_pages", 10),
+            token=token,
+        )
+    if body.action == "form_leads":
+        form_id = _required_text(payload, "form_id")
+        page_id = _required_text(payload, "page_id")
+        page_token = resolve_page_token_for_page_id(token, page_id)
+        return meta_call(
+            "GET",
+            f"{form_id}/leads",
+            page_token,
+            params={
+                "fields": payload.get("fields") or "id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data,platform,is_organic",
+                "limit": payload.get("limit", 100),
+            },
+        )
     account_id = normalize_account_id(_required_text(payload, "account_id"))
     if body.action == "custom_conversions":
         return meta_call(
@@ -82,6 +117,45 @@ async def meta_tracking_tool(body: MetaTrackingToolRequest, token: str = Depends
         max_pages=payload.get("max_pages", 10),
         token=token,
     )
+
+
+def _diagnose_lead_access(payload: dict, token: str) -> dict:
+    page_id = str(payload.get("page_id") or "").strip()
+    permissions_payload = {}
+    permissions_error = None
+    try:
+        permissions_payload = meta_call("GET", "me/permissions", token)
+    except HTTPException as exc:
+        permissions_error = exc.detail
+    granted = sorted(
+        item.get("permission")
+        for item in permissions_payload.get("data", [])
+        if item.get("status") == "granted" and item.get("permission")
+    )
+    missing = [permission for permission in LEAD_ACCESS_REQUIRED_PERMISSIONS if permission not in granted]
+    page_token_available = False
+    page_token_error = None
+    if page_id:
+        try:
+            resolve_page_token_for_page_id(token, page_id)
+            page_token_available = True
+        except HTTPException as exc:
+            page_token_error = exc.detail
+    return {
+        "source": "meta_lead_ads_access",
+        "page_id": page_id or None,
+        "granted_permissions": granted,
+        "missing_required_permissions": missing,
+        "page_token_available": page_token_available,
+        "permissions_error": permissions_error,
+        "page_token_error": page_token_error,
+        "can_read_lead_forms": not missing and (page_token_available if page_id else True),
+        "next_steps": [
+            "Add pages_manage_ads to META_OAUTH_SCOPES and reconnect Meta.",
+            "In Meta App Review, request advanced access for pages_manage_ads and leads_retrieval for real clients.",
+            "Make sure the connected user has Page task access and Leads Access for the Page.",
+        ] if missing or page_token_error else [],
+    }
 
 
 @router.post(

@@ -69,8 +69,17 @@ class GA4ToolRequest(GPTToolRequest):
 
 
 class MetaTrackingToolRequest(GPTToolRequest):
-    action: Literal["list_pixels", "received_pixel_events", "custom_conversions"]
+    action: Literal[
+        "list_pixels",
+        "received_pixel_events",
+        "custom_conversions",
+        "diagnose_lead_access",
+        "lead_forms",
+        "form_leads",
+    ]
     account_id: str | None = Field(default=None, description="Meta ad account ID for list_pixels or custom_conversions.")
+    page_id: str | None = Field(default=None, description="Facebook Page ID for Lead Forms or Page-scoped reads.")
+    form_id: str | None = Field(default=None, description="Meta Lead Gen Form ID for form_leads.")
     pixel_id: str | None = Field(default=None, description="Meta Pixel ID for received_pixel_events.")
     start_date: str | None = Field(default=None, description="Optional YYYY-MM-DD start date for received Pixel events.")
     end_date: str | None = Field(default=None, description="Optional inclusive YYYY-MM-DD end date for received Pixel events.")
@@ -91,6 +100,8 @@ class MetaTrackingToolRequest(GPTToolRequest):
     def merged_payload(self) -> dict[str, Any]:
         return self.merge_direct_fields(
             "account_id",
+            "page_id",
+            "form_id",
             "pixel_id",
             "start_date",
             "end_date",

@@ -178,6 +178,68 @@ def test_meta_tracking_schema_exposes_flat_pixel_id():
     assert properties["pixel_id"]["description"] == "Meta Pixel ID for received_pixel_events."
 
 
+def test_meta_tracking_schema_exposes_lead_ads_actions_and_fields():
+    schema = openapi_gpt_schema()
+    properties = schema["components"]["schemas"]["MetaTrackingToolRequest"]["properties"]
+
+    for action in ("diagnose_lead_access", "lead_forms", "form_leads"):
+        assert action in properties["action"]["enum"]
+    for key in ("page_id", "form_id"):
+        assert key in properties
+
+
+def test_meta_tracking_diagnoses_missing_pages_manage_ads(monkeypatch):
+    def fake_meta_call(method, path, token, params=None):
+        if path == "me/permissions":
+            return {
+                "data": [
+                    {"permission": "leads_retrieval", "status": "granted"},
+                    {"permission": "pages_show_list", "status": "granted"},
+                    {"permission": "pages_read_engagement", "status": "granted"},
+                ]
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(gpt_tools, "meta_call", fake_meta_call)
+    monkeypatch.setattr(gpt_tools, "resolve_page_token_for_page_id", lambda token, page_id: "page_token")
+    result = asyncio.run(
+        gpt_tools.meta_tracking_tool(
+            MetaTrackingToolRequest(action="diagnose_lead_access", page_id="487462921107773"),
+            token="user_token",
+        )
+    )
+
+    assert result["missing_required_permissions"] == ["pages_manage_ads"]
+    assert result["can_read_lead_forms"] is False
+    assert "Add pages_manage_ads" in result["next_steps"][0]
+
+
+def test_meta_tracking_form_leads_use_page_token(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gpt_tools, "resolve_page_token_for_page_id", lambda token, page_id: "page_token")
+    monkeypatch.setattr(
+        gpt_tools,
+        "meta_call",
+        lambda method, path, token, params=None: calls.append((method, path, token, params)) or {"data": []},
+    )
+
+    result = asyncio.run(
+        gpt_tools.meta_tracking_tool(
+            MetaTrackingToolRequest(
+                action="form_leads",
+                page_id="487462921107773",
+                form_id="2028631861367601",
+                limit=25,
+            ),
+            token="user_token",
+        )
+    )
+
+    assert result == {"data": []}
+    assert calls[0][0:3] == ("GET", "2028631861367601/leads", "page_token")
+    assert calls[0][3]["limit"] == 25
+
+
 def test_website_dispatcher_routes_focused_analysis(monkeypatch):
     async def fake_handler(body, request):
         return {"action": "device_analysis", "property_id": body.property_id}
