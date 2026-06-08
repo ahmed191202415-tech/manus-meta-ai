@@ -19,6 +19,7 @@ from app.schemas.ga4_requests import (
 from app.schemas.gpt_tool_requests import (
     ClarityToolRequest,
     GA4ToolRequest,
+    IntentToolRequest,
     JourneyToolRequest,
     MetaTrackingToolRequest,
     ReportToolRequest,
@@ -52,6 +53,362 @@ def _required_text(payload: dict, key: str) -> str:
     if not value:
         raise HTTPException(status_code=422, detail=f"{key} is required for the selected action.")
     return value
+
+
+def _has_any(text: str, *needles: str) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _clean_dict(payload: dict) -> dict:
+    return {
+        key: value
+        for key, value in payload.items()
+        if value not in (None, "", [], {})
+    }
+
+
+def _tool_plan(
+    intent: str,
+    confidence: str,
+    path: str,
+    body: dict,
+    *,
+    needs: list[str] | None = None,
+    notes: list[str] | None = None,
+    steps: list[dict] | None = None,
+) -> dict:
+    compact_body = _clean_dict(body)
+    result = {
+        "ok": True,
+        "intent": intent,
+        "confidence": confidence,
+        "recommended_tool": path,
+        "recommended_action": compact_body.get("action"),
+        "payload": compact_body,
+        "call_next": {"path": path, "body": compact_body},
+        "needs": needs or [],
+        "notes": notes or [],
+    }
+    if steps:
+        result["steps"] = steps
+    return result
+
+
+def _meta_account_path(account_id: str | None) -> str:
+    return normalize_account_id(account_id or "act_<ad_account_id>")
+
+
+def _ga4_property(body: IntentToolRequest) -> str | None:
+    return body.ga4_property_id or body.property_id
+
+
+def _date_payload(body: IntentToolRequest) -> dict:
+    return {
+        "tenant_id": body.tenant_id,
+        "property_id": _ga4_property(body),
+        "start_date": body.start_date or "30daysAgo",
+        "end_date": body.end_date or "today",
+        "limit": body.limit,
+    }
+
+
+def _default_ga4_custom_payload(body: IntentToolRequest) -> dict:
+    dimensions = body.dimensions or ["date"]
+    metrics = body.metrics or ["sessions", "activeUsers"]
+    payload = {
+        **_date_payload(body),
+        "dimensions": dimensions,
+        "metrics": metrics,
+    }
+    if body.page_path_contains:
+        payload["page_path_contains"] = body.page_path_contains
+    if body.event_names:
+        payload["dimension_filters"] = [
+            {"dimension": "eventName", "operator": "in_list", "values": body.event_names}
+        ]
+    return payload
+
+
+def _campaign_insights_steps(body: IntentToolRequest) -> list[dict]:
+    account_path = _meta_account_path(body.meta_account_id)
+    campaign_id = body.campaign_id or "<campaign_id>"
+    date_preset = body.date_preset or "last_7d"
+    return [
+        {
+            "reason": "Discover available ad accounts when the account is not known.",
+            "path": "/meta/query",
+            "body": {
+                "path": "me/adaccounts",
+                "params": {
+                    "fields": "id,name,account_id,account_status,currency,timezone_name",
+                    "limit": 100,
+                },
+            },
+        },
+        {
+            "reason": "Find the latest or requested campaign, including objective for correct diagnosis.",
+            "path": "/meta/query",
+            "body": {
+                "path": f"{account_path}/campaigns",
+                "params": {
+                    "fields": "id,name,status,effective_status,objective,created_time,updated_time,start_time,stop_time",
+                    "limit": 100,
+                },
+            },
+        },
+        {
+            "reason": "Read performance from the campaign object directly after the campaign ID is known.",
+            "path": "/meta/query",
+            "body": {
+                "path": f"{campaign_id}/insights",
+                "params": {
+                    "date_preset": date_preset,
+                    "fields": (
+                        "campaign_id,campaign_name,objective,spend,impressions,reach,clicks,"
+                        "inline_link_clicks,outbound_clicks,actions,cpc,cpm,ctr,date_start,date_stop"
+                    ),
+                },
+            },
+        },
+    ]
+
+
+@router.post(
+    "/intent",
+    summary="Route natural request",
+    description="Maps Arabic or English user requests to the best tool, action, payload, and next steps. Use first when unsure.",
+)
+async def intent_tool(body: IntentToolRequest):
+    text = body.request.strip().lower()
+    property_id = _ga4_property(body)
+
+    if _has_any(text, "path exploration", "مسار", "path analysis", "user journey path"):
+        return {
+            "ok": True,
+            "intent": "ga4_path_exploration",
+            "confidence": "high",
+            "supported_directly": False,
+            "reason": "GA4 Data API does not expose the full Explore Path Exploration report through this compact tool.",
+            "recommended_alternatives": [
+                _tool_plan(
+                    "ga4_custom_page_event_report",
+                    "medium",
+                    "/tools/ga4",
+                    {
+                        "action": "custom_report",
+                        **_default_ga4_custom_payload(body),
+                        "dimensions": body.dimensions or ["pagePathPlusQueryString", "eventName"],
+                        "metrics": body.metrics or ["eventCount", "activeUsers"],
+                    },
+                )["call_next"],
+                _tool_plan(
+                    "ga4_funnel",
+                    "medium",
+                    "/tools/ga4",
+                    {
+                        "action": "funnel",
+                        "tenant_id": body.tenant_id,
+                        "property_id": property_id,
+                        "start_date": body.start_date or "30daysAgo",
+                        "end_date": body.end_date or "today",
+                        "steps": [{"name": name, "event_name": name} for name in body.event_names],
+                        "limit": body.limit,
+                    },
+                    needs=[] if body.event_names else ["event_names"],
+                )["call_next"],
+            ],
+            "notes": ["For exact path exploration, export to BigQuery later or use GA4 Explore UI."],
+        }
+
+    if _has_any(text, "funnel", "runfunnelreport", "فنل", "قمع"):
+        return _tool_plan(
+            "ga4_funnel",
+            "high",
+            "/tools/ga4",
+            {
+                "action": "funnel",
+                "tenant_id": body.tenant_id,
+                "property_id": property_id,
+                "start_date": body.start_date or "30daysAgo",
+                "end_date": body.end_date or "today",
+                "steps": [{"name": name, "event_name": name} for name in body.event_names],
+                "limit": body.limit,
+            },
+            needs=[] if body.event_names else ["event_names"],
+            notes=["Use event_names to build funnel steps. Do not fetch all events first unless the user asks for discovery."],
+        )
+
+    if _has_any(text, "property", "properties", "بروبرتي", "خصائص", "analytics account"):
+        action = "select_property" if property_id else "list_properties"
+        return _tool_plan(
+            "ga4_property_setup",
+            "high",
+            "/tools/ga4",
+            {
+                "action": action,
+                "tenant_id": body.tenant_id,
+                "property_id": property_id,
+            },
+            needs=[] if body.tenant_id else ["tenant_id"],
+        )
+
+    if _has_any(text, "verify-otp", "otp", "page", "landing", "صفحة", "صفحات"):
+        return _tool_plan(
+            "ga4_custom_page_report",
+            "high",
+            "/tools/ga4",
+            {
+                "action": "custom_report",
+                **_default_ga4_custom_payload(body),
+                "dimensions": body.dimensions or ["pagePathPlusQueryString"],
+                "metrics": body.metrics or ["screenPageViews", "activeUsers", "eventCount"],
+                "page_path_contains": body.page_path_contains or ("verify-otp" if "otp" in text else None),
+            },
+            needs=[] if property_id else ["property_id or selected GA4 property"],
+        )
+
+    if _has_any(text, "event", "events", "ايفنت", "احداث", "أحداث"):
+        if _has_any(text, "pixel", "meta pixel", "بيكسل"):
+            return _tool_plan(
+                "meta_received_pixel_events",
+                "high",
+                "/tools/meta_tracking",
+                {
+                    "action": "received_pixel_events",
+                    "pixel_id": body.pixel_id,
+                    "start_date": body.start_date,
+                    "end_date": body.end_date,
+                    "fallback_days": 28,
+                    "include_raw": False,
+                },
+                needs=[] if body.pixel_id else ["pixel_id"],
+                notes=["Use this for events actually received by Meta Pixel, not Custom Conversions."],
+            )
+        return _tool_plan(
+            "ga4_events_report",
+            "high",
+            "/tools/ga4",
+            {
+                "action": "custom_report",
+                **_default_ga4_custom_payload(body),
+                "dimensions": body.dimensions or ["date", "eventName"],
+                "metrics": body.metrics or ["eventCount", "activeUsers"],
+            },
+            needs=[] if property_id else ["property_id or selected GA4 property"],
+        )
+
+    if _has_any(text, "tracking", "تتبع", "utm", "attribution", "انالتكس", "analytics", "ga4"):
+        return _tool_plan(
+            "website_or_journey_tracking",
+            "medium",
+            "/tools/journey" if body.meta_account_id or body.campaign_id else "/tools/website",
+            {
+                "action": "tracking_integrity" if body.meta_account_id or body.campaign_id else "tracking_audit",
+                "tenant_id": body.tenant_id,
+                "meta_account_id": body.meta_account_id,
+                "ga4_property_id": property_id,
+                "campaign_id": body.campaign_id,
+                "campaign_name": body.campaign_name,
+                "start_date": body.start_date or "30daysAgo",
+                "end_date": body.end_date or "today",
+                "date_preset": body.date_preset,
+                "limit": body.limit,
+            },
+            needs=[] if property_id else ["property_id or selected GA4 property"],
+            notes=["Compare Meta and GA4 without treating clicks, sessions, leads, and conversions as the same metric."],
+        )
+
+    if _has_any(text, "clarity", "كلاريتي", "heatmap", "click", "scroll", "behavior"):
+        return _tool_plan(
+            "clarity_behavior",
+            "high",
+            "/tools/clarity",
+            {
+                "action": "behavior_audit",
+                "tenant_id": body.tenant_id,
+                "num_of_days": 1,
+                "focus_url": body.page_path_contains,
+                "row_limit": min(body.limit, 100),
+            },
+            notes=["Clarity export APIs provide aggregated insight rows, not raw visual heatmap pixels."],
+        )
+
+    if _has_any(text, "lead form", "form_leads", "leads", "فورم", "ليد"):
+        action = "form_leads" if body.form_id else "lead_forms"
+        return _tool_plan(
+            "meta_lead_ads",
+            "high",
+            "/tools/meta_tracking",
+            {
+                "action": action,
+                "page_id": body.page_id,
+                "form_id": body.form_id,
+                "limit": body.limit,
+            },
+            needs=[] if body.page_id and (action == "lead_forms" or body.form_id) else ["page_id", "form_id when reading leads"],
+            notes=["If Meta rejects the call, run diagnose_lead_access to see missing page permissions."],
+        )
+
+    if _has_any(text, "comment", "reply", "كومنت", "تعليق", "رد تلقائي", "ماسنجر"):
+        return _tool_plan(
+            "comment_automation",
+            "medium",
+            "/comment_automations/manage",
+            {
+                "action": "list_rules",
+                "tenant_id": body.tenant_id,
+                "page_id": body.page_id,
+                "limit": body.limit,
+            },
+            needs=[] if body.page_id else ["page_id"],
+            notes=["Use diagnose_page and webhook deliveries when a rule does not reply automatically."],
+        )
+
+    if _has_any(text, "report", "تقرير", "pdf", "excel", "pptx", "docx"):
+        return _tool_plan(
+            "report_generation",
+            "medium",
+            "/tools/reports",
+            {"action": "docx", "payload": {}},
+            notes=["Generate the analysis payload first, then pass it to /tools/reports in the requested format."],
+        )
+
+    if _has_any(text, "meta", "facebook", "campaign", "adset", "ad ", "اعلان", "إعلان", "حملة", "ادسيت"):
+        target = body.ad_id or body.adset_id or body.campaign_id
+        level = "ad" if body.ad_id else "adset" if body.adset_id else "campaign"
+        if target:
+            return _tool_plan(
+                f"meta_{level}_insights",
+                "high",
+                "/meta/smart_insights",
+                {
+                    "account_id": body.meta_account_id,
+                    "campaign_id": body.campaign_id,
+                    "adset_id": body.adset_id,
+                    "ad_id": body.ad_id,
+                    "date_preset": body.date_preset or "last_7d",
+                    "level": level,
+                    "limit": body.limit,
+                },
+                notes=["Use the smart insights tool first because it retries with safer fields and includes objective context."],
+            )
+        return _tool_plan(
+            "meta_campaign_discovery_and_insights",
+            "medium",
+            "/meta/query",
+            _campaign_insights_steps(body)[0]["body"],
+            needs=[] if body.meta_account_id else ["meta_account_id for the second step"],
+            notes=["Use the steps in order. Do not ask the user for Graph paths."],
+            steps=_campaign_insights_steps(body),
+        )
+
+    return _tool_plan(
+        "general_analysis_router",
+        "low",
+        "/analysis/run",
+        {"tenant_id": body.tenant_id, "payload": {"user_request": body.request}},
+        notes=["If this is a platform data request, retry /tools/intent with IDs or keywords from the user's message."],
+    )
 
 
 LEAD_ACCESS_REQUIRED_PERMISSIONS = [

@@ -43,7 +43,9 @@ GPT_DATA_PATHS = {
     "/comment_automations/manage",
     "/meta/query",
     "/meta/request",
+    "/meta/smart_insights",
     "/analysis/run",
+    "/tools/intent",
     "/tools/ga4",
     "/tools/meta_tracking",
     "/tools/website",
@@ -103,6 +105,8 @@ def openapi_gpt_schema():
             "/meta/request for ordinary analysis or discovery reads. For Facebook Page post or comment operations, "
             "provide page_id to /meta/query or /meta/request so the server selects the Page access token. The dynamic "
             "tools also cover media, lead forms, leads, pixels, audiences, and Instagram Graph paths when requested. "
+            "When unsure which tool to use, call /tools/intent with the user's natural request and known IDs. Follow "
+            "its call_next or steps instead of asking the user for technical paths. "
             "For Meta tracking questions, use /tools/meta_tracking. When the user asks which events Meta actually "
             "received, use action=received_pixel_events; do not substitute Custom Conversions. "
             "Use /tools/website for GA4-only site intelligence, /tools/journey for Meta plus GA4 customer-journey "

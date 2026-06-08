@@ -19,6 +19,29 @@ class GPTToolRequest(BaseModel):
         return merged
 
 
+class IntentToolRequest(BaseModel):
+    request: str = Field(min_length=2, description="Natural user request in Arabic or English.")
+    tenant_id: str | None = Field(default=None, description="Optional tenant ID.")
+    meta_account_id: str | None = Field(default=None, description="Optional Meta ad account ID.")
+    ga4_property_id: str | None = Field(default=None, description="Optional GA4 Property ID.")
+    property_id: str | None = Field(default=None, description="Optional GA4 Property ID alias.")
+    campaign_id: str | None = Field(default=None, description="Optional Meta Campaign ID.")
+    campaign_name: str | None = Field(default=None, description="Optional Meta Campaign name.")
+    adset_id: str | None = Field(default=None, description="Optional Meta Ad Set ID.")
+    ad_id: str | None = Field(default=None, description="Optional Meta Ad ID.")
+    page_id: str | None = Field(default=None, description="Optional Facebook Page ID.")
+    pixel_id: str | None = Field(default=None, description="Optional Meta Pixel ID.")
+    form_id: str | None = Field(default=None, description="Optional Lead Form ID.")
+    start_date: str | None = Field(default=None, description="Optional start date.")
+    end_date: str | None = Field(default=None, description="Optional end date.")
+    date_preset: str | None = Field(default=None, description="Optional Meta date preset.")
+    dimensions: list[str] = Field(default_factory=list, description="Optional GA4 dimensions.")
+    metrics: list[str] = Field(default_factory=list, description="Optional GA4 metrics.")
+    event_names: list[str] = Field(default_factory=list, description="Optional event names for reports or funnels.")
+    page_path_contains: str | None = Field(default=None, description="Optional page URL/path fragment.")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum rows.")
+
+
 class GA4ToolRequest(GPTToolRequest):
     action: Literal[
         "list_properties",

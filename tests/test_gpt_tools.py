@@ -5,6 +5,7 @@ from app.main import app, openapi_gpt_schema
 from app.schemas.gpt_tool_requests import (
     ClarityToolRequest,
     GA4ToolRequest,
+    IntentToolRequest,
     JourneyToolRequest,
     MetaTrackingToolRequest,
     ReportToolRequest,
@@ -19,7 +20,9 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_only():
         "/analysis/run",
         "/meta/query",
         "/meta/request",
+        "/meta/smart_insights",
         "/comment_automations/manage",
+        "/tools/intent",
         "/tools/ga4",
         "/tools/meta_tracking",
         "/tools/website",
@@ -30,6 +33,92 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_only():
     assert "/ga4/custom_report" in app.openapi()["paths"]
     assert "/reports/save_pptx" in app.openapi()["paths"]
     assert "/page_posts" in app.openapi()["paths"]
+
+
+def test_intent_router_is_exposed_for_natural_requests():
+    schema = openapi_gpt_schema()
+
+    assert "/tools/intent" in schema["paths"]
+    assert "IntentToolRequest" in schema["components"]["schemas"]
+
+
+def test_intent_router_maps_arabic_meta_campaign_question_to_discovery_plan():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(
+                request="حلل اخر حملة في ميتا النهارده",
+                meta_account_id="act_763606732391242",
+                date_preset="today",
+            )
+        )
+    )
+
+    assert result["intent"] == "meta_campaign_discovery_and_insights"
+    assert result["recommended_tool"] == "/meta/query"
+    assert result["steps"][1]["body"]["path"] == "act_763606732391242/campaigns"
+    assert result["steps"][2]["body"]["path"] == "<campaign_id>/insights"
+    assert result["steps"][2]["body"]["params"]["date_preset"] == "today"
+
+
+def test_intent_router_maps_known_campaign_to_smart_meta_insights():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(
+                request="قارن اداء الحملة",
+                meta_account_id="act_763606732391242",
+                campaign_id="120246445412420505",
+            )
+        )
+    )
+
+    assert result["intent"] == "meta_campaign_insights"
+    assert result["recommended_tool"] == "/meta/smart_insights"
+    assert result["payload"]["campaign_id"] == "120246445412420505"
+
+
+def test_intent_router_maps_ga4_funnel_alias_to_funnel_tool():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(
+                request="runFunnelReport من page_view الى OnboardingRegistration",
+                property_id="529884683",
+                event_names=["page_view", "OnboardingRegistration"],
+            )
+        )
+    )
+
+    assert result["intent"] == "ga4_funnel"
+    assert result["recommended_tool"] == "/tools/ga4"
+    assert result["payload"]["action"] == "funnel"
+    assert result["payload"]["steps"][1]["event_name"] == "OnboardingRegistration"
+
+
+def test_intent_router_maps_pixel_events_to_received_pixel_events():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(
+                request="هات اسماء الايفنت اللي وصلت للبيكسل",
+                pixel_id="2025821897925927",
+            )
+        )
+    )
+
+    assert result["intent"] == "meta_received_pixel_events"
+    assert result["recommended_tool"] == "/tools/meta_tracking"
+    assert result["payload"]["action"] == "received_pixel_events"
+    assert result["payload"]["pixel_id"] == "2025821897925927"
+
+
+def test_intent_router_explains_ga4_path_exploration_limit():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(request="اعمل path exploration للمستخدمين", property_id="529884683")
+        )
+    )
+
+    assert result["intent"] == "ga4_path_exploration"
+    assert result["supported_directly"] is False
+    assert result["recommended_alternatives"]
 
 
 def test_gpt_operation_descriptions_fit_chatgpt_import_limit():
