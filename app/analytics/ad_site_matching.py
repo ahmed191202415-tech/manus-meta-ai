@@ -27,7 +27,26 @@ def build_ad_site_matching(meta_rows: list[dict], ga4_rows: list[dict], link_aud
         matched_on.append("sessionManualAdContent")
         confidence = "high"
 
-    ga_campaigns = {str(row.get("sessionCampaignName") or "").lower() for row in ga4_rows}
+    meta_campaign_ids = {
+        str(row.get("campaign_id") or "").lower()
+        for row in meta_rows
+        if row.get("campaign_id")
+    }
+    ga_campaign_ids = {
+        str(row.get("sessionCampaignId") or row.get("sessionManualCampaignId") or row.get("manualCampaignId") or "").lower()
+        for row in ga4_rows
+        if row.get("sessionCampaignId") or row.get("sessionManualCampaignId") or row.get("manualCampaignId")
+    }
+    matched_campaign_ids = sorted(meta_campaign_ids.intersection(ga_campaign_ids))
+    if matched_campaign_ids:
+        matched_on.append("campaign_id")
+        confidence = "high"
+
+    ga_campaigns = {
+        str(row.get("sessionCampaignName") or row.get("sessionManualCampaignName") or "").lower()
+        for row in ga4_rows
+        if row.get("sessionCampaignName") or row.get("sessionManualCampaignName")
+    }
     meta_campaigns = {str(row.get("campaign_name") or "").lower() for row in meta_rows}
     if meta_campaigns and ga_campaigns and meta_campaigns.intersection(ga_campaigns):
         matched_on.append("campaign_name")
@@ -42,13 +61,14 @@ def build_ad_site_matching(meta_rows: list[dict], ga4_rows: list[dict], link_aud
         limits.append("No reliable campaign or source match found between Meta and GA4")
     if "campaign_name" not in matched_on:
         limits.append("No campaign name match found")
-    if "ad_or_campaign_id" not in matched_on:
+    if "ad_or_campaign_id" not in matched_on and "campaign_id" not in matched_on:
         limits.append("No ad_id or campaign_id was found in Meta URL tracking, so ad-level conclusions are limited")
 
     return {
         "matching_confidence": confidence,
         "matched_on": matched_on,
         "matched_ad_ids": matched_ad_ids,
+        "matched_campaign_ids": matched_campaign_ids,
         "limits": limits,
         "tracking_link_score": link_audit.get("tracking_link_score"),
     }

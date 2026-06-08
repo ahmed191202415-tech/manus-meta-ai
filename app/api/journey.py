@@ -265,6 +265,7 @@ def _ga4_journey_reports(tenant_id: str, property_id: str | None, start_date: st
         ["sessions", "activeUsers", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
         start_date, end_date, limit,
     )
+    traffic.extend(_ga4_identifier_rows(errors, tenant_id, property_id, start_date, end_date, limit))
     landing = _safe_ga4_rows(
         errors, "landing", tenant_id, property_id,
         ["landingPagePlusQueryString", "sessionSourceMedium", "deviceCategory"],
@@ -284,6 +285,37 @@ def _ga4_journey_reports(tenant_id: str, property_id: str | None, start_date: st
         start_date, end_date, limit,
     )
     return {"traffic": traffic, "landing": landing, "events": events, "devices": devices, "_errors": errors}
+
+
+def _ga4_identifier_rows(errors: list[dict], tenant_id: str, property_id: str | None, start_date: str, end_date: str, limit: int) -> list[dict]:
+    """Try GA4 campaign/ad identifier dimensions separately so one unsupported dimension does not block all matching."""
+    attempts = [
+        ("campaign_id", ["sessionCampaignId", "sessionCampaignName", "sessionSourceMedium"]),
+        ("manual_campaign_id", ["sessionManualCampaignId", "sessionManualCampaignName", "sessionManualAdContent", "sessionSourceMedium"]),
+        ("manual_campaign_name", ["sessionManualCampaignName", "sessionManualAdContent", "sessionSourceMedium"]),
+    ]
+    rows: list[dict] = []
+    seen = set()
+    for report_name, dimensions in attempts:
+        report_rows = _safe_ga4_rows(
+            errors,
+            f"traffic_{report_name}",
+            tenant_id,
+            property_id,
+            dimensions,
+            ["sessions", "activeUsers", "engagedSessions", "conversions", "totalRevenue"],
+            start_date,
+            end_date,
+            limit,
+        )
+        for row in report_rows:
+            key = tuple((dimension, str(row.get(dimension) or "")) for dimension in dimensions)
+            if key in seen:
+                continue
+            seen.add(key)
+            row["_matching_source"] = report_name
+            rows.append(row)
+    return rows
 
 
 def _safe_ga4_rows(

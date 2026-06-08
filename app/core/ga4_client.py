@@ -87,7 +87,22 @@ def resolve_ga4_property_id(tenant_id: str, property_id: str | None = None) -> s
     connection = get_google_connection_or_401(tenant_id)
     selected = str(connection.get("selected_ga4_property_id") or "").replace("properties/", "").strip()
     if not selected:
-        raise HTTPException(status_code=400, detail="GA4 property not selected. Pass property_id or select a property first.")
+        properties = []
+        try:
+            properties = list_ga4_properties(tenant_id)
+        except Exception:
+            properties = []
+        if len(properties) == 1:
+            return str(properties[0].get("property_id") or properties[0].get("property") or "").replace("properties/", "").strip()
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "GA4 property not selected. Pass property_id or select a property first.",
+                "reason": "property_selection_required",
+                "available_properties": properties[:25],
+                "next_step": "Use /tools/ga4 action=list_properties, then retry with property_id or action=select_property.",
+            },
+        )
     return selected
 
 
