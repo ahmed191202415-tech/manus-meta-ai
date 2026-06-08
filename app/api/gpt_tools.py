@@ -162,22 +162,22 @@ def _diagnose_lead_access(payload: dict, token: str) -> dict:
     "/ga4",
     summary="GA4 operations",
     description=(
-        "Unified GA4 tool. Use action=list_properties or select_property for setup; custom_report for flexible "
-        "dimensions, metrics, filters, and sorting; funnel, realtime, or metadata when specifically requested; "
-        "and landing_pages, traffic_sources, events, or devices for compact standard reports."
+        "Unified GA4 tool. Supports property setup, custom reports, runFunnelReport aliases, realtime, metadata, "
+        "events, landing pages, traffic sources, and devices. Use direct fields, not nested payload, when possible."
     ),
 )
 async def ga4_tool(body: GA4ToolRequest, request: Request):
+    action = _normalize_ga4_action(body.action)
     payload = body.merged_payload()
-    if body.action == "list_properties":
+    if action == "list_properties":
         return await ga4.ga4_properties(request, payload.get("tenant_id"))
-    if body.action == "select_property":
+    if action == "select_property":
         return await ga4.ga4_select_property(_validated(GA4PropertySelectionRequest, payload), request)
-    if body.action == "custom_report":
+    if action == "custom_report":
         return await ga4.ga4_custom_report(_validated(GA4CustomReportRequest, payload), request)
-    if body.action == "funnel":
+    if action == "funnel":
         return await ga4.ga4_funnel(_validated(GA4FunnelReportRequest, payload), request)
-    if body.action == "realtime":
+    if action == "realtime":
         dimensions = payload.get("dimensions")
         if isinstance(dimensions, list):
             dimensions = ",".join(str(item) for item in dimensions)
@@ -188,9 +188,19 @@ async def ga4_tool(body: GA4ToolRequest, request: Request):
             dimensions,
             payload.get("limit", 100),
         )
-    if body.action == "metadata":
+    if action == "metadata":
         return await ga4.ga4_metadata(request, payload.get("tenant_id"), payload.get("property_id"))
-    return await _ga4_standard_report(body.action, payload, request)
+    return await _ga4_standard_report(action, payload, request)
+
+
+def _normalize_ga4_action(action: str) -> str:
+    aliases = {
+        "runFunnelReport": "funnel",
+        "run_funnel_report": "funnel",
+        "funnel_report": "funnel",
+        "ga4_funnel": "funnel",
+    }
+    return aliases.get(action, action)
 
 
 async def _ga4_standard_report(action: str, payload: dict, request: Request):

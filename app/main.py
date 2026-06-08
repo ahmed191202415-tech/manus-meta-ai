@@ -84,7 +84,8 @@ def openapi_gpt_schema():
             "limit or request one specific entity instead of repeating the same broad request. For creatives, list "
             "lightweight rows first and use creative_id with include_details=true for one selected creative only. "
             "For GA4 setup, custom reports, standard reports, funnel, realtime, or metadata, use /tools/ga4 with "
-            "the matching action. For a GA4 page lookup, use action=custom_report with a small limit and "
+            "the matching action. GA4 funnels are supported through action=funnel and aliases runFunnelReport, "
+            "run_funnel_report, funnel_report, or ga4_funnel. For a GA4 page lookup, use action=custom_report with a small limit and "
             'page_path_contains="the-page-fragment" instead of fetching all page URLs. '
             "For any GA4 custom question, choose the needed dimensions and metrics and use the simplified "
             "dimension_filters, metric_filters, sort, offset, and metric_aggregations fields. "

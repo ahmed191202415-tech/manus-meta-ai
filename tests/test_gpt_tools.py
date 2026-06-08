@@ -134,6 +134,43 @@ def test_ga4_schema_exposes_flat_custom_report_fields():
         assert key in properties
 
 
+def test_ga4_dispatcher_accepts_run_funnel_report_alias(monkeypatch):
+    async def fake_handler(body, request):
+        return {"steps": [step.model_dump() for step in body.steps]}
+
+    monkeypatch.setattr(gpt_tools.ga4, "ga4_funnel", fake_handler)
+    result = asyncio.run(
+        gpt_tools.ga4_tool(
+            GA4ToolRequest(
+                action="runFunnelReport",
+                property_id="529884683",
+                steps=[
+                    {"name": "Page view", "event_name": "page_view"},
+                    {"name": "Registration", "event_name": "OnboardingRegistration"},
+                ],
+            ),
+            object(),
+        )
+    )
+
+    assert result == {
+        "steps": [
+            {"name": "Page view", "event_name": "page_view"},
+            {"name": "Registration", "event_name": "OnboardingRegistration"},
+        ]
+    }
+
+
+def test_ga4_schema_exposes_run_funnel_report_aliases():
+    schema = openapi_gpt_schema()
+    actions = schema["components"]["schemas"]["GA4ToolRequest"]["properties"]["action"]["enum"]
+
+    assert "funnel" in actions
+    assert "runFunnelReport" in actions
+    assert "run_funnel_report" in actions
+    assert "funnel_report" in actions
+
+
 def test_meta_tracking_dispatcher_routes_received_pixel_events(monkeypatch):
     calls = []
 
