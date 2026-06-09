@@ -78,6 +78,7 @@ def openapi_gpt_schema():
             " For Facebook Page comments, always use /comment_automations/manage with list_pages, list_posts, "
             "list_comments, subscribe_page, create_rule, list_rules, disable_rule, or delete_rule. "
             "When an automation does not reply, call diagnose_page and inspect webhook deliveries before guessing. "
+            "To reply on every new comment across all Page posts, create_rule with page_id and omit post_id. "
             "For ad posts, create rules with ad_id when known. For an existing rule, use set_rule_ad_scope with its "
             "ad_id so verified internal Meta story IDs are linked automatically. For any remaining dark post or "
             "unpublished post that Meta cannot verify, use list_unmapped_posts and ask for confirmation before "

@@ -14,6 +14,7 @@ from app.core.oauth_store import (
     finish_comment_automation_log,
     get_active_meta_connection_for_tenant,
     get_tenant_meta_app,
+    list_enabled_comment_automation_rules_for_all_posts,
     list_enabled_comment_automation_rules_for_page,
     list_enabled_comment_automation_rules_for_alias,
     list_enabled_comment_automation_rules_for_post,
@@ -220,6 +221,8 @@ def process_comment_events(payload: dict[str, Any]) -> None:
             rules = list_enabled_comment_automation_rules_for_alias(event["page_id"], event["post_id"])
         if not rules:
             rules = _auto_link_verified_ad_post(event)
+        if not rules:
+            rules = list_enabled_comment_automation_rules_for_all_posts(event["page_id"])
         matched_rules = [rule for rule in rules if rule_matches_comment(rule, event)]
         tenant_id = str((matched_rules or rules or [{}])[0].get("tenant_id") or "").strip() or None
         if not rules:
@@ -228,7 +231,7 @@ def process_comment_events(payload: dict[str, Any]) -> None:
                 "unmapped_ad_post",
                 diagnostic_message=(
                     "Webhook arrived from a canonical Page post ID that has no direct rule or approved alias. "
-                    "Review the unmapped post and link it to an existing rule before automatic replies start."
+                    "Review the unmapped post, link it to an existing rule, or create a page-wide rule without post_id."
                 ),
             )
             continue

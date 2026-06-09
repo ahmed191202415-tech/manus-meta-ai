@@ -41,8 +41,6 @@ class CommentAutomationManageRequest(BaseModel):
         if self.action == "list_comments" and not self.post_id:
             raise ValueError("post_id is required for list_comments.")
         if self.action == "create_rule":
-            if not self.post_id:
-                raise ValueError("post_id is required for create_rule.")
             if not (self.public_reply_message or self.private_reply_message or self.hide_comment):
                 raise ValueError("Add a public reply, a private reply, or hide_comment.")
             if self.match_mode == "contains_keyword" and not str(self.keyword or "").strip():

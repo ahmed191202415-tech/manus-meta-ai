@@ -167,6 +167,17 @@ def test_list_comments_requires_page_and_post_ids():
     assert request.action == "list_comments"
 
 
+def test_create_rule_can_target_every_post_on_page():
+    request = CommentAutomationManageRequest(
+        action="create_rule",
+        page_id="page_1",
+        public_reply_message="Thanks",
+    )
+
+    assert request.post_id is None
+    assert request.match_mode == "all_comments"
+
+
 def test_process_comment_events_logs_missing_rule(monkeypatch):
     logged = []
     payload = {
@@ -191,6 +202,7 @@ def test_process_comment_events_logs_missing_rule(monkeypatch):
     }
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_all_posts", lambda page_id: [])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_page", lambda page_id: [])
     monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((event, status, kwargs)))
 
@@ -207,6 +219,7 @@ def test_process_comment_events_logs_keyword_mismatch(monkeypatch):
         "list_enabled_comment_automation_rules_for_post",
         lambda page_id, post_id: [{"tenant_id": "tenant_1", "match_mode": "contains_keyword", "keyword": "price"}],
     )
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_all_posts", lambda page_id: [])
     monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((event, status, kwargs)))
 
     webhooks.process_comment_events({})
@@ -265,6 +278,7 @@ def test_process_comment_events_uses_approved_alias(monkeypatch):
     monkeypatch.setattr(webhooks, "extract_comment_events", lambda payload: [event])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [rule])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_all_posts", lambda page_id: [])
     monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append(status))
     monkeypatch.setattr(webhooks, "_process_rule", lambda rule, event: processed.append((rule, event)))
 
@@ -292,6 +306,7 @@ def test_process_comment_events_auto_links_verified_ad_story(monkeypatch):
     monkeypatch.setattr(webhooks, "extract_comment_events", lambda payload: [event])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_all_posts", lambda page_id: [])
     monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_page", lambda page_id: [rule])
     monkeypatch.setattr(webhooks, "create_verified_comment_post_alias", lambda **kwargs: aliases.append(kwargs))
     monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append(status))
@@ -302,6 +317,30 @@ def test_process_comment_events_auto_links_verified_ad_story(monkeypatch):
     assert aliases[0]["canonical_post_id"] == "page_1_story_1"
     assert aliases[0]["source_post_id"] == "another_page_story_1"
     assert logged == ["processing"]
+    assert processed == [(rule, event)]
+
+
+def test_process_comment_events_uses_page_wide_rule_when_no_post_rule(monkeypatch):
+    processed = []
+    logged = []
+    event = {"page_id": "page_1", "post_id": "any_post", "comment_id": "comment_1", "message": "hello"}
+    rule = {
+        "rule_id": "rule_all",
+        "tenant_id": "tenant_1",
+        "post_id": "__all_posts__",
+        "match_mode": "all_comments",
+    }
+    monkeypatch.setattr(webhooks, "extract_comment_events", lambda payload: [event])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_post", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_alias", lambda page_id, post_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_page", lambda page_id: [])
+    monkeypatch.setattr(webhooks, "list_enabled_comment_automation_rules_for_all_posts", lambda page_id: [rule])
+    monkeypatch.setattr(webhooks, "save_comment_webhook_event", lambda event, status, **kwargs: logged.append((status, kwargs)))
+    monkeypatch.setattr(webhooks, "_process_rule", lambda rule, event: processed.append((rule, event)))
+
+    webhooks.process_comment_events({})
+
+    assert logged == [("processing", {"matched_rule_count": 1, "diagnostic_message": "Webhook arrived and matching automation rules are being executed.", "tenant_id": "tenant_1"})]
     assert processed == [(rule, event)]
 
 

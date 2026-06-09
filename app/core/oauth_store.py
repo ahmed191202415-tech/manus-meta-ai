@@ -512,6 +512,9 @@ def get_meta_connection_for_selected_page(tenant_id: str, page_id: str):
     )
 
 
+ALL_POSTS_COMMENT_RULE_POST_ID = "__all_posts__"
+
+
 def create_comment_automation_rule(
     tenant_id: str,
     page_id: str,
@@ -530,7 +533,7 @@ def create_comment_automation_rule(
         "tenant_id": _clean(tenant_id),
         "page_id": _clean(page_id),
         "page_access_token": _clean(page_access_token),
-        "post_id": _clean(post_id),
+        "post_id": _clean(post_id) or ALL_POSTS_COMMENT_RULE_POST_ID,
         "keyword": _clean(keyword),
         "match_mode": _clean(match_mode) or "all_comments",
         "public_reply_message": _clean(public_reply_message),
@@ -571,6 +574,19 @@ def list_enabled_comment_automation_rules_for_post(page_id: str, post_id: str):
         params={
             "page_id": f"eq.{_clean(page_id)}",
             "post_id": f"eq.{_clean(post_id)}",
+            "enabled": "eq.true",
+            "select": "*",
+            "order": "updated_at.desc",
+        },
+    )
+
+
+def list_enabled_comment_automation_rules_for_all_posts(page_id: str):
+    return _get_many(
+        "comment_automation_rules",
+        params={
+            "page_id": f"eq.{_clean(page_id)}",
+            "post_id": f"eq.{ALL_POSTS_COMMENT_RULE_POST_ID}",
             "enabled": "eq.true",
             "select": "*",
             "order": "updated_at.desc",
