@@ -1,7 +1,9 @@
 from json import dumps
+from typing import Any
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.analytics.dashboard_engine import (
     CONNECTOR_REGISTRY,
@@ -18,6 +20,43 @@ from app.analytics.dashboard_engine import (
 router = APIRouter(tags=["journey-dashboard-v7"])
 
 _DEFINITIONS = {DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]: DEFAULT_DASHBOARD_DEFINITION}
+
+
+class DashboardDefinitionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    dashboard_id: str = Field("custom_dashboard", description="Stable dashboard id.")
+    title: str | None = Field(None, description="Dashboard title.")
+    filters: list[dict[str, Any]] = Field(default_factory=list, description="Dashboard filter definitions.")
+    data_sources: dict[str, Any] = Field(default_factory=dict, description="Meta, GA4, Clarity, or other source config.")
+    charts: list[dict[str, Any]] = Field(default_factory=list, description="Chart, table, and interaction definitions.")
+    layout: dict[str, Any] = Field(default_factory=dict, description="Optional renderer layout hints.")
+    metrics: dict[str, Any] = Field(default_factory=dict, description="Optional dashboard-specific metric overrides.")
+    interactions: list[dict[str, Any]] = Field(default_factory=list, description="Cross-filtering or drilldown rules.")
+
+
+class DashboardRuntimeQueryRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    dashboard_id: str = Field("customer_journey", description="Dashboard definition id.")
+    query_id: str = Field("journey_funnel", description="Query to run, such as journey_funnel or journey_trend.")
+    filters: dict[str, Any] = Field(default_factory=dict, description="Date, campaign, ad set, ad, device, and placement filters.")
+    context: dict[str, Any] = Field(default_factory=dict, description="Optional runtime context.")
+
+
+class ComparisonEntity(BaseModel):
+    type: str = Field("campaign", description="Entity type: campaign, adset, or ad.")
+    id: str = Field(..., description="Meta entity id.")
+    name: str | None = Field(None, description="Optional display name.")
+
+
+class JourneyComparisonRequest(BaseModel):
+    entities: list[ComparisonEntity] = Field(default_factory=list, description="Entities to compare.")
+    stage_id: str = Field("register_page", description="Journey stage to compare.")
+    metric: str = Field("cost", description="Metric to rank by.")
+    sort: str = Field("lowest_cost", description="Sort mode.")
+    date_from: str | None = Field(None, description="Start date.")
+    date_to: str | None = Field(None, description="End date.")
 
 
 @router.get("/journey-dashboard/v7", response_class=HTMLResponse)
@@ -218,11 +257,12 @@ loadFilters().then(reloadAll);
 
 
 @router.post("/api/dashboard-definitions")
-async def create_dashboard_definition(body: dict = Body(...)):
-    dashboard_id = str(body.get("dashboard_id") or "custom_dashboard")
-    body["dashboard_id"] = dashboard_id
-    _DEFINITIONS[dashboard_id] = body
-    return {"success": True, "definition": body}
+async def create_dashboard_definition(body: DashboardDefinitionRequest):
+    definition = body.dict()
+    dashboard_id = str(definition.get("dashboard_id") or "custom_dashboard")
+    definition["dashboard_id"] = dashboard_id
+    _DEFINITIONS[dashboard_id] = definition
+    return {"success": True, "definition": definition}
 
 
 @router.get("/api/dashboard-definitions/{dashboard_id}")
@@ -231,17 +271,18 @@ async def get_dashboard_definition(dashboard_id: str):
 
 
 @router.put("/api/dashboard-definitions/{dashboard_id}")
-async def update_dashboard_definition(dashboard_id: str, body: dict = Body(...)):
-    body["dashboard_id"] = dashboard_id
-    _DEFINITIONS[dashboard_id] = body
-    return {"success": True, "definition": body}
+async def update_dashboard_definition(dashboard_id: str, body: DashboardDefinitionRequest):
+    definition = body.dict()
+    definition["dashboard_id"] = dashboard_id
+    _DEFINITIONS[dashboard_id] = definition
+    return {"success": True, "definition": definition}
 
 
 @router.post("/api/dashboard-runtime/query")
-async def dashboard_runtime_query(body: dict = Body(...)):
-    dashboard_id = str(body.get("dashboard_id") or "customer_journey")
-    query_id = str(body.get("query_id") or "journey_funnel")
-    filters = body.get("filters") or {}
+async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest):
+    dashboard_id = str(body.dashboard_id or "customer_journey")
+    query_id = str(body.query_id or "journey_funnel")
+    filters = body.filters or {}
     definition = _DEFINITIONS.get(dashboard_id, DEFAULT_DASHBOARD_DEFINITION)
     if query_id == "journey_funnel":
         return build_fallback_funnel(filters)
@@ -286,10 +327,10 @@ async def journey_trend(stage_id: str = "register_page", metric: str = "value", 
 
 
 @router.post("/api/journey/comparison")
-async def journey_comparison(body: dict = Body(default_factory=dict)):
+async def journey_comparison(body: JourneyComparisonRequest):
     return comparison(
-        entities=body.get("entities"),
-        stage_id=body.get("stage_id", "register_page"),
-        metric=body.get("metric", "cost"),
-        sort=body.get("sort", "lowest_cost"),
+        entities=[entity.dict() for entity in body.entities] or None,
+        stage_id=body.stage_id,
+        metric=body.metric,
+        sort=body.sort,
     )
