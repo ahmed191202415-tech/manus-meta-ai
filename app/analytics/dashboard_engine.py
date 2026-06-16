@@ -178,6 +178,148 @@ def build_fallback_funnel(filters: dict | None = None) -> dict:
     }
 
 
+def build_live_funnel(
+    meta_insights_payload: dict,
+    filters: dict | None = None,
+    *,
+    debug: dict | None = None,
+    mode: str = "live_data",
+) -> dict:
+    filters = filters or {}
+    rows = meta_insights_payload.get("data") or []
+    row = rows[0] if rows else {}
+    spend = _number(row.get("spend"))
+    unique_ctr = _number(row.get("unique_ctr"))
+    unique_link_clicks = _number(row.get("unique_inline_link_clicks")) or _number(row.get("unique_link_clicks"))
+    inline_link_clicks = _number(row.get("inline_link_clicks")) or _number(row.get("clicks"))
+    landing_page_views = _action_value(row, "landing_page_view") or _action_value(row, "omni_landing_page_view")
+    messages_started = (
+        _action_value(row, "onsite_conversion.messaging_conversation_started_7d")
+        or _action_value(row, "onsite_conversion.total_messaging_connection")
+        or _action_value(row, "messaging_conversation_started")
+        or _action_value(row, "onsite_conversion.messaging_first_reply")
+    )
+    register_page = (
+        _action_value(row, "Register Page")
+        or _action_value(row, "register_page")
+        or _action_value(row, "offsite_conversion.fb_pixel_custom")
+    )
+    leads = _action_value(row, "lead") or _action_value(row, "onsite_conversion.lead_grouped")
+    otp = _action_value(row, "OTP") or _action_value(row, "otp")
+    complete_profile = _action_value(row, "Complete Profile") or _action_value(row, "complete_profile")
+    start_trial = _action_value(row, "Start Trial") or _action_value(row, "start_trial")
+
+    stage_values = [
+        ("unique_ctr", "Unique CTR", unique_ctr, "meta", None),
+        ("unique_link_clicks", "Unique Link Clicks", unique_link_clicks or inline_link_clicks, "meta", _cost(spend, unique_link_clicks or inline_link_clicks)),
+        ("landing_loaded", "Landing Loaded", landing_page_views, "meta_action", _cost(spend, landing_page_views)),
+        ("engaged", "Messages / Engaged", messages_started, "meta_action_supporting", _cost(spend, messages_started)),
+        ("register_page", "Register Page", register_page, "meta_event", _cost(spend, register_page)),
+        ("otp", "OTP", otp, "meta_event", _cost(spend, otp)),
+        ("complete_profile", "Complete Profile", complete_profile, "meta_event", _cost(spend, complete_profile)),
+        ("start_trial", "Start Trial", start_trial, "meta_event", _cost(spend, start_trial)),
+    ]
+    stages = _build_stage_rows(stage_values)
+    missing_live_metrics = [
+        stage["id"]
+        for stage in stages
+        if stage["numeric_value"] == 0 and stage["id"] not in {"complete_profile", "start_trial", "otp"}
+    ]
+    notes = []
+    if leads and not register_page:
+        notes.append("Meta returned leads, but Register Page event was not available; leads were not used as Register Page.")
+    return {
+        "filters": filters,
+        "spend": round(spend, 2),
+        "stages": stages,
+        "summary": {
+            "first_stage": "unique_ctr",
+            "final_stage": "start_trial",
+            "final_conversion_rate": safe_div(stages[-1]["numeric_value"], stages[1]["numeric_value"]),
+            "raw_meta": {
+                "impressions": _number(row.get("impressions")),
+                "reach": _number(row.get("reach")),
+                "clicks": _number(row.get("clicks")),
+                "inline_link_clicks": inline_link_clicks,
+                "unique_inline_link_clicks": unique_link_clicks,
+                "messages_started": messages_started,
+                "leads": leads,
+            },
+        },
+        "debug": {
+            "mode": mode,
+            "query_plan": build_query_plan(DEFAULT_DASHBOARD_DEFINITION, "journey_funnel"),
+            "meta_insights_rows": len(rows),
+            "missing_live_metrics": missing_live_metrics,
+            "notes": notes,
+            **(debug or {}),
+        },
+    }
+
+
+def build_mixed_funnel(live_payload: dict | None, filters: dict | None = None, debug: dict | None = None) -> dict:
+    if not live_payload:
+        fallback = build_fallback_funnel(filters)
+        fallback["debug"]["connector_errors"] = (debug or {}).get("connector_errors", [])
+        return fallback
+    return build_live_funnel(live_payload, filters, debug=debug, mode=(debug or {}).get("mode", "live_data"))
+
+
+def _build_stage_rows(stage_values: list[tuple[str, str, float, str, float | None]]) -> list[dict]:
+    stages = []
+    previous = None
+    for stage_id, label, value, source, cost in stage_values:
+        numeric_value = float(value or 0)
+        transition = 1 if previous is None else safe_div(numeric_value, previous)
+        drop = None if transition is None else max(0, 1 - transition)
+        stages.append(
+            {
+                "id": stage_id,
+                "label": label,
+                "value": pct(numeric_value / 100) if stage_id == "unique_ctr" else int(numeric_value),
+                "numeric_value": numeric_value,
+                "source": source,
+                "cost": None if cost is None else round(cost, 2),
+                "transition_rate": transition,
+                "transition_label": pct(transition),
+                "drop_rate": drop,
+                "drop_label": pct(drop),
+                "status": _stage_status(drop, transition),
+                "metric_source": METRIC_DICTIONARY.get(stage_id, {"source": source}),
+            }
+        )
+        if stage_id != "unique_ctr":
+            previous = numeric_value
+    return stages
+
+
+def _number(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, list):
+        return sum(_number(item.get("value") if isinstance(item, dict) else item) for item in value)
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cost(spend: float, value: float) -> float | None:
+    return safe_div(spend, value)
+
+
+def _action_value(row: dict, action_type: str) -> float:
+    target = str(action_type or "").casefold()
+    total = 0.0
+    for item in row.get("actions") or []:
+        current = str(item.get("action_type") or item.get("event_name") or "").casefold()
+        if current == target or target in current:
+            total += _number(item.get("value"))
+    return total
+
+
 def _stage_status(drop: float | None, transition: float | None) -> str:
     if transition is None:
         return "neutral"

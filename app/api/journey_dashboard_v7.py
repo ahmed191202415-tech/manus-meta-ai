@@ -1,7 +1,7 @@
 from json import dumps
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,16 +10,23 @@ from app.analytics.dashboard_engine import (
     DEFAULT_DASHBOARD_DEFINITION,
     METRIC_DICTIONARY,
     build_fallback_funnel,
+    build_mixed_funnel,
     build_query_plan,
     comparison,
     filter_options,
     stage_detail,
     trend,
 )
+from app.core.auth import resolve_access_token
+from app.core.meta_client import meta_call
 
 router = APIRouter(tags=["journey-dashboard-v7"])
 
 _DEFINITIONS = {DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]: DEFAULT_DASHBOARD_DEFINITION}
+META_DASHBOARD_FIELDS = (
+    "campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,"
+    "unique_inline_link_clicks,unique_ctr,actions,date_start,date_stop"
+)
 
 
 class DashboardDefinitionRequest(BaseModel):
@@ -291,13 +298,13 @@ async def update_dashboard_definition(dashboard_id: str, body: DashboardDefiniti
 
 
 @router.post("/api/dashboard-runtime/query")
-async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest):
+async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: Request):
     dashboard_id = str(body.dashboard_id or "customer_journey")
     query_id = str(body.query_id or "journey_funnel")
     filters = body.filters or {}
     definition = _DEFINITIONS.get(dashboard_id, DEFAULT_DASHBOARD_DEFINITION)
     if query_id == "journey_funnel":
-        return build_fallback_funnel(filters)
+        return await _live_or_fallback_funnel(request, filters, definition)
     if query_id == "journey_trend":
         return trend(filters=filters)
     if query_id == "journey_comparison":
@@ -310,13 +317,101 @@ async def dashboard_connectors():
     return {"connectors": CONNECTOR_REGISTRY, "metrics": METRIC_DICTIONARY}
 
 
+async def _live_or_fallback_funnel(request: Request, filters: dict, definition: dict) -> dict:
+    debug = {"connector_errors": [], "mode": "fallback_data"}
+    token = None
+    try:
+        token = await resolve_access_token(request)
+    except HTTPException as exc:
+        debug["connector_errors"].append({"source": "meta", "stage": "auth", "error": exc.detail})
+    if not token:
+        return build_mixed_funnel(None, filters, debug=debug)
+
+    try:
+        meta_payload, meta_debug = _fetch_live_meta_funnel(filters, definition, token)
+        debug.update(meta_debug)
+        debug["mode"] = "live_data"
+        return build_mixed_funnel(meta_payload, filters, debug=debug)
+    except HTTPException as exc:
+        debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": exc.detail})
+    except Exception as exc:
+        debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": str(exc)})
+    return build_mixed_funnel(None, filters, debug=debug)
+
+
+def _fetch_live_meta_funnel(filters: dict, definition: dict, token: str) -> tuple[dict, dict]:
+    scope_id = _meta_scope_id(filters, definition)
+    params = {
+        "fields": META_DASHBOARD_FIELDS,
+        "limit": 100,
+        **_meta_date_params(filters),
+    }
+    path = f"{scope_id}/insights"
+    payload = meta_call("GET", path, token, params=params)
+    return payload, {"meta_path": path, "meta_params": params}
+
+
+def _meta_scope_id(filters: dict, definition: dict) -> str:
+    for key in ("ad_id", "adset_id", "campaign_id"):
+        value = str(filters.get(key) or "").strip()
+        if value and value.lower() != "all":
+            return value
+    account_id = (
+        (definition.get("data_sources") or {})
+        .get("meta", {})
+        .get("account_id", DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"])
+    )
+    clean = str(account_id or "").strip()
+    if clean and not clean.startswith("act_"):
+        return f"act_{clean}"
+    return clean or DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]
+
+
+def _meta_date_params(filters: dict) -> dict:
+    date_from = str(filters.get("date_from") or "").strip()
+    date_to = str(filters.get("date_to") or "").strip()
+    if date_from and date_to:
+        return {"time_range": {"since": date_from, "until": date_to}}
+    return {"date_preset": "last_7d"}
+
+
 @router.get("/api/journey/filters")
-async def journey_filters():
-    return filter_options()
+async def journey_filters(request: Request):
+    fallback = filter_options()
+    try:
+        token = await resolve_access_token(request)
+        account_id = _first_ad_account_id(token)
+        campaigns = _meta_rows(f"{account_id}/campaigns", token, {"fields": "id,name,status,effective_status", "limit": 100})
+        adsets = _meta_rows(f"{account_id}/adsets", token, {"fields": "id,name,status,effective_status,campaign_id", "limit": 100})
+        return {
+            **fallback,
+            "campaigns": [{"id": "all", "name": "All"}] + [{"id": item.get("id"), "name": item.get("name") or item.get("id")} for item in campaigns],
+            "adsets": [{"id": "all", "name": "All"}] + [{"id": item.get("id"), "name": item.get("name") or item.get("id")} for item in adsets],
+            "debug": {"mode": "live_data", "meta_account_id": account_id},
+        }
+    except Exception as exc:
+        fallback["debug"] = {"mode": "fallback_options", "error": str(getattr(exc, "detail", exc))}
+        return fallback
+
+
+def _first_ad_account_id(token: str) -> str:
+    rows = _meta_rows("me/adaccounts", token, {"fields": "id,name,account_id", "limit": 50})
+    if not rows:
+        return DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]
+    account_id = str(rows[0].get("id") or rows[0].get("account_id") or "").strip()
+    if account_id and not account_id.startswith("act_"):
+        return f"act_{account_id}"
+    return account_id or DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]
+
+
+def _meta_rows(path: str, token: str, params: dict) -> list[dict]:
+    payload = meta_call("GET", path, token, params=params)
+    return payload.get("data") or []
 
 
 @router.get("/api/journey/funnel")
 async def journey_funnel(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     campaign_id: str = "all",
@@ -325,7 +420,16 @@ async def journey_funnel(
     device: str = "all",
     placement: str = "all",
 ):
-    return build_fallback_funnel(locals())
+    filters = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "campaign_id": campaign_id,
+        "adset_id": adset_id,
+        "ad_id": ad_id,
+        "device": device,
+        "placement": placement,
+    }
+    return await _live_or_fallback_funnel(request, filters, DEFAULT_DASHBOARD_DEFINITION)
 
 
 @router.get("/api/journey/stage-detail")

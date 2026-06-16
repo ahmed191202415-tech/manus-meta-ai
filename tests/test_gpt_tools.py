@@ -14,7 +14,7 @@ from app.schemas.gpt_tool_requests import (
 )
 
 
-def test_compact_gpt_schema_keeps_broad_dispatchers_only():
+def test_compact_gpt_schema_keeps_broad_dispatchers_and_dashboard_runtime():
     schema = openapi_gpt_schema()
 
     assert set(schema["paths"]) == {
@@ -31,7 +31,17 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_only():
         "/tools/clarity",
         "/tools/reports",
         "/tools/dashboards",
+        "/api/dashboard-definitions",
+        "/api/dashboard-definitions/{dashboard_id}",
+        "/api/dashboard-runtime/query",
+        "/api/dashboard-runtime/connectors",
+        "/api/journey/funnel",
+        "/api/journey/stage-detail",
+        "/api/journey/trend",
+        "/api/journey/comparison",
     }
+    operation_count = sum(len(path_item) for path_item in schema["paths"].values())
+    assert operation_count <= 30
     assert "/ga4/custom_report" in app.openapi()["paths"]
     assert "/reports/save_pptx" in app.openapi()["paths"]
     assert "/page_posts" in app.openapi()["paths"]
