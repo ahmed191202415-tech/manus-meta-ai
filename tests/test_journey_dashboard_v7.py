@@ -17,6 +17,38 @@ def test_journey_dashboard_page_renders_runtime():
     assert "Comparison Lab" in response.text
 
 
+def test_custom_dashboard_definition_returns_renderable_link():
+    manifest = {
+        "dashboard_id": "sales_probe_dashboard",
+        "title": "Sales Probe",
+        "filters": [
+            {"key": "date_from", "type": "date", "default": "2026-06-15"},
+            {"key": "date_to", "type": "date", "default": "2026-06-16"},
+            {"key": "campaign_id", "type": "select", "options": [{"id": "all", "name": "All"}]},
+        ],
+        "metrics": {
+            "purchase": {"source": "meta_action", "action_type": "purchase"},
+        },
+        "stages": [
+            {"id": "purchase", "label": "Purchase", "metric_id": "purchase", "position": 1},
+        ],
+        "widgets": [
+            {"id": "purchase_kpi", "type": "kpi", "title": "Purchases", "stage": "purchase", "span": 3},
+            {"id": "stage_table", "type": "table", "title": "Stage Data", "source": "stages", "span": 12},
+        ],
+    }
+
+    created = client.post("/api/dashboard-definitions", json=manifest)
+    assert created.status_code == 200
+    assert created.json()["url"].endswith("/dashboards/custom/sales_probe_dashboard")
+
+    page = client.get("/dashboards/custom/sales_probe_dashboard")
+    assert page.status_code == 200
+    assert "Sales Probe" in page.text
+    assert "purchase_kpi" in page.text
+    assert "/api/dashboard-runtime/query" in page.text
+
+
 def test_journey_funnel_returns_business_rule_stages():
     response = client.get("/api/journey/funnel?campaign_id=all")
 

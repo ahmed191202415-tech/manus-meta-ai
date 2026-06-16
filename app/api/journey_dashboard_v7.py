@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.config import PUBLIC_BASE_URL
 from app.analytics.dashboard_engine import (
     CONNECTOR_REGISTRY,
     DEFAULT_DASHBOARD_DEFINITION,
@@ -80,6 +81,11 @@ class JourneyComparisonRequest(BaseModel):
     sort: str = Field("lowest_cost", description="Sort mode.")
     date_from: str | None = Field(None, description="Start date.")
     date_to: str | None = Field(None, description="End date.")
+
+
+def _dashboard_url(dashboard_id: str) -> str:
+    path = f"/dashboards/custom/{dashboard_id}"
+    return f"{PUBLIC_BASE_URL}{path}" if PUBLIC_BASE_URL else path
 
 
 @router.get("/journey-dashboard/v7", response_class=HTMLResponse)
@@ -286,13 +292,164 @@ loadDefinition().then(loadFilters).then(reloadAll);
 </html>""")
 
 
+@router.get("/dashboards/custom/{dashboard_id}", response_class=HTMLResponse)
+async def custom_dashboard_page(dashboard_id: str):
+    definition = _DEFINITIONS.get(dashboard_id)
+    if not definition:
+        raise HTTPException(status_code=404, detail="Dashboard definition was not found.")
+    return HTMLResponse(_custom_dashboard_html(definition))
+
+
+def _custom_dashboard_html(definition: dict) -> str:
+    definition_json = dumps(definition, ensure_ascii=False)
+    title = str(definition.get("title") or definition.get("dashboard_id") or "Custom Dashboard")
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+:root {{ --bg:#f5f7fb; --panel:#fff; --line:#dfe5ef; --text:#111827; --muted:#667085; --blue:#2563eb; --red:#dc2626; --green:#16a34a; --amber:#d97706; }}
+body {{ margin:0; font-family:Arial, sans-serif; background:var(--bg); color:var(--text); }}
+.shell {{ max-width:1480px; margin:0 auto; padding:22px; }}
+.top {{ background:#111827; color:#fff; border-radius:12px; padding:20px; display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }}
+h1 {{ margin:0 0 8px; font-size:26px; }}
+h2,h3 {{ margin:0 0 12px; }}
+.muted {{ color:var(--muted); }} .top .muted {{ color:#cbd5e1; }}
+.filters {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }}
+.grid {{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; align-items:start; }}
+.panel {{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; box-shadow:0 8px 22px rgba(15,23,42,.05); min-width:0; overflow:hidden; }}
+.span-3 {{ grid-column:span 3; }} .span-4 {{ grid-column:span 4; }} .span-6 {{ grid-column:span 6; }} .span-8 {{ grid-column:span 8; }} .span-12 {{ grid-column:1 / -1; }}
+label {{ display:block; color:var(--muted); font-size:12px; margin-bottom:6px; }}
+input,select {{ width:100%; box-sizing:border-box; border:1px solid #cfd7e6; border-radius:8px; padding:10px; background:white; }}
+button {{ border:0; border-radius:9px; background:var(--blue); color:white; padding:11px 14px; font-weight:700; cursor:pointer; }}
+button.secondary {{ background:#475467; }}
+button:disabled {{ opacity:.65; cursor:wait; }}
+.value {{ font-size:28px; font-weight:800; margin-top:8px; }}
+.chart {{ width:100%; height:330px; }}
+.table-wrap {{ overflow-x:auto; border:1px solid #edf0f5; border-radius:10px; }}
+table {{ width:100%; min-width:720px; border-collapse:collapse; font-size:14px; }}
+th,td {{ border-bottom:1px solid #edf0f5; padding:10px; text-align:left; vertical-align:top; overflow-wrap:anywhere; }}
+th {{ background:#f8fafc; color:#475467; }}
+.bar {{ height:10px; background:#2563eb; border-radius:999px; min-width:4px; }}
+.src {{ color:var(--muted); font-size:12px; margin-top:4px; }}
+.empty {{ padding:14px; border:1px dashed #cbd5e1; border-radius:10px; color:#667085; background:#f8fafc; }}
+.debug {{ white-space:pre-wrap; background:#0f172a; color:#dbeafe; border-radius:10px; padding:12px; font-size:12px; display:none; }}
+.error {{ border-color:#fecaca; background:#fff1f2; color:#991b1b; margin-bottom:12px; }}
+@media(max-width:920px) {{ .span-3,.span-4,.span-6,.span-8 {{ grid-column:1 / -1; }} }}
+</style>
+</head>
+<body>
+<div class="shell" id="app">
+  <section class="top">
+    <div><h1 id="title"></h1><div id="subtitle" class="muted"></div></div>
+    <div><button id="refreshBtn" onclick="reloadDashboard()">Refresh</button> <button class="secondary" onclick="toggleDebug()">Debug</button></div>
+  </section>
+  <section id="filters" class="filters"></section>
+  <section id="errorBox"></section>
+  <section id="widgets" class="grid"></section>
+  <section class="panel span-12" style="margin-top:14px"><h3>Debug</h3><pre id="debug" class="debug"></pre></section>
+</div>
+<script>
+let definition = {definition_json};
+let latestData = null;
+const charts = {{}};
+function api(url, options={{}}) {{ return fetch(url, options).then(async r => {{ if(!r.ok) throw new Error(await r.text()); return r.json(); }}); }}
+function filterValue(key) {{ const el = document.getElementById("filter_" + key); return el ? el.value : "all"; }}
+function filters() {{
+  const out = {{}};
+  (definition.filters || []).forEach(f => out[f.key] = filterValue(f.key));
+  ["date_from","date_to","campaign_id","adset_id","ad_id","device","placement"].forEach(k => {{ if(out[k] === undefined) out[k] = k.includes("_id") || ["device","placement"].includes(k) ? "all" : ""; }});
+  return out;
+}}
+function spanClass(widget) {{ const span = Number(widget.span || widget.width || (widget.type === "kpi" ? 3 : 6)); return "span-" + ([3,4,6,8,12].includes(span) ? span : 6); }}
+function renderFilters() {{
+  document.getElementById("filters").innerHTML = (definition.filters || []).map(f => {{
+    const key = f.key; const label = f.label || key; const type = f.type || "text";
+    if(type === "date" || key === "date_from" || key === "date_to") return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" type="date" value="${{f.default || ""}}"></div>`;
+    const opts = (f.options || [{{id:"all",name:"All"}}]).map(o => `<option value="${{o.id ?? o.value}}">${{o.name ?? o.label ?? o.value}}</option>`).join("");
+    if(type === "select" || key.endsWith("_id") || key === "device" || key === "placement") return `<div class="panel"><label>${{label}}</label><select id="filter_${{key}}">${{opts}}</select></div>`;
+    return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" value="${{f.default || ""}}"></div>`;
+  }}).join("");
+  document.querySelectorAll("#filters input,#filters select").forEach(el => el.addEventListener("change", reloadDashboard));
+}}
+function stageRows() {{ return (latestData && latestData.stages) || []; }}
+function widgetRows(widget) {{
+  if(widget.stages) return stageRows().filter(s => widget.stages.includes(s.id));
+  if(widget.source === "stages" || widget.data_query === "journey_funnel") return stageRows();
+  return [];
+}}
+function tableHtml(rows) {{
+  if(!rows.length) return '<div class="empty">No data available.</div>';
+  const cols = Object.keys(rows[0] || {{}}).filter(c => !["metric_source","warnings"].includes(c));
+  return `<div class="table-wrap"><table><thead><tr>${{cols.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{cols.map(c=>`<td>${{typeof r[c] === "object" ? JSON.stringify(r[c]) : (r[c] ?? "")}}</td>`).join("")}}</tr>`).join("")}}</tbody></table></div>`;
+}}
+function renderWidget(widget) {{
+  const rows = widgetRows(widget);
+  const type = widget.type || "table";
+  const title = widget.title || widget.id || type;
+  if(type === "kpi") {{
+    const stage = rows.find(s => s.id === widget.stage || s.id === widget.metric || s.id === widget.metric_id) || rows[0] || {{}};
+    return `<div class="panel ${{spanClass(widget)}}"><div class="muted">${{title}}</div><div class="value">${{stage.value ?? stage.numeric_value ?? "-"}}</div><div class="src">${{stage.source || ""}}</div></div>`;
+  }}
+  if(["conversion_path","funnel","bar","line"].includes(type)) {{
+    return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div id="chart_${{widget.id}}" class="chart"></div></div>`;
+  }}
+  if(type === "text") return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><p>${{widget.text || widget.config?.text || ""}}</p></div>`;
+  return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3>${{tableHtml(rows)}}</div>`;
+}}
+function drawCharts() {{
+  (definition.widgets || []).forEach(widget => {{
+    if(!["conversion_path","funnel","bar","line"].includes(widget.type)) return;
+    const el = document.getElementById("chart_" + widget.id); if(!el) return;
+    const chart = charts[widget.id] || echarts.init(el); charts[widget.id] = chart;
+    const rows = widgetRows(widget);
+    chart.setOption({{
+      tooltip:{{trigger:"axis"}},
+      xAxis:{{type:"category",data:rows.map(r=>r.label || r.id), axisLabel:{{rotate:25}}}},
+      yAxis:{{type:"value"}},
+      series:[{{type: widget.type === "line" ? "line" : "bar", smooth:true, data:rows.map(r=>r.numeric_value || 0), itemStyle:{{color:"#2563eb"}}}}]
+    }});
+  }});
+}}
+function render() {{
+  document.getElementById("title").textContent = definition.title || definition.dashboard_id || "Custom Dashboard";
+  document.getElementById("subtitle").textContent = definition.description || "Manifest-driven dashboard";
+  const widgets = definition.widgets && definition.widgets.length ? definition.widgets : [{{id:"conversion_path",type:"conversion_path",title:"Conversion Path",span:12,stages:(definition.stages||[]).map(s=>s.id)}},{{id:"stage_table",type:"table",title:"Stage Data",span:12,source:"stages"}}];
+  definition.widgets = widgets;
+  document.getElementById("widgets").innerHTML = widgets.map(renderWidget).join("");
+  drawCharts();
+  document.getElementById("debug").textContent = JSON.stringify({{definition, runtime:latestData?.debug, filters:filters()}}, null, 2);
+}}
+async function reloadDashboard() {{
+  document.getElementById("refreshBtn").disabled = true;
+  document.getElementById("errorBox").innerHTML = "";
+  try {{
+    latestData = await api("/api/dashboard-runtime/query", {{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{dashboard_id:definition.dashboard_id, query_id:"journey_funnel", filters:filters()}})}});
+    render();
+  }} catch(e) {{
+    document.getElementById("errorBox").innerHTML = `<div class="panel error">${{e.message}}</div>`;
+  }} finally {{
+    document.getElementById("refreshBtn").disabled = false;
+  }}
+}}
+function toggleDebug() {{ const el = document.getElementById("debug"); el.style.display = el.style.display === "block" ? "none" : "block"; }}
+renderFilters(); reloadDashboard();
+</script>
+</body>
+</html>"""
+
+
+
 @router.post("/api/dashboard-definitions")
 async def create_dashboard_definition(body: DashboardDefinitionRequest):
-    definition = body.dict()
+    definition = body.model_dump()
     dashboard_id = str(definition.get("dashboard_id") or "custom_dashboard")
     definition["dashboard_id"] = dashboard_id
     _DEFINITIONS[dashboard_id] = definition
-    return {"success": True, "definition": definition}
+    return {"success": True, "definition": definition, "url": _dashboard_url(dashboard_id)}
 
 
 @router.get("/api/dashboard-definitions/{dashboard_id}")
@@ -302,10 +459,10 @@ async def get_dashboard_definition(dashboard_id: str):
 
 @router.put("/api/dashboard-definitions/{dashboard_id}")
 async def update_dashboard_definition(dashboard_id: str, body: DashboardDefinitionUpdateRequest):
-    definition = body.dict()
+    definition = body.model_dump()
     definition["dashboard_id"] = dashboard_id
     _DEFINITIONS[dashboard_id] = definition
-    return {"success": True, "definition": definition}
+    return {"success": True, "definition": definition, "url": _dashboard_url(dashboard_id)}
 
 
 @router.post("/api/dashboard-runtime/query")
@@ -551,7 +708,7 @@ async def journey_trend(stage_id: str = "register_page", metric: str = "value", 
 @router.post("/api/journey/comparison")
 async def journey_comparison(body: JourneyComparisonRequest):
     return comparison(
-        entities=[entity.dict() for entity in body.entities] or None,
+        entities=[entity.model_dump() for entity in body.entities] or None,
         stage_id=body.stage_id,
         metric=body.metric,
         sort=body.sort,
