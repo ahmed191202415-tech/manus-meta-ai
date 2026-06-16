@@ -37,6 +37,8 @@ class DashboardDefinitionRequest(BaseModel):
     filters: list[dict[str, Any]] = Field(default_factory=list, description="Dashboard filter definitions.")
     data_sources: dict[str, Any] = Field(default_factory=dict, description="Meta, GA4, Clarity, or other source config.")
     charts: list[dict[str, Any]] = Field(default_factory=list, description="Chart, table, and interaction definitions.")
+    stages: list[dict[str, Any]] = Field(default_factory=list, description="Ordered funnel or journey stages.")
+    widgets: list[dict[str, Any]] = Field(default_factory=list, description="Renderer widgets and their placement.")
     layout: dict[str, Any] = Field(default_factory=dict, description="Optional renderer layout hints.")
     metrics: dict[str, Any] = Field(default_factory=dict, description="Optional dashboard-specific metric overrides.")
     interactions: list[dict[str, Any]] = Field(default_factory=list, description="Cross-filtering or drilldown rules.")
@@ -58,6 +60,8 @@ class DashboardDefinitionUpdateRequest(BaseModel):
     filters: list[dict[str, Any]] = Field(default_factory=list, description="Dashboard filter definitions.")
     data_sources: dict[str, Any] = Field(default_factory=dict, description="Meta, GA4, Clarity, or other source config.")
     charts: list[dict[str, Any]] = Field(default_factory=list, description="Chart, table, and interaction definitions.")
+    stages: list[dict[str, Any]] = Field(default_factory=list, description="Ordered funnel or journey stages.")
+    widgets: list[dict[str, Any]] = Field(default_factory=list, description="Renderer widgets and their placement.")
     layout: dict[str, Any] = Field(default_factory=dict, description="Optional renderer layout hints.")
     metrics: dict[str, Any] = Field(default_factory=dict, description="Optional dashboard-specific metric overrides.")
     interactions: list[dict[str, Any]] = Field(default_factory=list, description="Cross-filtering or drilldown rules.")
@@ -171,7 +175,7 @@ th {{ background:#f8fafc; color:#475467; }}
   </section>
 </div>
 <script>
-const definition = {definition_json};
+let definition = {definition_json};
 let selectedStage = "register_page";
 let latestFunnel = null;
 const chart = id => echarts.init(document.getElementById(id));
@@ -203,6 +207,9 @@ async function loadFilters() {{
   fillSelect("adset_id", data.adsets);
   fillSelect("device", data.devices);
   fillSelect("placement", data.placements);
+}}
+async function loadDefinition() {{
+  definition = await api("/api/dashboard-definitions/customer_journey");
 }}
 function sourceBadge(source) {{ return `<span class="src">source: ${{source}}</span>`; }}
 function renderKpis(stages) {{
@@ -269,7 +276,7 @@ function toggleDebug() {{
 }}
 ["campaign_id","adset_id","device","placement","date_from","date_to"].forEach(id => document.addEventListener("change", e => {{ if(e.target.id === id) reloadAll(); }}));
 ["trend_stage","trend_metric","trend_from","trend_to"].forEach(id => document.addEventListener("change", e => {{ if(e.target.id === id) loadTrend(); }}));
-loadFilters().then(reloadAll);
+loadDefinition().then(loadFilters).then(reloadAll);
 </script>
 </body>
 </html>""")
@@ -317,6 +324,69 @@ async def dashboard_connectors():
     return {"connectors": CONNECTOR_REGISTRY, "metrics": METRIC_DICTIONARY}
 
 
+@router.get("/api/dashboard-runtime/events/discover")
+async def discover_dashboard_events(
+    request: Request,
+    account_id: str | None = None,
+    pixel_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    campaign_id: str | None = None,
+):
+    token = await resolve_access_token(request)
+    clean_account_id = str(account_id or DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]).strip()
+    if clean_account_id and not clean_account_id.startswith("act_"):
+        clean_account_id = f"act_{clean_account_id}"
+    filters = {"campaign_id": campaign_id or "all", "date_from": date_from, "date_to": date_to}
+    scope_id = campaign_id or clean_account_id
+    meta_payload = meta_call(
+        "GET",
+        f"{scope_id}/insights",
+        token,
+        params={"fields": "actions", "limit": 100, **_meta_date_params(filters)},
+    )
+    action_rows = []
+    for row in meta_payload.get("data") or []:
+        for item in row.get("actions") or []:
+            action_type = str(item.get("action_type") or "")
+            action_rows.append(
+                {
+                    "action_type": action_type,
+                    "sample_value": _to_number(item.get("value")),
+                    "source": "meta_actions",
+                    "status": "unmapped" if action_type.casefold() == "offsite_conversion.fb_pixel_custom" else "available",
+                }
+            )
+    custom_conversions = []
+    try:
+        custom_conversions = _meta_rows(
+            f"{clean_account_id}/customconversions",
+            token,
+            {"fields": "id,name,event_source_type,custom_event_type,pixel{id,name}", "limit": 200},
+        )
+    except Exception:
+        custom_conversions = []
+    pixel_events = []
+    if pixel_id:
+        try:
+            stats = meta_call(
+                "GET",
+                f"{pixel_id}/stats",
+                token,
+                params={"aggregation": "event_total_counts", "start_time": date_from, "end_time": date_to},
+            )
+            pixel_events = stats.get("data") or []
+        except Exception:
+            pixel_events = []
+    return {
+        "meta_actions": action_rows,
+        "custom_conversions": custom_conversions,
+        "pixel_events": pixel_events,
+        "status": "needs_mapping" if any(item["status"] == "unmapped" for item in action_rows) else "ready",
+        "debug": {"scope_id": scope_id, "account_id": clean_account_id, "pixel_id": pixel_id},
+    }
+
+
 async def _live_or_fallback_funnel(request: Request, filters: dict, definition: dict) -> dict:
     debug = {"connector_errors": [], "mode": "fallback_data"}
     token = None
@@ -325,18 +395,18 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
     except HTTPException as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "auth", "error": exc.detail})
     if not token:
-        return build_mixed_funnel(None, filters, debug=debug)
+        return build_mixed_funnel(None, filters, debug=debug, definition=definition)
 
     try:
         meta_payload, meta_debug = _fetch_live_meta_funnel(filters, definition, token)
         debug.update(meta_debug)
         debug["mode"] = "live_data"
-        return build_mixed_funnel(meta_payload, filters, debug=debug)
+        return build_mixed_funnel(meta_payload, filters, debug=debug, definition=definition)
     except HTTPException as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": exc.detail})
     except Exception as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": str(exc)})
-    return build_mixed_funnel(None, filters, debug=debug)
+    return build_mixed_funnel(None, filters, debug=debug, definition=definition)
 
 
 def _fetch_live_meta_funnel(filters: dict, definition: dict, token: str) -> tuple[dict, dict]:
@@ -407,6 +477,13 @@ def _first_ad_account_id(token: str) -> str:
 def _meta_rows(path: str, token: str, params: dict) -> list[dict]:
     payload = meta_call("GET", path, token, params=params)
     return payload.get("data") or []
+
+
+def _to_number(value) -> float:
+    try:
+        return float(str(value or 0).replace(",", ""))
+    except ValueError:
+        return 0.0
 
 
 @router.get("/api/journey/funnel")

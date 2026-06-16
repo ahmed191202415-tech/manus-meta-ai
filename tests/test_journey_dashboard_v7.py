@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.analytics.dashboard_engine import build_fallback_funnel, stage_detail
+from app.analytics.dashboard_engine import build_fallback_funnel, build_live_funnel, stage_detail
 from app.api import journey_dashboard_v7
 from app.main import app
 
@@ -131,6 +131,77 @@ def test_connector_registry_exposes_metric_dictionary():
     data = response.json()
     assert "meta" in data["connectors"]
     assert data["metrics"]["register_page"]["source"] == "meta_event"
+
+
+def test_live_funnel_does_not_map_fb_pixel_custom_to_register_page():
+    funnel = build_live_funnel(
+        {
+            "data": [
+                {
+                    "spend": "500",
+                    "unique_ctr": "4.887675",
+                    "unique_inline_link_clicks": "47",
+                    "actions": [
+                        {"action_type": "landing_page_view", "value": "27"},
+                        {"action_type": "lead", "value": "25"},
+                        {"action_type": "complete_registration", "value": "2"},
+                        {"action_type": "purchase", "value": "2"},
+                        {"action_type": "offsite_conversion.fb_pixel_custom", "value": "72"},
+                    ],
+                }
+            ]
+        }
+    )
+
+    by_id = {stage["id"]: stage for stage in funnel["stages"]}
+    assert by_id["unique_ctr"]["numeric_value"] == 4.887675
+    assert by_id["unique_link_clicks"]["numeric_value"] == 47
+    assert by_id["landing_loaded"]["numeric_value"] == 27
+    assert by_id["register_page"]["numeric_value"] == 0
+    assert by_id["complete_registration"]["numeric_value"] == 2
+    assert by_id["purchase"]["numeric_value"] == 2
+    assert by_id["register_page"]["warnings"] == ["Event not found: Register Page"]
+    assert funnel["debug"]["unmapped_events"] == [
+        {
+            "action_type": "offsite_conversion.fb_pixel_custom",
+            "value": 72.0,
+            "reason": "Not mapped by dashboard definition",
+            "status": "unmapped",
+        }
+    ]
+
+
+def test_event_discovery_marks_fb_pixel_custom_unmapped(monkeypatch):
+    async def fake_resolve_access_token(request):
+        return "live-token"
+
+    def fake_meta_call(method, path, token, params=None):
+        if path.endswith("/insights"):
+            return {
+                "data": [
+                    {
+                        "actions": [
+                            {"action_type": "landing_page_view", "value": "27"},
+                            {"action_type": "offsite_conversion.fb_pixel_custom", "value": "72"},
+                        ]
+                    }
+                ]
+            }
+        if path.endswith("/customconversions"):
+            return {"data": [{"id": "cc_1", "name": "Register Page"}]}
+        return {"data": []}
+
+    monkeypatch.setattr(journey_dashboard_v7, "resolve_access_token", fake_resolve_access_token)
+    monkeypatch.setattr(journey_dashboard_v7, "meta_call", fake_meta_call)
+
+    response = client.get(
+        "/api/dashboard-runtime/events/discover?account_id=act_1&campaign_id=120247668860760505&date_from=2026-06-15&date_to=2026-06-16"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "needs_mapping"
+    assert any(item["action_type"] == "offsite_conversion.fb_pixel_custom" and item["status"] == "unmapped" for item in data["meta_actions"])
 
 
 def test_fallback_funnel_calculates_transition_and_costs():
