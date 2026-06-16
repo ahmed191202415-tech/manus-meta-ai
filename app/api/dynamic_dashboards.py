@@ -285,6 +285,12 @@ body {{ margin:0; font-family: Arial, sans-serif; background:#f6f8fb; color:#172
 .hero h1 {{ margin:0 0 8px; font-size:28px; }}
 .muted {{ color:#667085; }}
 .hero .muted {{ color:#cbd5e1; }}
+.status-strip {{ display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; align-items:center; }}
+.badge {{ display:inline-flex; align-items:center; gap:7px; border-radius:999px; padding:7px 11px; font-size:13px; background:#eef2ff; color:#1e3a8a; }}
+.badge.ok {{ background:#dcfce7; color:#166534; }}
+.badge.warn {{ background:#fef3c7; color:#92400e; }}
+.badge.error {{ background:#fee2e2; color:#991b1b; }}
+.dot {{ width:8px; height:8px; border-radius:999px; background:currentColor; }}
 .filters,.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:18px; }}
 .panel {{ background:white; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(15,23,42,.05); }}
 .kpi .value {{ font-size:30px; font-weight:800; margin-top:10px; }}
@@ -295,15 +301,28 @@ th,td {{ border-bottom:1px solid #edf0f5; padding:10px; text-align:right; }}
 th {{ color:#475467; background:#f9fafb; }}
 .bar {{ height:10px; background:#2563eb; border-radius:999px; min-width:4px; }}
 .actions {{ display:flex; gap:10px; align-items:center; }}
-button,a.button {{ border:0; border-radius:8px; padding:10px 13px; background:#2563eb; color:white; text-decoration:none; cursor:pointer; }}
+button,a.button {{ border:0; border-radius:10px; padding:11px 15px; background:#2563eb; color:white; text-decoration:none; cursor:pointer; font-weight:700; display:inline-flex; align-items:center; gap:8px; box-shadow:0 8px 18px rgba(37,99,235,.22); transition:transform .12s ease, opacity .12s ease, background .12s ease; }}
+button:hover,a.button:hover {{ background:#1d4ed8; transform:translateY(-1px); }}
+button:active,a.button:active {{ transform:translateY(0); opacity:.86; }}
+button[disabled] {{ cursor:wait; opacity:.72; transform:none; }}
+.spinner {{ width:14px; height:14px; border:2px solid rgba(255,255,255,.45); border-top-color:white; border-radius:999px; animation:spin .8s linear infinite; }}
+.empty {{ padding:14px; border:1px dashed #cbd5e1; border-radius:10px; color:#667085; background:#f8fafc; }}
+@keyframes spin {{ to {{ transform:rotate(360deg); }} }}
 @media(max-width:720px) {{ .hero {{ display:block; }} .shell {{ padding:14px; }} }}
 </style>
 </head>
 <body>
 <div class="shell">
   <section class="hero">
-    <div><h1>{title}</h1><div class="muted">{description}</div><div id="refreshMeta" class="muted"></div></div>
-    <div class="actions"><button onclick="loadDashboard()">Refresh view</button></div>
+    <div>
+      <h1>{title}</h1>
+      <div class="muted">{description}</div>
+      <div class="status-strip">
+        <span id="refreshBadge" class="badge"><i class="dot"></i><span>Checking data</span></span>
+        <span id="refreshMeta" class="muted"></span>
+      </div>
+    </div>
+    <div class="actions"><button id="refreshButton" onclick="loadDashboard(true)"><span id="refreshIcon">↻</span><span id="refreshLabel">Refresh</span></button></div>
   </section>
   <section id="filters" class="filters"></section>
   <section id="widgets" class="grid"></section>
@@ -337,6 +356,25 @@ function rowsFromData(data) {{
   if (data === undefined || data === null || data === "") return [];
   return [{{ value: data }}];
 }}
+function formatDateTime(value) {{
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ar-EG", {{
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Africa/Cairo"
+  }}).format(date);
+}}
+function setRefreshLoading(isLoading) {{
+  const button = document.getElementById("refreshButton");
+  const icon = document.getElementById("refreshIcon");
+  const label = document.getElementById("refreshLabel");
+  if (!button || !icon || !label) return;
+  button.disabled = isLoading;
+  icon.innerHTML = isLoading ? '<span class="spinner"></span>' : '↻';
+  label.textContent = isLoading ? "Refreshing..." : "Refresh";
+}}
 function renderFilters() {{
   const box = document.getElementById("filters");
   const filters = (dashboard.config && dashboard.config.filters) || [];
@@ -350,6 +388,7 @@ function renderFilters() {{
 }}
 function tableHtml(widget, rows) {{
   rows = rowsFromData(rows);
+  if (!rows.length) return '<div class="empty">No data available for this widget yet.</div>';
   const columns = widget.columns && widget.columns.length ? widget.columns : Object.keys(rows[0] || {{}});
   return `<table><thead><tr>${{columns.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{columns.map(c=>`<td>${{r[c] ?? ""}}</td>`).join("")}}</tr>`).join("")}}</tbody></table>`;
 }}
@@ -377,14 +416,29 @@ function renderWidgets() {{
   const widgets = (dashboard.config && dashboard.config.widgets) || [];
   document.getElementById("widgets").innerHTML = widgets.map(renderWidget).join("");
   const status = dashboard.refresh_status || {{}};
-  const suffix = status.stale ? " - needs refresh" : "";
-  document.getElementById("refreshMeta").textContent = dashboard.last_refreshed_at ? `Last refreshed: ${{dashboard.last_refreshed_at}}${{suffix}}` : `Live dashboard${{suffix}}`;
+  const badge = document.getElementById("refreshBadge");
+  const badgeText = status.stale ? "Needs refresh" : "Up to date";
+  badge.className = `badge ${{status.stale ? "warn" : "ok"}}`;
+  badge.innerHTML = `<i class="dot"></i><span>${{badgeText}}</span>`;
+  const formatted = formatDateTime(dashboard.last_refreshed_at);
+  document.getElementById("refreshMeta").textContent = formatted ? `Last refresh: ${{formatted}} Cairo time` : "No refresh time saved yet";
 }}
-async function loadDashboard() {{
-  const res = await fetch(`/dynamic_dashboards/${{dashboard.dashboard_id}}/data`);
-  dashboard = await res.json();
-  renderFilters();
-  renderWidgets();
+async function loadDashboard(showFeedback=false) {{
+  setRefreshLoading(true);
+  try {{
+    const res = await fetch(`/dynamic_dashboards/${{dashboard.dashboard_id}}/data`, {{ cache: "no-store" }});
+    if (!res.ok) throw new Error(await res.text());
+    dashboard = await res.json();
+    renderFilters();
+    renderWidgets();
+  }} catch (error) {{
+    const badge = document.getElementById("refreshBadge");
+    badge.className = "badge error";
+    badge.innerHTML = `<i class="dot"></i><span>Refresh failed</span>`;
+    if (showFeedback) alert("Could not refresh dashboard data.");
+  }} finally {{
+    setRefreshLoading(false);
+  }}
 }}
 renderFilters();
 renderWidgets();
