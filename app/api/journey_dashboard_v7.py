@@ -44,6 +44,18 @@ class DashboardRuntimeQueryRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict, description="Optional runtime context.")
 
 
+class DashboardDefinitionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str | None = Field(None, description="Dashboard title.")
+    filters: list[dict[str, Any]] = Field(default_factory=list, description="Dashboard filter definitions.")
+    data_sources: dict[str, Any] = Field(default_factory=dict, description="Meta, GA4, Clarity, or other source config.")
+    charts: list[dict[str, Any]] = Field(default_factory=list, description="Chart, table, and interaction definitions.")
+    layout: dict[str, Any] = Field(default_factory=dict, description="Optional renderer layout hints.")
+    metrics: dict[str, Any] = Field(default_factory=dict, description="Optional dashboard-specific metric overrides.")
+    interactions: list[dict[str, Any]] = Field(default_factory=list, description="Cross-filtering or drilldown rules.")
+
+
 class ComparisonEntity(BaseModel):
     type: str = Field("campaign", description="Entity type: campaign, adset, or ad.")
     id: str = Field(..., description="Meta entity id.")
@@ -271,7 +283,7 @@ async def get_dashboard_definition(dashboard_id: str):
 
 
 @router.put("/api/dashboard-definitions/{dashboard_id}")
-async def update_dashboard_definition(dashboard_id: str, body: DashboardDefinitionRequest):
+async def update_dashboard_definition(dashboard_id: str, body: DashboardDefinitionUpdateRequest):
     definition = body.dict()
     definition["dashboard_id"] = dashboard_id
     _DEFINITIONS[dashboard_id] = definition
