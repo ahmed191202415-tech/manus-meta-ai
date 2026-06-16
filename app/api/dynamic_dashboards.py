@@ -87,7 +87,7 @@ def _parse_dt(value) -> datetime | None:
 
 
 def _refresh_interval(policy: dict) -> timedelta | None:
-    mode = str((policy or {}).get("mode") or "on_open").strip().lower()
+    mode = str((policy or {}).get("mode") or (policy or {}).get("type") or "on_open").strip().lower()
     if mode == "hourly":
         return timedelta(hours=1)
     if mode == "daily":
@@ -100,7 +100,7 @@ def _refresh_interval(policy: dict) -> timedelta | None:
 
 def _refresh_status(row: dict) -> dict:
     policy = row.get("refresh_policy") or {}
-    mode = str(policy.get("mode") or "on_open").strip().lower()
+    mode = str(policy.get("mode") or policy.get("type") or "on_open").strip().lower()
     last_refreshed = _parse_dt(row.get("last_refreshed_at"))
     now = datetime.now(timezone.utc)
     interval = _refresh_interval(policy)
@@ -313,7 +313,29 @@ const initialPayload = {payload};
 let dashboard = initialPayload;
 function valueFromSnapshot(key) {{
   const s = dashboard.snapshot || {{}};
-  return s[key] ?? (s.kpis || {{}})[key] ?? "";
+  if (s[key] !== undefined) return s[key];
+  if ((s.kpis || {{}})[key] !== undefined) return s.kpis[key];
+  for (const value of Object.values(s)) {{
+    if (value && !Array.isArray(value) && typeof value === "object" && value[key] !== undefined) return value[key];
+  }}
+  return "";
+}}
+function sourceData(widget) {{
+  const s = dashboard.snapshot || {{}};
+  if (widget.source && s[widget.source] !== undefined) return s[widget.source];
+  if (widget.metric) {{
+    for (const value of Object.values(s)) {{
+      if (value && !Array.isArray(value) && typeof value === "object" && value[widget.metric] !== undefined) return value;
+      if (Array.isArray(value) && value.some(row => row && row[widget.metric] !== undefined)) return value;
+    }}
+  }}
+  return s[widget.id] ?? [];
+}}
+function rowsFromData(data) {{
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") return [data];
+  if (data === undefined || data === null || data === "") return [];
+  return [{{ value: data }}];
 }}
 function renderFilters() {{
   const box = document.getElementById("filters");
@@ -327,17 +349,23 @@ function renderFilters() {{
   }}).join("");
 }}
 function tableHtml(widget, rows) {{
-  rows = Array.isArray(rows) ? rows : [];
+  rows = rowsFromData(rows);
   const columns = widget.columns && widget.columns.length ? widget.columns : Object.keys(rows[0] || {{}});
   return `<table><thead><tr>${{columns.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{columns.map(c=>`<td>${{r[c] ?? ""}}</td>`).join("")}}</tr>`).join("")}}</tbody></table>`;
 }}
 function renderWidget(widget) {{
-  const s = dashboard.snapshot || {{}};
-  const data = widget.source ? (s[widget.source] || []) : (s[widget.id] || []);
+  const data = sourceData(widget);
   if (widget.type === "kpi") return `<div class="panel kpi"><div class="muted">${{widget.title}}</div><div class="value">${{valueFromSnapshot(widget.metric || widget.id)}}</div></div>`;
   if (widget.type === "text") return `<div class="panel"><h3>${{widget.title}}</h3><p>${{widget.config?.text || valueFromSnapshot(widget.id) || ""}}</p></div>`;
+  if (widget.type === "funnel") {{
+    const rows = rowsFromData(data);
+    const first = rows[0] || {{}};
+    const entries = Object.entries(first).filter(([k,v]) => typeof v === "number" || (!isNaN(Number(v)) && String(v).trim() !== ""));
+    const max = Math.max(1, ...entries.map(([k,v]) => Number(v || 0)));
+    return `<div class="panel"><h3>${{widget.title}}</h3>${{entries.map(([k,v])=>`<div style="margin:10px 0"><div>${{k}} - ${{v}}</div><div class="bar" style="width:${{Math.max(3, Number(v || 0)/max*100)}}%"></div></div>`).join("") || tableHtml(widget, data)}}</div>`;
+  }}
   if (widget.type === "bar") {{
-    const rows = Array.isArray(data) ? data.slice(0, 12) : [];
+    const rows = rowsFromData(data).slice(0, 12);
     const metric = widget.metric || Object.keys(rows[0] || {{}}).find(k => typeof rows[0][k] === "number");
     const label = (widget.dimensions || [])[0] || Object.keys(rows[0] || {{}})[0];
     const max = Math.max(1, ...rows.map(r => Number(r[metric] || 0)));
