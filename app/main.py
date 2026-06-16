@@ -55,6 +55,14 @@ GPT_DATA_PATHS = {
     "/tools/clarity",
     "/tools/reports",
     "/tools/dashboards",
+    "/api/dashboard-definitions",
+    "/api/dashboard-definitions/{dashboard_id}",
+    "/api/dashboard-runtime/query",
+    "/api/dashboard-runtime/connectors",
+    "/api/journey/funnel",
+    "/api/journey/stage-detail",
+    "/api/journey/trend",
+    "/api/journey/comparison",
 }
 
 app = FastAPI(
@@ -115,7 +123,10 @@ def openapi_gpt_schema():
             "received, use action=received_pixel_events; do not substitute Custom Conversions. "
             "Use /tools/website for GA4-only site intelligence, /tools/journey for Meta plus GA4 customer-journey "
             "analysis, /tools/clarity for behavior data, /tools/reports for report files, and /tools/dashboards "
-            "to create dynamic dashboard links that stay attached to each tenant portal."
+            "to create dynamic dashboard links that stay attached to each tenant portal. For custom live dashboards, "
+            "use /api/dashboard-runtime/connectors to inspect available sources, /api/dashboard-definitions to save "
+            "a manifest, /api/dashboard-runtime/query to run a chart query, and /api/journey/* endpoints for the "
+            "customer-journey dashboard data."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
