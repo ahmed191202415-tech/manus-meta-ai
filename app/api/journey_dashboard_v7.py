@@ -247,7 +247,11 @@ async function selectStage(stageId) {{
   document.getElementById("stageInspector").innerHTML = data.metrics.map(m => `<div class="metric"><strong>${{m.label}}</strong><div class="v">${{m.value}}</div>${{sourceBadge(m.source)}}</div>`).join("");
 }}
 async function loadFunnel() {{
-  const data = await api("/api/journey/funnel?" + new URLSearchParams(filters()));
+  const data = await api("/api/dashboard-runtime/query", {{
+    method:"POST",
+    headers:{{"Content-Type":"application/json"}},
+    body:JSON.stringify({{dashboard_id:definition.dashboard_id || "customer_journey", query_id:"journey_funnel", filters:filters()}})
+  }});
   latestFunnel = data;
   renderKpis(data.stages); renderStageRows(data.stages); renderPath(data.stages); renderDrop(data.stages); renderCost(data.stages);
   await selectStage(selectedStage);
@@ -332,13 +336,21 @@ async def discover_dashboard_events(
     date_from: str | None = None,
     date_to: str | None = None,
     campaign_id: str | None = None,
+    adset_id: str | None = None,
+    ad_id: str | None = None,
 ):
     token = await resolve_access_token(request)
     clean_account_id = str(account_id or DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]).strip()
     if clean_account_id and not clean_account_id.startswith("act_"):
         clean_account_id = f"act_{clean_account_id}"
-    filters = {"campaign_id": campaign_id or "all", "date_from": date_from, "date_to": date_to}
-    scope_id = campaign_id or clean_account_id
+    filters = {
+        "campaign_id": campaign_id or "all",
+        "adset_id": adset_id or "all",
+        "ad_id": ad_id or "all",
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    scope_id, entity_scope = _meta_scope_id(filters, {"data_sources": {"meta": {"account_id": clean_account_id}}})
     meta_payload = meta_call(
         "GET",
         f"{scope_id}/insights",
@@ -383,17 +395,24 @@ async def discover_dashboard_events(
         "custom_conversions": custom_conversions,
         "pixel_events": pixel_events,
         "status": "needs_mapping" if any(item["status"] == "unmapped" for item in action_rows) else "ready",
-        "debug": {"scope_id": scope_id, "account_id": clean_account_id, "pixel_id": pixel_id},
+        "debug": {
+            "scope_id": scope_id,
+            "entity_scope": entity_scope,
+            "account_id": clean_account_id,
+            "pixel_id": pixel_id,
+            "filters_sent": filters,
+        },
     }
 
 
 async def _live_or_fallback_funnel(request: Request, filters: dict, definition: dict) -> dict:
-    debug = {"connector_errors": [], "mode": "fallback_data"}
+    debug = {"connector_errors": [], "connector_status": {"meta": "not_attempted"}, "filters_sent": filters, "mode": "fallback_data"}
     token = None
     try:
         token = await resolve_access_token(request)
     except HTTPException as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "auth", "error": exc.detail})
+        debug["connector_status"]["meta"] = "auth_failed"
     if not token:
         return build_mixed_funnel(None, filters, debug=debug, definition=definition)
 
@@ -401,16 +420,19 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
         meta_payload, meta_debug = _fetch_live_meta_funnel(filters, definition, token)
         debug.update(meta_debug)
         debug["mode"] = "live_data"
+        debug["connector_status"]["meta"] = "success"
         return build_mixed_funnel(meta_payload, filters, debug=debug, definition=definition)
     except HTTPException as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": exc.detail})
+        debug["connector_status"]["meta"] = "failed"
     except Exception as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": str(exc)})
+        debug["connector_status"]["meta"] = "failed"
     return build_mixed_funnel(None, filters, debug=debug, definition=definition)
 
 
 def _fetch_live_meta_funnel(filters: dict, definition: dict, token: str) -> tuple[dict, dict]:
-    scope_id = _meta_scope_id(filters, definition)
+    scope_id, entity_scope = _meta_scope_id(filters, definition)
     params = {
         "fields": META_DASHBOARD_FIELDS,
         "limit": 100,
@@ -418,14 +440,20 @@ def _fetch_live_meta_funnel(filters: dict, definition: dict, token: str) -> tupl
     }
     path = f"{scope_id}/insights"
     payload = meta_call("GET", path, token, params=params)
-    return payload, {"meta_path": path, "meta_params": params}
+    return payload, {
+        "meta_path": path,
+        "meta_params": params,
+        "time_range": params.get("time_range"),
+        "date_preset": params.get("date_preset"),
+        "entity_scope": entity_scope,
+    }
 
 
-def _meta_scope_id(filters: dict, definition: dict) -> str:
+def _meta_scope_id(filters: dict, definition: dict) -> tuple[str, dict]:
     for key in ("ad_id", "adset_id", "campaign_id"):
         value = str(filters.get(key) or "").strip()
         if value and value.lower() != "all":
-            return value
+            return value, {"type": key.replace("_id", ""), "id": value}
     account_id = (
         (definition.get("data_sources") or {})
         .get("meta", {})
@@ -433,8 +461,9 @@ def _meta_scope_id(filters: dict, definition: dict) -> str:
     )
     clean = str(account_id or "").strip()
     if clean and not clean.startswith("act_"):
-        return f"act_{clean}"
-    return clean or DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]
+        return f"act_{clean}", {"type": "account", "id": f"act_{clean}"}
+    resolved = clean or DEFAULT_DASHBOARD_DEFINITION["data_sources"]["meta"]["account_id"]
+    return resolved, {"type": "account", "id": resolved}
 
 
 def _meta_date_params(filters: dict) -> dict:

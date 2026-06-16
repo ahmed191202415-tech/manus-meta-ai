@@ -124,6 +124,41 @@ def test_journey_funnel_uses_live_meta_without_server_error(monkeypatch):
     assert response.json()["spend"] == 1594.31
 
 
+def test_runtime_filters_prioritize_ad_then_adset_then_campaign(monkeypatch):
+    async def fake_resolve_access_token(request):
+        return "live-token"
+
+    def fake_meta_call(method, path, token, params=None):
+        assert path == "ad_123/insights"
+        assert params["time_range"] == {"since": "2026-06-15", "until": "2026-06-16"}
+        assert "date_preset" not in params
+        return {"data": [{"spend": "10", "unique_ctr": "1", "unique_inline_link_clicks": "2"}]}
+
+    monkeypatch.setattr(journey_dashboard_v7, "resolve_access_token", fake_resolve_access_token)
+    monkeypatch.setattr(journey_dashboard_v7, "meta_call", fake_meta_call)
+
+    response = client.post(
+        "/api/dashboard-runtime/query",
+        json={
+            "dashboard_id": "customer_journey",
+            "query_id": "journey_funnel",
+            "filters": {
+                "campaign_id": "campaign_123",
+                "adset_id": "adset_123",
+                "ad_id": "ad_123",
+                "date_from": "2026-06-15",
+                "date_to": "2026-06-16",
+            },
+        },
+    )
+
+    data = response.json()
+    assert response.status_code == 200
+    assert data["debug"]["meta_path"] == "ad_123/insights"
+    assert data["debug"]["entity_scope"] == {"type": "ad", "id": "ad_123"}
+    assert data["debug"]["filters_sent"]["campaign_id"] == "campaign_123"
+
+
 def test_connector_registry_exposes_metric_dictionary():
     response = client.get("/api/dashboard-runtime/connectors")
 

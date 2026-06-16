@@ -40,11 +40,17 @@ METRIC_DICTIONARY = {
     "complete_profile": {"source": "meta_event", "event_name": "Complete Profile"},
     "start_trial": {"source": "meta_event", "event_name": "Start Trial"},
     "complete_registration": {
-        "source": "meta_event",
+        "source": "meta_action",
         "action_type": "complete_registration",
         "fallback_action_type": "omni_complete_registration",
+        "fallback_mode": "use_first_available_not_sum",
     },
-    "purchase": {"source": "meta_event", "action_type": "purchase", "fallback_action_type": "omni_purchase"},
+    "purchase": {
+        "source": "meta_action",
+        "action_type": "purchase",
+        "fallback_action_type": "omni_purchase",
+        "fallback_mode": "use_first_available_not_sum",
+    },
 }
 
 
@@ -200,6 +206,7 @@ def build_fallback_funnel(filters: dict | None = None) -> dict:
         },
         "debug": {
             "mode": "fallback_data",
+            "filters_sent": filters,
             "message": "Live connector data was not required for this preview response.",
             "query_plan": build_query_plan(DEFAULT_DASHBOARD_DEFINITION, "journey_funnel"),
         },
@@ -268,6 +275,7 @@ def build_live_funnel(
         },
         "debug": {
             "mode": mode,
+            "filters_sent": filters,
             "query_plan": build_query_plan(definition, "journey_funnel"),
             "meta_insights_rows": len(rows),
             "missing_live_metrics": missing_live_metrics,
