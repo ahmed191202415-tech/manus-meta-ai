@@ -1,5 +1,6 @@
 from html import escape
 from json import dumps
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -17,6 +18,7 @@ from app.core.oauth_store import (
 )
 from app.schemas.dynamic_dashboard_requests import (
     DynamicDashboardCreateRequest,
+    DynamicDashboardRefreshRequest,
     DynamicDashboardSnapshotRequest,
     DynamicDashboardUpdateRequest,
 )
@@ -57,6 +59,7 @@ def _config_from_body(body: DynamicDashboardCreateRequest | DynamicDashboardUpda
 
 
 def _visible_dashboard(row: dict) -> dict:
+    refresh_status = _refresh_status(row)
     return {
         "dashboard_id": row.get("dashboard_id"),
         "tenant_id": row.get("tenant_id"),
@@ -69,7 +72,82 @@ def _visible_dashboard(row: dict) -> dict:
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "url": _dashboard_link(str(row.get("dashboard_id") or "")),
+        "refresh_status": refresh_status,
     }
+
+
+def _parse_dt(value) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _refresh_interval(policy: dict) -> timedelta | None:
+    mode = str((policy or {}).get("mode") or "on_open").strip().lower()
+    if mode == "hourly":
+        return timedelta(hours=1)
+    if mode == "daily":
+        return timedelta(days=1)
+    minutes = (policy or {}).get("interval_minutes")
+    if minutes:
+        return timedelta(minutes=max(1, int(minutes)))
+    return None
+
+
+def _refresh_status(row: dict) -> dict:
+    policy = row.get("refresh_policy") or {}
+    mode = str(policy.get("mode") or "on_open").strip().lower()
+    last_refreshed = _parse_dt(row.get("last_refreshed_at"))
+    now = datetime.now(timezone.utc)
+    interval = _refresh_interval(policy)
+    stale = False
+    reason = "fresh"
+    next_refresh_at = None
+    if mode == "manual":
+        stale = False
+        reason = "manual_refresh_only"
+    elif not last_refreshed:
+        stale = True
+        reason = "never_refreshed"
+    elif mode == "on_open":
+        stale = bool(policy.get("refresh_on_open", True))
+        reason = "refresh_on_open" if stale else "fresh"
+    elif interval:
+        due_at = last_refreshed + interval
+        next_refresh_at = due_at.isoformat()
+        stale = due_at <= now
+        reason = "scheduled_refresh_due" if stale else "fresh"
+    return {
+        "mode": mode,
+        "stale": stale,
+        "reason": reason,
+        "last_refreshed_at": row.get("last_refreshed_at"),
+        "next_refresh_at": next_refresh_at,
+    }
+
+
+def _refresh_steps(row: dict) -> list[dict]:
+    steps = []
+    config = row.get("config") or {}
+    for source in config.get("data_sources") or []:
+        source_type = source.get("source") or "manual"
+        name = source.get("name") or source_type
+        query = source.get("query") or {}
+        if source_type == "meta":
+            steps.append({"source": name, "tool": "/meta/smart_insights", "body": query})
+        elif source_type == "ga4":
+            steps.append({"source": name, "tool": "/tools/ga4", "body": query})
+        elif source_type == "clarity":
+            steps.append({"source": name, "tool": "/tools/clarity", "body": query})
+        elif source_type == "journey":
+            steps.append({"source": name, "tool": "/tools/journey", "body": query})
+        else:
+            steps.append({"source": name, "tool": "manual_snapshot", "body": query})
+    return steps
 
 
 @router.post("/create")
@@ -127,6 +205,30 @@ async def update_dashboard_snapshot(dashboard_id: str, body: DynamicDashboardSna
     return {"success": True, "dashboard": _visible_dashboard(row)}
 
 
+@router.post("/{dashboard_id}/refresh")
+async def refresh_dashboard(dashboard_id: str, body: DynamicDashboardRefreshRequest, request: Request):
+    tenant_id = _tenant_from_request(request, body.tenant_id)
+    row = get_dynamic_dashboard(dashboard_id)
+    if not row or row.get("status") == "deleted" or str(row.get("tenant_id") or "") != tenant_id:
+        raise HTTPException(status_code=404, detail="Dashboard was not found.")
+    if body.snapshot is not None:
+        updated = update_dynamic_dashboard_snapshot(tenant_id, dashboard_id, body.snapshot)
+        return {
+            "success": True,
+            "mode": "snapshot_updated",
+            "dashboard": _visible_dashboard(updated),
+            "url": _dashboard_link(dashboard_id),
+        }
+    return {
+        "success": True,
+        "mode": "refresh_plan",
+        "dashboard": _visible_dashboard(row),
+        "refresh_status": _refresh_status(row),
+        "refresh_steps": _refresh_steps(row),
+        "next_step": "Run each refresh_step, merge the result into one snapshot, then call this endpoint again with snapshot.",
+    }
+
+
 @router.post("/{dashboard_id}/delete")
 async def remove_dashboard(dashboard_id: str, body: DynamicDashboardSnapshotRequest, request: Request):
     tenant_id = _tenant_from_request(request, body.tenant_id)
@@ -150,6 +252,8 @@ async def dashboard_data(dashboard_id: str):
         "refresh_policy": row.get("refresh_policy") or {},
         "last_refreshed_at": row.get("last_refreshed_at"),
         "updated_at": row.get("updated_at"),
+        "refresh_status": _refresh_status(row),
+        "refresh_steps": _refresh_steps(row) if _refresh_status(row).get("stale") else [],
     }
 
 
@@ -164,6 +268,7 @@ def _dashboard_html(row: dict) -> str:
             "config": row.get("config") or {},
             "snapshot": row.get("snapshot") or {},
             "last_refreshed_at": row.get("last_refreshed_at"),
+            "refresh_status": _refresh_status(row),
         },
         ensure_ascii=False,
     )
@@ -243,7 +348,9 @@ function renderWidget(widget) {{
 function renderWidgets() {{
   const widgets = (dashboard.config && dashboard.config.widgets) || [];
   document.getElementById("widgets").innerHTML = widgets.map(renderWidget).join("");
-  document.getElementById("refreshMeta").textContent = dashboard.last_refreshed_at ? `Last refreshed: ${{dashboard.last_refreshed_at}}` : "Live dashboard";
+  const status = dashboard.refresh_status || {{}};
+  const suffix = status.stale ? " - needs refresh" : "";
+  document.getElementById("refreshMeta").textContent = dashboard.last_refreshed_at ? `Last refreshed: ${{dashboard.last_refreshed_at}}${{suffix}}` : `Live dashboard${{suffix}}`;
 }}
 async function loadDashboard() {{
   const res = await fetch(`/dynamic_dashboards/${{dashboard.dashboard_id}}/data`);

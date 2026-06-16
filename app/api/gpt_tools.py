@@ -37,6 +37,7 @@ from app.schemas.report_requests import (
 )
 from app.schemas.dynamic_dashboard_requests import (
     DynamicDashboardCreateRequest,
+    DynamicDashboardRefreshRequest,
     DynamicDashboardSnapshotRequest,
     DynamicDashboardUpdateRequest,
 )
@@ -704,6 +705,12 @@ async def dashboard_tool(body: DashboardToolRequest, request: Request, token: st
         return await dynamic_dashboards.update_dashboard_snapshot(
             dashboard_id,
             _validated(DynamicDashboardSnapshotRequest, payload),
+            request,
+        )
+    if body.action == "refresh_dashboard":
+        return await dynamic_dashboards.refresh_dashboard(
+            dashboard_id,
+            _validated(DynamicDashboardRefreshRequest, payload),
             request,
         )
     return await dynamic_dashboards.remove_dashboard(

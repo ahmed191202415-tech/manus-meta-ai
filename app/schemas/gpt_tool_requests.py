@@ -274,7 +274,7 @@ class ReportToolRequest(GPTToolRequest):
 
 
 class DashboardToolRequest(GPTToolRequest):
-    action: Literal["create_dashboard", "update_dashboard", "update_snapshot", "list_dashboards", "delete_dashboard"]
+    action: Literal["create_dashboard", "update_dashboard", "update_snapshot", "refresh_dashboard", "list_dashboards", "delete_dashboard"]
     tenant_id: str | None = Field(default=None, description="Tenant ID for the dashboard owner.")
     dashboard_id: str | None = Field(default=None, description="Dashboard ID for update, snapshot, or delete.")
     title: str | None = Field(default=None, description="Dashboard title.")

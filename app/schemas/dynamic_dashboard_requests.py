@@ -56,3 +56,9 @@ class DynamicDashboardUpdateRequest(BaseModel):
 class DynamicDashboardSnapshotRequest(BaseModel):
     tenant_id: str | None = None
     snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class DynamicDashboardRefreshRequest(BaseModel):
+    tenant_id: str | None = None
+    snapshot: dict[str, Any] | None = None
+    force: bool = False

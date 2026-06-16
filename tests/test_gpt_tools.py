@@ -514,5 +514,27 @@ def test_dashboard_schema_exposes_flexible_dashboard_tool():
 
     assert "/tools/dashboards" in schema["paths"]
     assert "create_dashboard" in properties["action"]["enum"]
+    assert "refresh_dashboard" in properties["action"]["enum"]
     assert "widgets" in properties
     assert "data_sources" in properties
+
+
+def test_dashboard_dispatcher_routes_refresh(monkeypatch):
+    async def fake_refresh(dashboard_id, body, request):
+        return {"dashboard_id": dashboard_id, "snapshot": body.snapshot}
+
+    monkeypatch.setattr(gpt_tools.dynamic_dashboards, "refresh_dashboard", fake_refresh)
+    result = asyncio.run(
+        gpt_tools.dashboard_tool(
+            DashboardToolRequest(
+                action="refresh_dashboard",
+                tenant_id="tenant_1",
+                dashboard_id="dash_1",
+                snapshot={"kpis": {"spend": 10}},
+            ),
+            object(),
+            token="user_token",
+        )
+    )
+
+    assert result == {"dashboard_id": "dash_1", "snapshot": {"kpis": {"spend": 10}}}
