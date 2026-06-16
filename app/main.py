@@ -25,6 +25,7 @@ from app.api.webhooks import router as webhooks_router
 from app.api.dashboard import router as dashboard_router
 from app.api.dashboard_builder import router as dashboard_builder_router
 from app.api.dynamic_dashboards import router as dynamic_dashboards_router
+from app.api.journey_dashboard_v7 import router as journey_dashboard_v7_router
 from app.api.analysis_dashboard import router as analysis_dashboard_router
 from app.api.analysis_docx import router as analysis_docx_router
 from app.api.auth_meta import router as auth_meta_router
@@ -166,6 +167,7 @@ app.include_router(webhooks_router)
 app.include_router(dashboard_router)
 app.include_router(dashboard_builder_router)
 app.include_router(dynamic_dashboards_router)
+app.include_router(journey_dashboard_v7_router)
 app.include_router(analysis_dashboard_router)
 app.include_router(analysis_docx_router)
 app.include_router(auth_meta_router)

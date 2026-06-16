@@ -291,13 +291,20 @@ body {{ margin:0; font-family: Arial, sans-serif; background:#f6f8fb; color:#172
 .badge.warn {{ background:#fef3c7; color:#92400e; }}
 .badge.error {{ background:#fee2e2; color:#991b1b; }}
 .dot {{ width:8px; height:8px; border-radius:999px; background:currentColor; }}
-.filters,.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:18px; }}
-.panel {{ background:white; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(15,23,42,.05); }}
+.filters {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:18px; }}
+.grid {{ display:block; margin-top:18px; }}
+.kpi-strip {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-bottom:14px; }}
+.content-grid {{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; align-items:start; }}
+.panel {{ background:white; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(15,23,42,.05); min-width:0; overflow:hidden; }}
+.widget-table {{ grid-column:1 / -1; }}
+.widget-funnel,.widget-bar,.widget-text {{ grid-column:span 6; }}
+.widget-kpi {{ min-height:92px; }}
 .kpi .value {{ font-size:30px; font-weight:800; margin-top:10px; }}
 label {{ display:block; font-size:12px; color:#475467; margin-bottom:6px; }}
 input,select {{ width:100%; box-sizing:border-box; padding:10px; border:1px solid #d0d5dd; border-radius:8px; }}
-table {{ width:100%; border-collapse:collapse; margin-top:10px; font-size:14px; }}
-th,td {{ border-bottom:1px solid #edf0f5; padding:10px; text-align:right; }}
+.table-wrap {{ width:100%; overflow-x:auto; overflow-y:hidden; margin-top:10px; border:1px solid #edf0f5; border-radius:10px; }}
+table {{ width:100%; min-width:720px; border-collapse:collapse; font-size:14px; direction:ltr; }}
+th,td {{ border-bottom:1px solid #edf0f5; padding:10px; text-align:left; vertical-align:top; white-space:normal; overflow-wrap:anywhere; }}
 th {{ color:#475467; background:#f9fafb; }}
 .bar {{ height:10px; background:#2563eb; border-radius:999px; min-width:4px; }}
 .actions {{ display:flex; gap:10px; align-items:center; }}
@@ -308,7 +315,8 @@ button[disabled] {{ cursor:wait; opacity:.72; transform:none; }}
 .spinner {{ width:14px; height:14px; border:2px solid rgba(255,255,255,.45); border-top-color:white; border-radius:999px; animation:spin .8s linear infinite; }}
 .empty {{ padding:14px; border:1px dashed #cbd5e1; border-radius:10px; color:#667085; background:#f8fafc; }}
 @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
-@media(max-width:720px) {{ .hero {{ display:block; }} .shell {{ padding:14px; }} }}
+@media(max-width:920px) {{ .widget-funnel,.widget-bar,.widget-text {{ grid-column:1 / -1; }} }}
+@media(max-width:720px) {{ .hero {{ display:block; }} .shell {{ padding:14px; }} .content-grid {{ grid-template-columns:1fr; }} }}
 </style>
 </head>
 <body>
@@ -342,6 +350,23 @@ function valueFromSnapshot(key) {{
 function sourceData(widget) {{
   const s = dashboard.snapshot || {{}};
   if (widget.source && s[widget.source] !== undefined) return s[widget.source];
+  const sourceKey = String(widget.source || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (sourceKey) {{
+    for (const [key, value] of Object.entries(s)) {{
+      const cleanKey = String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (cleanKey && (cleanKey.includes(sourceKey) || sourceKey.includes(cleanKey))) return value;
+      if (sourceKey.includes("meta") && cleanKey.includes("meta")) return value;
+      if (sourceKey.includes("clarity") && cleanKey.includes("clarity")) return value;
+      if ((sourceKey.includes("ga4") || sourceKey.includes("journey")) && (cleanKey.includes("ga4") || cleanKey.includes("journey") || cleanKey.includes("whatsapp") || cleanKey.includes("register"))) return value;
+    }}
+  }}
+  const dimensions = widget.dimensions || [];
+  if (dimensions.length) {{
+    for (const value of Object.values(s)) {{
+      if (Array.isArray(value) && value.some(row => row && dimensions.some(dim => row[dim] !== undefined))) return value;
+      if (value && !Array.isArray(value) && typeof value === "object" && dimensions.some(dim => value[dim] !== undefined)) return value;
+    }}
+  }}
   if (widget.metric) {{
     for (const value of Object.values(s)) {{
       if (value && !Array.isArray(value) && typeof value === "object" && value[widget.metric] !== undefined) return value;
@@ -390,31 +415,33 @@ function tableHtml(widget, rows) {{
   rows = rowsFromData(rows);
   if (!rows.length) return '<div class="empty">No data available for this widget yet.</div>';
   const columns = widget.columns && widget.columns.length ? widget.columns : Object.keys(rows[0] || {{}});
-  return `<table><thead><tr>${{columns.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{columns.map(c=>`<td>${{r[c] ?? ""}}</td>`).join("")}}</tr>`).join("")}}</tbody></table>`;
+  return `<div class="table-wrap"><table><thead><tr>${{columns.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{columns.map(c=>`<td dir="auto">${{r[c] ?? ""}}</td>`).join("")}}</tr>`).join("")}}</tbody></table></div>`;
 }}
 function renderWidget(widget) {{
   const data = sourceData(widget);
-  if (widget.type === "kpi") return `<div class="panel kpi"><div class="muted">${{widget.title}}</div><div class="value">${{valueFromSnapshot(widget.metric || widget.id)}}</div></div>`;
-  if (widget.type === "text") return `<div class="panel"><h3>${{widget.title}}</h3><p>${{widget.config?.text || valueFromSnapshot(widget.id) || ""}}</p></div>`;
+  if (widget.type === "kpi") return `<div class="panel kpi widget-kpi"><div class="muted">${{widget.title}}</div><div class="value">${{valueFromSnapshot(widget.metric || widget.id) || "—"}}</div></div>`;
+  if (widget.type === "text") return `<div class="panel widget-text"><h3>${{widget.title}}</h3><p>${{widget.config?.text || valueFromSnapshot(widget.id) || ""}}</p></div>`;
   if (widget.type === "funnel") {{
     const rows = rowsFromData(data);
     const first = rows[0] || {{}};
     const entries = Object.entries(first).filter(([k,v]) => typeof v === "number" || (!isNaN(Number(v)) && String(v).trim() !== ""));
     const max = Math.max(1, ...entries.map(([k,v]) => Number(v || 0)));
-    return `<div class="panel"><h3>${{widget.title}}</h3>${{entries.map(([k,v])=>`<div style="margin:10px 0"><div>${{k}} - ${{v}}</div><div class="bar" style="width:${{Math.max(3, Number(v || 0)/max*100)}}%"></div></div>`).join("") || tableHtml(widget, data)}}</div>`;
+    return `<div class="panel widget-funnel"><h3>${{widget.title}}</h3>${{entries.map(([k,v])=>`<div style="margin:10px 0"><div>${{k}} - ${{v}}</div><div class="bar" style="width:${{Math.max(3, Number(v || 0)/max*100)}}%"></div></div>`).join("") || tableHtml(widget, data)}}</div>`;
   }}
   if (widget.type === "bar") {{
     const rows = rowsFromData(data).slice(0, 12);
     const metric = widget.metric || Object.keys(rows[0] || {{}}).find(k => typeof rows[0][k] === "number");
     const label = (widget.dimensions || [])[0] || Object.keys(rows[0] || {{}})[0];
     const max = Math.max(1, ...rows.map(r => Number(r[metric] || 0)));
-    return `<div class="panel"><h3>${{widget.title}}</h3>${{rows.map(r=>`<div style="margin:10px 0"><div>${{r[label] ?? ""}} - ${{r[metric] ?? 0}}</div><div class="bar" style="width:${{Math.max(3, Number(r[metric] || 0)/max*100)}}%"></div></div>`).join("")}}</div>`;
+    return `<div class="panel widget-bar"><h3>${{widget.title}}</h3>${{rows.map(r=>`<div style="margin:10px 0"><div>${{r[label] ?? ""}} - ${{r[metric] ?? 0}}</div><div class="bar" style="width:${{Math.max(3, Number(r[metric] || 0)/max*100)}}%"></div></div>`).join("") || '<div class="empty">No data available for this chart yet.</div>'}}</div>`;
   }}
-  return `<div class="panel"><h3>${{widget.title}}</h3>${{tableHtml(widget, data)}}</div>`;
+  return `<div class="panel widget-table"><h3>${{widget.title}}</h3>${{tableHtml(widget, data)}}</div>`;
 }}
 function renderWidgets() {{
   const widgets = (dashboard.config && dashboard.config.widgets) || [];
-  document.getElementById("widgets").innerHTML = widgets.map(renderWidget).join("");
+  const kpis = widgets.filter(w => w.type === "kpi");
+  const rest = widgets.filter(w => w.type !== "kpi");
+  document.getElementById("widgets").innerHTML = `<section class="kpi-strip">${{kpis.map(renderWidget).join("")}}</section><section class="content-grid">${{rest.map(renderWidget).join("")}}</section>`;
   const status = dashboard.refresh_status || {{}};
   const badge = document.getElementById("refreshBadge");
   const badgeText = status.stale ? "Needs refresh" : "Up to date";
