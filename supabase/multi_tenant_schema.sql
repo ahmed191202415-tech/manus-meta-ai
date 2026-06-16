@@ -164,6 +164,28 @@ create table if not exists public.comment_post_aliases (
   unique (tenant_id, page_id, canonical_post_id)
 );
 
+create table if not exists public.dynamic_dashboards (
+  dashboard_id text primary key,
+  tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
+  title text not null,
+  description text,
+  status text default 'active',
+  config jsonb default '{}'::jsonb,
+  snapshot jsonb default '{}'::jsonb,
+  refresh_policy jsonb default '{}'::jsonb,
+  last_refreshed_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.dynamic_dashboards add column if not exists title text;
+alter table public.dynamic_dashboards add column if not exists description text;
+alter table public.dynamic_dashboards add column if not exists status text default 'active';
+alter table public.dynamic_dashboards add column if not exists config jsonb default '{}'::jsonb;
+alter table public.dynamic_dashboards add column if not exists snapshot jsonb default '{}'::jsonb;
+alter table public.dynamic_dashboards add column if not exists refresh_policy jsonb default '{}'::jsonb;
+alter table public.dynamic_dashboards add column if not exists last_refreshed_at timestamptz;
+
 alter table public.comment_automation_rules add column if not exists page_access_token text;
 alter table public.comment_automation_rules add column if not exists ad_id text;
 alter table public.comment_automation_rules add column if not exists ad_name text;
@@ -217,6 +239,12 @@ create index if not exists idx_comment_post_aliases_page_post
 
 create index if not exists idx_comment_post_aliases_rule
   on public.comment_post_aliases (rule_id);
+
+create index if not exists idx_dynamic_dashboards_tenant_updated
+  on public.dynamic_dashboards (tenant_id, updated_at desc);
+
+create index if not exists idx_dynamic_dashboards_status
+  on public.dynamic_dashboards (status);
 
 do $$
 begin
@@ -280,6 +308,11 @@ create trigger trg_comment_automation_rules_updated_at
 before update on public.comment_automation_rules
 for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_dynamic_dashboards_updated_at on public.dynamic_dashboards;
+create trigger trg_dynamic_dashboards_updated_at
+before update on public.dynamic_dashboards
+for each row execute function public.set_updated_at();
+
 alter table public.tenant_accounts enable row level security;
 alter table public.tenant_meta_apps enable row level security;
 alter table public.meta_connections enable row level security;
@@ -291,6 +324,7 @@ alter table public.comment_automation_rules enable row level security;
 alter table public.comment_automation_logs enable row level security;
 alter table public.comment_webhook_events enable row level security;
 alter table public.comment_post_aliases enable row level security;
+alter table public.dynamic_dashboards enable row level security;
 
 -- The FastAPI server uses SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS.
 -- No anon/authenticated policies are created here, so browser clients cannot

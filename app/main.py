@@ -24,6 +24,7 @@ from app.api.pages import router as pages_router
 from app.api.webhooks import router as webhooks_router
 from app.api.dashboard import router as dashboard_router
 from app.api.dashboard_builder import router as dashboard_builder_router
+from app.api.dynamic_dashboards import router as dynamic_dashboards_router
 from app.api.analysis_dashboard import router as analysis_dashboard_router
 from app.api.analysis_docx import router as analysis_docx_router
 from app.api.auth_meta import router as auth_meta_router
@@ -52,6 +53,7 @@ GPT_DATA_PATHS = {
     "/tools/journey",
     "/tools/clarity",
     "/tools/reports",
+    "/tools/dashboards",
 }
 
 app = FastAPI(
@@ -111,7 +113,8 @@ def openapi_gpt_schema():
             "For Meta tracking questions, use /tools/meta_tracking. When the user asks which events Meta actually "
             "received, use action=received_pixel_events; do not substitute Custom Conversions. "
             "Use /tools/website for GA4-only site intelligence, /tools/journey for Meta plus GA4 customer-journey "
-            "analysis, /tools/clarity for behavior data, and /tools/reports for every supported report format."
+            "analysis, /tools/clarity for behavior data, /tools/reports for report files, and /tools/dashboards "
+            "to create dynamic dashboard links that stay attached to each tenant portal."
         ),
     }
     schema["servers"] = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else []
@@ -162,6 +165,7 @@ app.include_router(pages_router)
 app.include_router(webhooks_router)
 app.include_router(dashboard_router)
 app.include_router(dashboard_builder_router)
+app.include_router(dynamic_dashboards_router)
 app.include_router(analysis_dashboard_router)
 app.include_router(analysis_docx_router)
 app.include_router(auth_meta_router)

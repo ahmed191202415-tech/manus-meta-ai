@@ -14,6 +14,7 @@ from app.core.oauth_store import (
     get_active_google_connection_for_tenant,
     get_active_clarity_connection_for_tenant,
     get_tenant_status,
+    list_dynamic_dashboards,
     list_tenant_accounts,
     normalize_email,
     set_access_email_status,
@@ -683,6 +684,7 @@ def _client_dashboard_html(
     service_account_email: str,
     schema_url: str,
     has_pending_gpt_oauth: bool,
+    dashboards: list[dict] | None = None,
 ) -> str:
     meta_connection = meta_status.get("meta_connection") or {}
     meta_app = meta_status.get("meta_app") or {}
@@ -692,6 +694,23 @@ def _client_dashboard_html(
     property_id = escape(str((google_connection or {}).get("selected_ga4_property_id") or ""))
     property_name = escape(str((google_connection or {}).get("selected_ga4_property_name") or ""))
     clarity_name = escape(str((clarity_connection or {}).get("project_name") or ""))
+    dashboard_rows = ""
+    for item in dashboards or []:
+        dashboard_id = escape(str(item.get("dashboard_id") or ""))
+        dashboard_title = escape(str(item.get("title") or "Untitled dashboard"))
+        dashboard_description = escape(str(item.get("description") or ""))
+        dashboard_status = escape(str(item.get("status") or "active"))
+        dashboard_updated = escape(str(item.get("last_refreshed_at") or item.get("updated_at") or ""))
+        dashboard_rows += f"""
+        <tr>
+          <td><strong>{dashboard_title}</strong><div class="muted">{dashboard_description}</div></td>
+          <td>{dashboard_status}</td>
+          <td>{dashboard_updated}</td>
+          <td><a class="button" href="/dynamic_dashboards/{dashboard_id}" target="_blank">Open</a></td>
+        </tr>
+        """
+    if not dashboard_rows:
+        dashboard_rows = '<tr><td colspan="4" class="muted">No dashboards yet. Ask GPT to create one.</td></tr>'
     gpt_continue = '<a class="button" href="/oauth/continue">الرجوع إلى GPT ومتابعة التحليل</a>' if has_pending_gpt_oauth and meta_connected else ""
     body = f"""
     <header class="hero">
@@ -773,6 +792,15 @@ def _client_dashboard_html(
     </section>
 
     <section class="card">
+      <div class="integration-head"><div><div class="step">Dynamic Dashboards</div><h2>Dashboards created by GPT</h2></div><span class="pill ok">{len(dashboards or [])}</span></div>
+      <p class="muted">Each customer dashboard can have a different design, filters, widgets, and data sources. The links stay here.</p>
+      <table>
+        <thead><tr><th>Name</th><th>Status</th><th>Last refresh</th><th>Link</th></tr></thead>
+        <tbody>{dashboard_rows}</tbody>
+      </table>
+    </section>
+
+    <section class="card">
       <div class="step">GPT Actions</div><h2>رابط Schema</h2>
       <pre>{escape(schema_url)}</pre><button onclick="copySchema()">نسخ الرابط</button>
     </section>
@@ -841,6 +869,7 @@ async def client_dashboard(request: Request, email: str | None = None):
     meta_status = get_tenant_status(tenant_id)
     google_connection = get_active_google_connection_for_tenant(tenant_id)
     clarity_connection = get_active_clarity_connection_for_tenant(tenant_id)
+    dashboards = list_dynamic_dashboards(tenant_id, limit=100)
     service_account_email = get_google_service_account_email()
     meta_app_id = (meta_status.get("meta_app") or {}).get("meta_app_id") or ""
     meta_connection_mode = (meta_status.get("meta_connection") or {}).get("connection_mode") or ""
@@ -858,6 +887,7 @@ async def client_dashboard(request: Request, email: str | None = None):
         service_account_email=service_account_email,
         schema_url=schema_url,
         has_pending_gpt_oauth=bool(request.session.get("gpt_oauth_redirect_uri")),
+        dashboards=dashboards,
     ))
     body = f"""
     <section class="card">

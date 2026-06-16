@@ -4,6 +4,7 @@ from app.api import gpt_tools
 from app.main import app, openapi_gpt_schema
 from app.schemas.gpt_tool_requests import (
     ClarityToolRequest,
+    DashboardToolRequest,
     GA4ToolRequest,
     IntentToolRequest,
     JourneyToolRequest,
@@ -29,6 +30,7 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_only():
         "/tools/journey",
         "/tools/clarity",
         "/tools/reports",
+        "/tools/dashboards",
     }
     assert "/ga4/custom_report" in app.openapi()["paths"]
     assert "/reports/save_pptx" in app.openapi()["paths"]
@@ -482,3 +484,35 @@ def test_report_dispatcher_accepts_flat_pptx_fields(monkeypatch):
     )
 
     assert result == {"title": "Weekly report", "slide_count": 0}
+
+
+def test_dashboard_dispatcher_creates_dynamic_dashboard(monkeypatch):
+    async def fake_create(body, request, token):
+        return {"url": "/dynamic_dashboards/dash_1", "title": body.title, "token": token}
+
+    monkeypatch.setattr(gpt_tools.dynamic_dashboards, "create_dashboard", fake_create)
+    result = asyncio.run(
+        gpt_tools.dashboard_tool(
+            DashboardToolRequest(
+                action="create_dashboard",
+                tenant_id="tenant_1",
+                title="Journey dashboard",
+                widgets=[{"id": "spend", "title": "Spend", "type": "kpi", "metric": "spend"}],
+                initial_snapshot={"kpis": {"spend": "100"}},
+            ),
+            object(),
+            token="user_token",
+        )
+    )
+
+    assert result == {"url": "/dynamic_dashboards/dash_1", "title": "Journey dashboard", "token": "user_token"}
+
+
+def test_dashboard_schema_exposes_flexible_dashboard_tool():
+    schema = openapi_gpt_schema()
+    properties = schema["components"]["schemas"]["DashboardToolRequest"]["properties"]
+
+    assert "/tools/dashboards" in schema["paths"]
+    assert "create_dashboard" in properties["action"]["enum"]
+    assert "widgets" in properties
+    assert "data_sources" in properties

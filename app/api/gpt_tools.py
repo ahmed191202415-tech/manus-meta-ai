@@ -18,6 +18,7 @@ from app.schemas.ga4_requests import (
 )
 from app.schemas.gpt_tool_requests import (
     ClarityToolRequest,
+    DashboardToolRequest,
     GA4ToolRequest,
     IntentToolRequest,
     JourneyToolRequest,
@@ -34,6 +35,12 @@ from app.schemas.report_requests import (
     SavePdfReportRequest,
     SavePptxReportRequest,
 )
+from app.schemas.dynamic_dashboard_requests import (
+    DynamicDashboardCreateRequest,
+    DynamicDashboardSnapshotRequest,
+    DynamicDashboardUpdateRequest,
+)
+from app.api import dynamic_dashboards
 
 router = APIRouter(prefix="/tools", tags=["gpt-tools"])
 
@@ -669,3 +676,38 @@ async def report_tool(body: ReportToolRequest):
         "journey_docx": (reports.save_journey_docx_report, IntelligenceReportRequest),
     }[body.action]
     return await handler(_validated(model, body.merged_payload()))
+
+
+@router.post(
+    "/dashboards",
+    summary="Dynamic dashboards",
+    description="Create, update, list, or refresh dynamic dashboards owned by a tenant. Returns shareable dashboard links.",
+)
+async def dashboard_tool(body: DashboardToolRequest, request: Request, token: str = Depends(resolve_access_token)):
+    payload = body.merged_payload()
+    if body.action == "create_dashboard":
+        return await dynamic_dashboards.create_dashboard(_validated(DynamicDashboardCreateRequest, payload), request, token)
+    if body.action == "list_dashboards":
+        return await dynamic_dashboards.list_dashboards(
+            request,
+            tenant_id=payload.get("tenant_id"),
+            limit=payload.get("limit") or 100,
+        )
+    dashboard_id = _required_text(payload, "dashboard_id")
+    if body.action == "update_dashboard":
+        return await dynamic_dashboards.update_dashboard(
+            dashboard_id,
+            _validated(DynamicDashboardUpdateRequest, payload),
+            request,
+        )
+    if body.action == "update_snapshot":
+        return await dynamic_dashboards.update_dashboard_snapshot(
+            dashboard_id,
+            _validated(DynamicDashboardSnapshotRequest, payload),
+            request,
+        )
+    return await dynamic_dashboards.remove_dashboard(
+        dashboard_id,
+        _validated(DynamicDashboardSnapshotRequest, payload),
+        request,
+    )

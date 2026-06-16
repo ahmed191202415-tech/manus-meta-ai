@@ -1037,7 +1037,82 @@ def purge_tenant_integrations(tenant_id: str):
     _delete("comment_webhook_events", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_post_aliases", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_automation_rules", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("dynamic_dashboards", {"tenant_id": f"eq.{clean_tenant_id}"})
     return True
+
+
+def create_dynamic_dashboard(
+    tenant_id: str,
+    title: str,
+    description: str | None = None,
+    config: dict | None = None,
+    snapshot: dict | None = None,
+    refresh_policy: dict | None = None,
+):
+    now = _dt(datetime.now(timezone.utc))
+    payload = {
+        "dashboard_id": "dash_" + secrets.token_urlsafe(12),
+        "tenant_id": _clean(tenant_id),
+        "title": _clean(title) or "Untitled dashboard",
+        "description": _clean(description),
+        "status": "active",
+        "config": config or {},
+        "snapshot": snapshot or {},
+        "refresh_policy": refresh_policy or {"mode": "on_open"},
+        "last_refreshed_at": now if snapshot else None,
+        "updated_at": now,
+    }
+    rows = _post("dynamic_dashboards", payload, prefer="return=representation") or []
+    return rows[0] if rows else payload
+
+
+def list_dynamic_dashboards(tenant_id: str, include_deleted: bool = False, limit: int = 100):
+    params = {
+        "tenant_id": f"eq.{_clean(tenant_id)}",
+        "select": "dashboard_id,tenant_id,title,description,status,config,refresh_policy,last_refreshed_at,created_at,updated_at",
+        "order": "updated_at.desc",
+        "limit": str(max(1, min(int(limit or 100), 200))),
+    }
+    if not include_deleted:
+        params["status"] = "neq.deleted"
+    return _get_many("dynamic_dashboards", params=params)
+
+
+def get_dynamic_dashboard(dashboard_id: str):
+    return _get_single(
+        "dynamic_dashboards",
+        params={"dashboard_id": f"eq.{_clean(dashboard_id)}", "select": "*", "limit": "1"},
+    )
+
+
+def update_dynamic_dashboard_snapshot(tenant_id: str, dashboard_id: str, snapshot: dict):
+    rows = _patch(
+        "dynamic_dashboards",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "dashboard_id": f"eq.{_clean(dashboard_id)}"},
+        payload={"snapshot": snapshot or {}, "last_refreshed_at": _dt(datetime.now(timezone.utc))},
+    )
+    return rows[0] if rows else None
+
+
+def update_dynamic_dashboard_config(tenant_id: str, dashboard_id: str, payload: dict):
+    allowed = {key: value for key, value in payload.items() if key in {"title", "description", "config", "refresh_policy", "status"}}
+    if not allowed:
+        return get_dynamic_dashboard(dashboard_id)
+    rows = _patch(
+        "dynamic_dashboards",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "dashboard_id": f"eq.{_clean(dashboard_id)}"},
+        payload=allowed,
+    )
+    return rows[0] if rows else None
+
+
+def delete_dynamic_dashboard(tenant_id: str, dashboard_id: str):
+    rows = _patch(
+        "dynamic_dashboards",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "dashboard_id": f"eq.{_clean(dashboard_id)}"},
+        payload={"status": "deleted"},
+    )
+    return rows[0] if rows else None
 
 
 def get_app_token_data(token: str):

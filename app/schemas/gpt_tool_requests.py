@@ -271,3 +271,36 @@ class ReportToolRequest(GPTToolRequest):
         if "report_payload" in self.model_fields_set and self.report_payload is not None:
             merged["payload"] = self.report_payload
         return merged
+
+
+class DashboardToolRequest(GPTToolRequest):
+    action: Literal["create_dashboard", "update_dashboard", "update_snapshot", "list_dashboards", "delete_dashboard"]
+    tenant_id: str | None = Field(default=None, description="Tenant ID for the dashboard owner.")
+    dashboard_id: str | None = Field(default=None, description="Dashboard ID for update, snapshot, or delete.")
+    title: str | None = Field(default=None, description="Dashboard title.")
+    description: str | None = Field(default=None, description="Dashboard description.")
+    filters: list[dict[str, Any]] | None = Field(default=None, description="Dashboard filter definitions.")
+    data_sources: list[dict[str, Any]] | None = Field(default=None, description="Dashboard data source definitions.")
+    widgets: list[dict[str, Any]] | None = Field(default=None, description="Dashboard widget definitions.")
+    layout: dict[str, Any] | None = Field(default=None, description="Optional layout configuration.")
+    initial_snapshot: dict[str, Any] | None = Field(default=None, description="Initial data snapshot for create_dashboard.")
+    snapshot: dict[str, Any] | None = Field(default=None, description="Data snapshot for update_snapshot.")
+    refresh_policy: dict[str, Any] | None = Field(default=None, description="Refresh policy such as on_open, hourly, or daily.")
+    limit: int | None = Field(default=None, ge=1, le=200, description="Maximum dashboards to list.")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Backward-compatible nested inputs.")
+
+    def merged_payload(self) -> dict[str, Any]:
+        return self.merge_direct_fields(
+            "tenant_id",
+            "dashboard_id",
+            "title",
+            "description",
+            "filters",
+            "data_sources",
+            "widgets",
+            "layout",
+            "initial_snapshot",
+            "snapshot",
+            "refresh_policy",
+            "limit",
+        )
