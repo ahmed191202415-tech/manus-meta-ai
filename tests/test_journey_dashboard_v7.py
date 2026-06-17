@@ -74,6 +74,15 @@ def test_dashboard_definition_schema_exposes_manifest_fields():
     ]:
         assert key in properties
 
+    v2_post = schema["paths"]["/api/dashboard-definitions/v2"]["post"]
+    assert v2_post["operationId"] == "create_dashboard_manifest_v2"
+    v2_ref = v2_post["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    v2_name = v2_ref.split("/")[-1]
+    v2_properties = schema["components"]["schemas"][v2_name]["properties"]
+    assert "filters" in v2_properties
+    assert "metrics" in v2_properties
+    assert "runtime_queries" in v2_properties
+
 
 def test_journey_funnel_returns_business_rule_stages():
     response = client.get("/api/journey/funnel?campaign_id=all")

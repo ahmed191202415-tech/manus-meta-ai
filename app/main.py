@@ -56,7 +56,9 @@ GPT_DATA_PATHS = {
     "/tools/reports",
     "/tools/dashboards",
     "/api/dashboard-definitions",
+    "/api/dashboard-definitions/v2",
     "/api/dashboard-definitions/{dashboard_id}",
+    "/api/dashboard-definitions/v2/{dashboard_id}",
     "/api/dashboard-runtime/query",
     "/api/dashboard-runtime/connectors",
     "/api/dashboard-runtime/events/discover",
@@ -126,7 +128,7 @@ def openapi_gpt_schema():
             "Use /tools/website for GA4-only site intelligence, /tools/journey for Meta plus GA4 customer-journey "
             "analysis, /tools/clarity for behavior data, /tools/reports for report files, and /tools/dashboards "
             "to create dynamic dashboard links that stay attached to each tenant portal. For custom live dashboards, "
-            "use /api/dashboard-runtime/connectors to inspect available sources, /api/dashboard-definitions to save "
+            "use /api/dashboard-runtime/connectors to inspect available sources, /api/dashboard-definitions/v2 to save "
             "a manifest, /api/dashboard-runtime/events/discover to inspect available Meta actions before mapping "
             "events, /api/dashboard-runtime/query to run a chart query, /dashboards/custom/{dashboard_id} to open "
             "a manifest-rendered dashboard page, and /api/journey/* endpoints for the "

@@ -449,13 +449,23 @@ renderFilters(); reloadDashboard();
 
 
 
-@router.post("/api/dashboard-definitions")
+def _save_dashboard_definition(definition: dict, dashboard_id: str | None = None) -> dict:
+    resolved_dashboard_id = str(dashboard_id or definition.get("dashboard_id") or "custom_dashboard")
+    definition["dashboard_id"] = resolved_dashboard_id
+    _DEFINITIONS[resolved_dashboard_id] = definition
+    return {"success": True, "definition": definition, "url": _dashboard_url(resolved_dashboard_id)}
+
+
+@router.post("/api/dashboard-definitions", operation_id="create_dashboard_definition_manifest_v1")
 async def create_dashboard_definition(body: DashboardDefinitionRequest):
     definition = body.model_dump()
-    dashboard_id = str(definition.get("dashboard_id") or "custom_dashboard")
-    definition["dashboard_id"] = dashboard_id
-    _DEFINITIONS[dashboard_id] = definition
-    return {"success": True, "definition": definition, "url": _dashboard_url(dashboard_id)}
+    return _save_dashboard_definition(definition)
+
+
+@router.post("/api/dashboard-definitions/v2", operation_id="create_dashboard_manifest_v2")
+async def create_dashboard_definition_v2(body: DashboardDefinitionRequest):
+    definition = body.model_dump()
+    return _save_dashboard_definition(definition)
 
 
 @router.get("/api/dashboard-definitions/{dashboard_id}")
@@ -463,12 +473,16 @@ async def get_dashboard_definition(dashboard_id: str):
     return _DEFINITIONS.get(dashboard_id, DEFAULT_DASHBOARD_DEFINITION)
 
 
-@router.put("/api/dashboard-definitions/{dashboard_id}")
+@router.put("/api/dashboard-definitions/{dashboard_id}", operation_id="update_dashboard_definition_manifest_v1")
 async def update_dashboard_definition(dashboard_id: str, body: DashboardDefinitionUpdateRequest):
     definition = body.model_dump()
-    definition["dashboard_id"] = dashboard_id
-    _DEFINITIONS[dashboard_id] = definition
-    return {"success": True, "definition": definition, "url": _dashboard_url(dashboard_id)}
+    return _save_dashboard_definition(definition, dashboard_id=dashboard_id)
+
+
+@router.put("/api/dashboard-definitions/v2/{dashboard_id}", operation_id="update_dashboard_manifest_v2")
+async def update_dashboard_definition_v2(dashboard_id: str, body: DashboardDefinitionUpdateRequest):
+    definition = body.model_dump()
+    return _save_dashboard_definition(definition, dashboard_id=dashboard_id)
 
 
 @router.post("/api/dashboard-runtime/query")
