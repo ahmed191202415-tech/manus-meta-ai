@@ -49,6 +49,32 @@ def test_custom_dashboard_definition_returns_renderable_link():
     assert "/api/dashboard-runtime/query" in page.text
 
 
+def test_dashboard_definition_schema_exposes_manifest_fields():
+    schema = app.openapi()
+    body_ref = (
+        schema["paths"]["/api/dashboard-definitions"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    )
+    body_name = body_ref.split("/")[-1]
+    properties = schema["components"]["schemas"][body_name]["properties"]
+
+    for key in [
+        "dashboard_id",
+        "title",
+        "description",
+        "filters",
+        "data_sources",
+        "metrics",
+        "stages",
+        "charts",
+        "widgets",
+        "layout",
+        "interactions",
+        "runtime_queries",
+        "formulas",
+    ]:
+        assert key in properties
+
+
 def test_journey_funnel_returns_business_rule_stages():
     response = client.get("/api/journey/funnel?campaign_id=all")
 

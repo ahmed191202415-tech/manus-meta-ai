@@ -35,14 +35,17 @@ class DashboardDefinitionRequest(BaseModel):
 
     dashboard_id: str = Field("custom_dashboard", description="Stable dashboard id.")
     title: str | None = Field(None, description="Dashboard title.")
+    description: str | None = Field(None, description="Optional dashboard description.")
     filters: list[dict[str, Any]] = Field(default_factory=list, description="Dashboard filter definitions.")
     data_sources: dict[str, Any] = Field(default_factory=dict, description="Meta, GA4, Clarity, or other source config.")
+    metrics: dict[str, Any] = Field(default_factory=dict, description="Metric definitions and event mappings.")
     charts: list[dict[str, Any]] = Field(default_factory=list, description="Chart, table, and interaction definitions.")
     stages: list[dict[str, Any]] = Field(default_factory=list, description="Ordered funnel or journey stages.")
     widgets: list[dict[str, Any]] = Field(default_factory=list, description="Renderer widgets and their placement.")
     layout: dict[str, Any] = Field(default_factory=dict, description="Optional renderer layout hints.")
-    metrics: dict[str, Any] = Field(default_factory=dict, description="Optional dashboard-specific metric overrides.")
     interactions: list[dict[str, Any]] = Field(default_factory=list, description="Cross-filtering or drilldown rules.")
+    runtime_queries: dict[str, Any] = Field(default_factory=dict, description="Named runtime query definitions.")
+    formulas: dict[str, Any] = Field(default_factory=dict, description="Formula definitions for calculated metrics.")
 
 
 class DashboardRuntimeQueryRequest(BaseModel):
@@ -58,14 +61,17 @@ class DashboardDefinitionUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     title: str | None = Field(None, description="Dashboard title.")
+    description: str | None = Field(None, description="Optional dashboard description.")
     filters: list[dict[str, Any]] = Field(default_factory=list, description="Dashboard filter definitions.")
     data_sources: dict[str, Any] = Field(default_factory=dict, description="Meta, GA4, Clarity, or other source config.")
+    metrics: dict[str, Any] = Field(default_factory=dict, description="Metric definitions and event mappings.")
     charts: list[dict[str, Any]] = Field(default_factory=list, description="Chart, table, and interaction definitions.")
     stages: list[dict[str, Any]] = Field(default_factory=list, description="Ordered funnel or journey stages.")
     widgets: list[dict[str, Any]] = Field(default_factory=list, description="Renderer widgets and their placement.")
     layout: dict[str, Any] = Field(default_factory=dict, description="Optional renderer layout hints.")
-    metrics: dict[str, Any] = Field(default_factory=dict, description="Optional dashboard-specific metric overrides.")
     interactions: list[dict[str, Any]] = Field(default_factory=list, description="Cross-filtering or drilldown rules.")
+    runtime_queries: dict[str, Any] = Field(default_factory=dict, description="Named runtime query definitions.")
+    formulas: dict[str, Any] = Field(default_factory=dict, description="Formula definitions for calculated metrics.")
 
 
 class ComparisonEntity(BaseModel):
