@@ -59,10 +59,13 @@ GPT_DATA_PATHS = {
     "/api/dashboard-definitions/v2",
     "/api/dashboard-definitions/{dashboard_id}",
     "/api/dashboard-definitions/v2/{dashboard_id}",
+    "/api/dashboard-code/v1",
+    "/api/dashboard-code/v1/{dashboard_id}",
     "/api/dashboard-runtime/query",
     "/api/dashboard-runtime/connectors",
     "/api/dashboard-runtime/events/discover",
     "/dashboards/custom/{dashboard_id}",
+    "/dashboards/code/{dashboard_id}",
     "/api/journey/funnel",
     "/api/journey/stage-detail",
     "/api/journey/trend",
@@ -131,7 +134,9 @@ def openapi_gpt_schema():
             "use /api/dashboard-runtime/connectors to inspect available sources, /api/dashboard-definitions/v2 to save "
             "a manifest, /api/dashboard-runtime/events/discover to inspect available Meta actions before mapping "
             "events, /api/dashboard-runtime/query to run a chart query, /dashboards/custom/{dashboard_id} to open "
-            "a manifest-rendered dashboard page, and /api/journey/* endpoints for the "
+            "a manifest-rendered dashboard page. For fully custom dashboard UI, use /api/dashboard-code/v1 with "
+            "html, css, and javascript, then open /dashboards/code/{dashboard_id}; the page can call "
+            "window.ALLINGPT.runQuery(query_id, filters). Use /api/journey/* endpoints for the "
             "customer-journey dashboard data. Never map offsite_conversion.fb_pixel_custom to a dashboard stage unless "
             "the saved manifest explicitly sets that action_type with explicitly_mapped_by_gpt=true."
         ),

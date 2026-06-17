@@ -84,6 +84,40 @@ def test_dashboard_definition_schema_exposes_manifest_fields():
     assert "runtime_queries" in v2_properties
 
 
+def test_code_dashboard_definition_returns_renderable_link():
+    code_dashboard = {
+        "dashboard_id": "freeform_dashboard",
+        "title": "Freeform Dashboard",
+        "description": "A dashboard controlled by custom code.",
+        "html": "<main id=\"app\"><h1>Freeform</h1><button id=\"load\">Load</button></main>",
+        "css": "#app{padding:24px}.metric{font-weight:700}",
+        "javascript": "document.getElementById('load').addEventListener('click',()=>window.ALLINGPT.runQuery('journey_funnel',{}));",
+        "data_contract": {"queries": {"journey_funnel": {"source": "runtime"}}},
+    }
+
+    created = client.post("/api/dashboard-code/v1", json=code_dashboard)
+    assert created.status_code == 200
+    assert created.json()["url"].endswith("/dashboards/code/freeform_dashboard")
+
+    page = client.get("/dashboards/code/freeform_dashboard")
+    assert page.status_code == 200
+    assert "Freeform Dashboard" in page.text
+    assert "window.ALLINGPT" in page.text
+    assert "runQuery" in page.text
+
+
+def test_code_dashboard_schema_exposes_full_code_fields():
+    schema = app.openapi()
+    path = schema["paths"]["/api/dashboard-code/v1"]["post"]
+    assert path["operationId"] == "create_full_code_dashboard_v1"
+    body_ref = path["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    body_name = body_ref.split("/")[-1]
+    properties = schema["components"]["schemas"][body_name]["properties"]
+
+    for key in ["dashboard_id", "title", "description", "html", "css", "javascript", "data_contract"]:
+        assert key in properties
+
+
 def test_journey_funnel_returns_business_rule_stages():
     response = client.get("/api/journey/funnel?campaign_id=all")
 

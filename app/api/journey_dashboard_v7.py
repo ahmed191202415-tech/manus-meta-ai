@@ -24,6 +24,7 @@ from app.core.meta_client import meta_call
 router = APIRouter(tags=["journey-dashboard-v7"])
 
 _DEFINITIONS = {DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]: DEFAULT_DASHBOARD_DEFINITION}
+_CODE_DASHBOARDS: dict[str, dict[str, Any]] = {}
 META_DASHBOARD_FIELDS = (
     "campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,"
     "unique_inline_link_clicks,unique_ctr,actions,date_start,date_stop"
@@ -74,6 +75,29 @@ class DashboardDefinitionUpdateRequest(BaseModel):
     formulas: dict[str, Any] = Field(default_factory=dict, description="Formula definitions for calculated metrics.")
 
 
+class DashboardCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    dashboard_id: str = Field("custom_code_dashboard", description="Stable dashboard id.")
+    title: str | None = Field(None, description="Dashboard title.")
+    description: str | None = Field(None, description="Optional dashboard description.")
+    html: str = Field(..., description="Body HTML for a full custom dashboard.")
+    css: str = Field("", description="Dashboard CSS.")
+    javascript: str = Field("", description="Dashboard JavaScript.")
+    data_contract: dict[str, Any] = Field(default_factory=dict, description="Runtime query and data expectations.")
+
+
+class DashboardCodeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str | None = Field(None, description="Dashboard title.")
+    description: str | None = Field(None, description="Optional dashboard description.")
+    html: str = Field(..., description="Body HTML for a full custom dashboard.")
+    css: str = Field("", description="Dashboard CSS.")
+    javascript: str = Field("", description="Dashboard JavaScript.")
+    data_contract: dict[str, Any] = Field(default_factory=dict, description="Runtime query and data expectations.")
+
+
 class ComparisonEntity(BaseModel):
     type: str = Field("campaign", description="Entity type: campaign, adset, or ad.")
     id: str = Field(..., description="Meta entity id.")
@@ -91,6 +115,11 @@ class JourneyComparisonRequest(BaseModel):
 
 def _dashboard_url(dashboard_id: str) -> str:
     path = f"/dashboards/custom/{dashboard_id}"
+    return f"{PUBLIC_BASE_URL}{path}" if PUBLIC_BASE_URL else path
+
+
+def _code_dashboard_url(dashboard_id: str) -> str:
+    path = f"/dashboards/code/{dashboard_id}"
     return f"{PUBLIC_BASE_URL}{path}" if PUBLIC_BASE_URL else path
 
 
@@ -306,6 +335,74 @@ async def custom_dashboard_page(dashboard_id: str):
     return HTMLResponse(_custom_dashboard_html(definition))
 
 
+@router.get("/dashboards/code/{dashboard_id}", response_class=HTMLResponse)
+async def code_dashboard_page(dashboard_id: str):
+    dashboard = _CODE_DASHBOARDS.get(dashboard_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="Code dashboard was not found.")
+    return HTMLResponse(_code_dashboard_html(dashboard))
+
+
+def _code_dashboard_html(dashboard: dict[str, Any]) -> str:
+    dashboard_json = dumps(
+        {
+            "dashboard_id": dashboard.get("dashboard_id"),
+            "title": dashboard.get("title"),
+            "description": dashboard.get("description"),
+            "data_contract": dashboard.get("data_contract") or {},
+        },
+        ensure_ascii=False,
+    )
+    title = str(dashboard.get("title") or dashboard.get("dashboard_id") or "Code Dashboard")
+    html = str(dashboard.get("html") or "")
+    css = str(dashboard.get("css") or "")
+    javascript = str(dashboard.get("javascript") or "")
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:Arial, sans-serif; background:#f5f7fb; color:#111827; }}
+button {{ cursor:pointer; }}
+{css}
+</style>
+</head>
+<body>
+{html}
+<script>
+window.ALLINGPT_DASHBOARD = {dashboard_json};
+window.ALLINGPT = {{
+  dashboard: window.ALLINGPT_DASHBOARD,
+  async runQuery(queryId, filters = {{}}, context = {{}}) {{
+    const res = await fetch("/api/dashboard-runtime/query", {{
+      method: "POST",
+      headers: {{"Content-Type":"application/json"}},
+      body: JSON.stringify({{
+        dashboard_id: window.ALLINGPT_DASHBOARD.dashboard_id,
+        query_id: queryId || "journey_funnel",
+        filters,
+        context
+      }})
+    }});
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  }},
+  async getDefinition() {{
+    const res = await fetch("/api/dashboard-code/v1/" + encodeURIComponent(window.ALLINGPT_DASHBOARD.dashboard_id));
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  }}
+}};
+{javascript}
+</script>
+</body>
+</html>"""
+
+
 def _custom_dashboard_html(definition: dict) -> str:
     definition_json = dumps(definition, ensure_ascii=False)
     title = str(definition.get("title") or definition.get("dashboard_id") or "Custom Dashboard")
@@ -456,6 +553,13 @@ def _save_dashboard_definition(definition: dict, dashboard_id: str | None = None
     return {"success": True, "definition": definition, "url": _dashboard_url(resolved_dashboard_id)}
 
 
+def _save_code_dashboard(dashboard: dict[str, Any], dashboard_id: str | None = None) -> dict:
+    resolved_dashboard_id = str(dashboard_id or dashboard.get("dashboard_id") or "custom_code_dashboard")
+    dashboard["dashboard_id"] = resolved_dashboard_id
+    _CODE_DASHBOARDS[resolved_dashboard_id] = dashboard
+    return {"success": True, "dashboard": dashboard, "url": _code_dashboard_url(resolved_dashboard_id)}
+
+
 @router.post("/api/dashboard-definitions", operation_id="create_dashboard_definition_manifest_v1")
 async def create_dashboard_definition(body: DashboardDefinitionRequest):
     definition = body.model_dump()
@@ -483,6 +587,26 @@ async def update_dashboard_definition(dashboard_id: str, body: DashboardDefiniti
 async def update_dashboard_definition_v2(dashboard_id: str, body: DashboardDefinitionUpdateRequest):
     definition = body.model_dump()
     return _save_dashboard_definition(definition, dashboard_id=dashboard_id)
+
+
+@router.post("/api/dashboard-code/v1", operation_id="create_full_code_dashboard_v1")
+async def create_code_dashboard(body: DashboardCodeRequest):
+    dashboard = body.model_dump()
+    return _save_code_dashboard(dashboard)
+
+
+@router.get("/api/dashboard-code/v1/{dashboard_id}", operation_id="get_full_code_dashboard_v1")
+async def get_code_dashboard(dashboard_id: str):
+    dashboard = _CODE_DASHBOARDS.get(dashboard_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="Code dashboard was not found.")
+    return dashboard
+
+
+@router.put("/api/dashboard-code/v1/{dashboard_id}", operation_id="update_full_code_dashboard_v1")
+async def update_code_dashboard(dashboard_id: str, body: DashboardCodeUpdateRequest):
+    dashboard = body.model_dump()
+    return _save_code_dashboard(dashboard, dashboard_id=dashboard_id)
 
 
 @router.post("/api/dashboard-runtime/query")
