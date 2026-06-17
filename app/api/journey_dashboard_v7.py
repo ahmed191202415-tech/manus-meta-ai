@@ -389,7 +389,7 @@ window.ALLINGPT = {{
         dashboard_id: window.ALLINGPT_DASHBOARD.dashboard_id,
         query_id: queryId || "journey_funnel",
         filters,
-        context
+        context: {{...context, data_contract: window.ALLINGPT_DASHBOARD.data_contract || {{}}}}
       }})
     }});
     if (!res.ok) throw new Error(await res.text());
@@ -561,7 +561,37 @@ def _save_code_dashboard(dashboard: dict[str, Any], dashboard_id: str | None = N
     resolved_dashboard_id = str(dashboard_id or dashboard.get("dashboard_id") or "custom_code_dashboard")
     dashboard["dashboard_id"] = resolved_dashboard_id
     _CODE_DASHBOARDS[resolved_dashboard_id] = dashboard
+    data_contract = dashboard.get("data_contract") or {}
+    if isinstance(data_contract, dict):
+        _DEFINITIONS[resolved_dashboard_id] = _definition_from_code_dashboard(dashboard)
     return {"success": True, "dashboard": dashboard, "url": _code_dashboard_url(resolved_dashboard_id)}
+
+
+def _definition_from_code_dashboard(dashboard: dict[str, Any]) -> dict:
+    data_contract = dashboard.get("data_contract") or {}
+    if not isinstance(data_contract, dict):
+        data_contract = {}
+    definition = {
+        "dashboard_id": dashboard.get("dashboard_id"),
+        "title": dashboard.get("title"),
+        "description": dashboard.get("description"),
+        "data_sources": data_contract.get("data_sources") or {},
+        "metrics": data_contract.get("metrics") or {},
+        "stages": data_contract.get("stages") or [],
+        "widgets": data_contract.get("widgets") or [],
+        "runtime_queries": data_contract.get("runtime_queries") or data_contract.get("queries") or {},
+        "formulas": data_contract.get("formulas") or {},
+        "filters": data_contract.get("filters") or [],
+        "interactions": data_contract.get("interactions") or [],
+        "layout": data_contract.get("layout") or {},
+    }
+    formulas = definition.get("formulas") or {}
+    if isinstance(formulas, dict):
+        for metric_id, formula in formulas.items():
+            if metric_id not in definition["metrics"]:
+                expression = formula.get("expression") if isinstance(formula, dict) else str(formula)
+                definition["metrics"][metric_id] = {"source": "formula", "expression": expression}
+    return definition
 
 
 @router.post("/api/dashboard-definitions", operation_id="create_dashboard_definition_manifest_v1")
@@ -618,14 +648,28 @@ async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: R
     dashboard_id = str(body.dashboard_id or "customer_journey")
     query_id = str(body.query_id or "journey_funnel")
     filters = body.filters or {}
-    definition = _DEFINITIONS.get(dashboard_id, DEFAULT_DASHBOARD_DEFINITION)
-    if query_id == "journey_funnel":
+    definition = _runtime_definition(dashboard_id, body.context)
+    if query_id in {"journey_funnel", "blended_journey", "dashboard_bootstrap", "meta_insights", "ga4_report", "clarity_behavior", "source_breakdown", "stage_detail"}:
         return await _live_or_fallback_funnel(request, filters, definition)
     if query_id == "journey_trend":
         return trend(filters=filters)
     if query_id == "journey_comparison":
         return comparison()
     return {"definition": definition, "query_plan": build_query_plan(definition, query_id), "filters": filters}
+
+
+def _runtime_definition(dashboard_id: str, context: dict | None = None) -> dict:
+    if context and isinstance(context.get("manifest"), dict):
+        definition = dict(context["manifest"])
+        definition["dashboard_id"] = dashboard_id or definition.get("dashboard_id")
+        return definition
+    if context and isinstance(context.get("data_contract"), dict):
+        return _definition_from_code_dashboard({"dashboard_id": dashboard_id, "data_contract": context["data_contract"]})
+    if dashboard_id in _DEFINITIONS:
+        return _DEFINITIONS[dashboard_id]
+    if dashboard_id in _CODE_DASHBOARDS:
+        return _definition_from_code_dashboard(_CODE_DASHBOARDS[dashboard_id])
+    return {**DEFAULT_DASHBOARD_DEFINITION, "dashboard_id": dashboard_id or DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]}
 
 
 @router.get("/api/dashboard-runtime/connectors")
@@ -770,12 +814,13 @@ def _attach_live_ga4(meta_payload: dict, filters: dict, definition: dict, reques
         return
     event_names = _ga4_event_names(definition)
     fields = _ga4_summary_fields(definition)
-    if not event_names and not fields:
+    page_specs = _ga4_page_specs(definition)
+    if not event_names and not fields and not page_specs:
         debug["connector_status"]["ga4"] = "skipped_no_ga4_metrics"
         return
     property_id = _runtime_ga4_property_id(filters, definition)
     date_from, date_to = _runtime_date_range(filters)
-    ga4_metrics = {"events": {}, "summary": {}, "rows": []}
+    ga4_metrics = {"events": {}, "summary": {}, "page_metrics": {}, "rows": []}
     try:
         if event_names:
             event_payload = run_ga4_report(
@@ -810,6 +855,24 @@ def _attach_live_ga4(meta_payload: dict, filters: dict, definition: dict, reques
                 ga4_metrics["summary"].update(summary_rows[0])
             ga4_metrics["rows"].extend(summary_rows)
             debug["ga4_property_id"] = summary_payload.get("property_id")
+        for page_spec in page_specs:
+            page_path = page_spec["page_path_contains"]
+            page_payload = run_ga4_report(
+                tenant_id,
+                property_id,
+                ["pagePathPlusQueryString"],
+                sorted(page_spec["metrics"]),
+                date_from,
+                date_to,
+                limit=100,
+                filters={"page_path_contains": page_path},
+            )
+            page_rows = normalize_ga4_report(page_payload)
+            totals = {metric: sum(_to_number(row.get(metric)) for row in page_rows) for metric in page_spec["metrics"]}
+            for metric, value in totals.items():
+                ga4_metrics["page_metrics"][f"{page_path}:{metric}"] = value
+            ga4_metrics["rows"].extend(page_rows)
+            debug["ga4_property_id"] = page_payload.get("property_id")
         meta_payload["_ga4_metrics"] = ga4_metrics
         debug["connector_status"]["ga4"] = "success"
         debug["ga4_events_found"] = sorted(ga4_metrics["events"])
@@ -870,17 +933,32 @@ def _ga4_event_names(definition: dict) -> set[str]:
     return {
         str(metric.get("event_name") or "").strip()
         for metric in metrics.values()
-        if isinstance(metric, dict) and metric.get("source") == "ga4" and metric.get("event_name")
+        if isinstance(metric, dict) and metric.get("source") in {"ga4", "ga4_event"} and metric.get("event_name")
     }
 
 
 def _ga4_summary_fields(definition: dict) -> set[str]:
     metrics = (definition.get("metrics") or {}) if isinstance(definition.get("metrics"), dict) else {}
     return {
-        str(metric.get("field") or "").strip()
+        str(metric.get("field") or metric.get("metric") or "").strip()
         for metric in metrics.values()
-        if isinstance(metric, dict) and metric.get("source") == "ga4" and metric.get("field")
+        if isinstance(metric, dict) and metric.get("source") == "ga4" and (metric.get("field") or metric.get("metric")) and not metric.get("page_path_contains")
     }
+
+
+def _ga4_page_specs(definition: dict) -> list[dict]:
+    metrics = (definition.get("metrics") or {}) if isinstance(definition.get("metrics"), dict) else {}
+    specs = {}
+    for metric in metrics.values():
+        if not isinstance(metric, dict) or metric.get("source") != "ga4_page":
+            continue
+        page_path = str(metric.get("page_path_contains") or metric.get("focus_url") or "").strip()
+        if not page_path:
+            continue
+        metric_names = metric.get("metrics") or [metric.get("metric") or metric.get("field") or "sessions"]
+        bucket = specs.setdefault(page_path, set())
+        bucket.update(str(item) for item in metric_names if item)
+    return [{"page_path_contains": page_path, "metrics": values} for page_path, values in specs.items()]
 
 
 def _clarity_days(filters: dict) -> int:

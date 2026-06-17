@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import ast
+import operator
 from typing import Any
 
 
@@ -119,10 +121,12 @@ def build_query_plan(definition: dict, query_id: str | None = None) -> dict:
         source = meta.get("source")
         if source in {"meta", "meta_action", "meta_event"}:
             calls.append({"source": "meta", "metric": metric, "method": "insights/actions", "spec": meta})
-        elif source == "ga4":
+        elif source in {"ga4", "ga4_event", "ga4_page"}:
             calls.append({"source": "ga4", "metric": metric, "method": "custom_report/events", "spec": meta})
-        elif source == "clarity":
+        elif source in {"clarity", "clarity_behavior"}:
             calls.append({"source": "clarity", "metric": metric, "method": "project-live-insights", "spec": meta})
+        elif source == "formula":
+            calls.append({"source": "formula", "metric": metric, "method": "calculated", "spec": meta})
     return {
         "dashboard_id": definition.get("dashboard_id"),
         "query_id": query_id,
@@ -200,9 +204,9 @@ def build_fallback_funnel(filters: dict | None = None) -> dict:
         "spend": spend,
         "stages": stages,
         "summary": {
-            "first_stage": "unique_ctr",
-            "final_stage": "start_trial",
-            "final_conversion_rate": safe_div(stages[-1]["numeric_value"], stages[1]["numeric_value"]),
+            "first_stage": stages[0]["id"] if stages else None,
+            "final_stage": stages[-1]["id"] if stages else None,
+            "final_conversion_rate": _final_conversion_rate(stages),
         },
         "debug": {
             "mode": "fallback_data",
@@ -234,7 +238,15 @@ def build_live_funnel(
     resolved_metrics = {}
     resolver_warnings = []
     for metric_id, metric_definition in metric_defs.items():
+        if str(metric_definition.get("source") or "").strip() == "formula":
+            continue
         resolved = resolve_metric(metric_definition, row, external_metrics)
+        resolved_metrics[metric_id] = resolved
+        resolver_warnings.extend(resolved.get("warnings") or [])
+    for metric_id, metric_definition in metric_defs.items():
+        if str(metric_definition.get("source") or "").strip() != "formula":
+            continue
+        resolved = _resolve_formula_metric(metric_definition, resolved_metrics)
         resolved_metrics[metric_id] = resolved
         resolver_warnings.extend(resolved.get("warnings") or [])
 
@@ -260,14 +272,41 @@ def build_live_funnel(
         for stage in stages
         if stage["numeric_value"] == 0 and stage["id"] not in {"complete_profile", "start_trial", "otp"}
     ]
+    source_map = {
+        stage["id"]: {
+            "source": stage.get("source"),
+            "field": stage.get("metric_source", {}).get("field"),
+            "path": stage.get("metric_source", {}).get("resolved_action_type") or stage.get("metric_source", {}).get("resolved_field") or stage.get("metric_source", {}).get("resolved_event_name"),
+            "filters": filters,
+            "formula": stage.get("metric_source", {}).get("expression"),
+            "raw_value": stage.get("numeric_value"),
+            "warnings": stage.get("warnings") or [],
+        }
+        for stage in stages
+    }
+    warnings = resolver_warnings + [warning for stage in stages for warning in (stage.get("warnings") or [])]
     return {
+        "dashboard_id": definition.get("dashboard_id"),
+        "query_id": "journey_funnel",
         "filters": filters,
+        "filters_sent": filters,
         "spend": round(spend, 2),
         "stages": stages,
+        "data": {"stages": stages, "summary_metrics": {stage["id"]: stage["numeric_value"] for stage in stages}},
+        "raw": {
+            "meta": row,
+            "ga4": external_metrics.get("ga4") or {},
+            "clarity": external_metrics.get("clarity") or {},
+        },
+        "normalized": {stage["id"]: stage for stage in stages},
+        "source_map": source_map,
+        "warnings": warnings,
+        "errors": (debug or {}).get("connector_errors", []),
+        "connector_status": (debug or {}).get("connector_status", {}),
         "summary": {
-            "first_stage": "unique_ctr",
-            "final_stage": "start_trial",
-            "final_conversion_rate": safe_div(stages[-1]["numeric_value"], stages[1]["numeric_value"]),
+            "first_stage": stages[0]["id"] if stages else None,
+            "final_stage": stages[-1]["id"] if stages else None,
+            "final_conversion_rate": _final_conversion_rate(stages),
             "raw_meta": {
                 "impressions": _number(row.get("impressions")),
                 "reach": _number(row.get("reach")),
@@ -297,6 +336,13 @@ def build_mixed_funnel(live_payload: dict | None, filters: dict | None = None, d
         fallback["debug"]["connector_errors"] = (debug or {}).get("connector_errors", [])
         return fallback
     return build_live_funnel(live_payload, filters, definition=definition, debug=debug, mode=(debug or {}).get("mode", "live_data"))
+
+
+def _final_conversion_rate(stages: list[dict]) -> float | None:
+    if len(stages) < 2:
+        return None
+    denominator = next((stage["numeric_value"] for stage in stages if stage["numeric_value"] and stage["id"] != "unique_ctr"), None)
+    return safe_div(stages[-1]["numeric_value"], denominator or 0)
 
 
 def _build_stage_rows(stage_values: list[tuple]) -> list[dict]:
@@ -372,10 +418,10 @@ def resolve_metric(metric_definition: dict, raw_meta_row: dict, external_metrics
     if source in {"meta_action", "meta_event"}:
         return _resolve_action_metric(metric_definition, raw_meta_row)
 
-    if source == "ga4":
+    if source in {"ga4", "ga4_event", "ga4_page"}:
         return _resolve_ga4_metric(metric_definition, (external_metrics or {}).get("ga4") or {})
 
-    if source == "clarity":
+    if source in {"clarity", "clarity_behavior"}:
         return _resolve_clarity_metric(metric_definition, (external_metrics or {}).get("clarity") or {})
 
     return {
@@ -387,7 +433,8 @@ def resolve_metric(metric_definition: dict, raw_meta_row: dict, external_metrics
 
 def _resolve_ga4_metric(metric_definition: dict, ga4_metrics: dict) -> dict:
     event_name = str(metric_definition.get("event_name") or "").strip()
-    field = str(metric_definition.get("field") or "").strip()
+    field = str(metric_definition.get("field") or metric_definition.get("metric") or "").strip()
+    page_path = str(metric_definition.get("page_path_contains") or metric_definition.get("focus_url") or "").strip()
     if event_name:
         events = ga4_metrics.get("events") or {}
         value = _number(events.get(event_name))
@@ -398,6 +445,15 @@ def _resolve_ga4_metric(metric_definition: dict, ga4_metrics: dict) -> dict:
         }
     if field:
         summary = ga4_metrics.get("summary") or {}
+        if page_path:
+            page_metrics = ga4_metrics.get("page_metrics") or {}
+            key = f"{page_path}:{field}"
+            value = _number(page_metrics.get(key))
+            return {
+                "value": value,
+                "metric_source": {**metric_definition, "resolved": key in page_metrics, "resolved_field": field, "resolved_page_path": page_path},
+                "warnings": [] if key in page_metrics else [f"GA4 page metric not found: {field} for {page_path}"],
+            }
         value = _number(summary.get(field))
         return {
             "value": value,
@@ -434,6 +490,47 @@ def _resolve_clarity_metric(metric_definition: dict, clarity_metrics: dict) -> d
         "metric_source": {**metric_definition, "resolved": resolved_field in summary, "resolved_field": resolved_field},
         "warnings": [] if resolved_field in summary else [f"Clarity field not found: {field}"],
     }
+
+
+def _resolve_formula_metric(metric_definition: dict, resolved_metrics: dict) -> dict:
+    expression = str(metric_definition.get("expression") or "").strip()
+    values = {key: _number(value.get("value")) for key, value in resolved_metrics.items()}
+    if not expression:
+        return {"value": 0, "metric_source": {**metric_definition, "resolved": False}, "warnings": ["Formula expression is required"]}
+    try:
+        value = _safe_eval_formula(expression, values)
+        return {"value": value, "metric_source": {**metric_definition, "resolved": True, "expression": expression}, "warnings": []}
+    except Exception as exc:
+        return {"value": 0, "metric_source": {**metric_definition, "resolved": False, "expression": expression}, "warnings": [f"Formula failed: {exc}"]}
+
+
+_FORMULA_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.USub: operator.neg,
+}
+
+
+def _safe_eval_formula(expression: str, values: dict[str, float]) -> float:
+    def eval_node(node):
+        if isinstance(node, ast.Expression):
+            return eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            return _number(values.get(node.id))
+        if isinstance(node, ast.BinOp) and type(node.op) in _FORMULA_OPERATORS:
+            right = eval_node(node.right)
+            if isinstance(node.op, ast.Div) and right == 0:
+                return 0.0
+            return _FORMULA_OPERATORS[type(node.op)](eval_node(node.left), right)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _FORMULA_OPERATORS:
+            return _FORMULA_OPERATORS[type(node.op)](eval_node(node.operand))
+        raise ValueError("unsupported formula expression")
+
+    return float(eval_node(ast.parse(expression, mode="eval")))
 
 
 def _resolve_action_metric(metric_definition: dict, raw_meta_row: dict) -> dict:

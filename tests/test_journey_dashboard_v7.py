@@ -280,6 +280,107 @@ def test_dashboard_runtime_query_uses_ga4_and_clarity_without_meta(monkeypatch):
     assert by_id["quickback"]["numeric_value"] == 7
 
 
+def test_code_dashboard_runtime_uses_own_data_contract_not_customer_journey(monkeypatch):
+    async def fake_resolve_access_token(request):
+        raise HTTPException(status_code=401, detail="Meta is not connected.")
+
+    def fake_run_ga4_report(tenant_id, property_id, dimensions, metrics, start_date, end_date, limit=100, **kwargs):
+        if dimensions == ["eventName"]:
+            return {
+                "property_id": property_id,
+                "dimensionHeaders": [{"name": "eventName"}],
+                "metricHeaders": [{"name": "eventCount"}],
+                "rows": [
+                    {"dimensionValues": [{"value": "otp_screen_view"}], "metricValues": [{"value": "12"}]},
+                ],
+            }
+        return {"property_id": property_id, "dimensionHeaders": [], "metricHeaders": [], "rows": []}
+
+    monkeypatch.setattr(journey_dashboard_v7, "resolve_access_token", fake_resolve_access_token)
+    monkeypatch.setattr(journey_dashboard_v7, "run_ga4_report", fake_run_ga4_report)
+
+    client.post(
+        "/api/dashboard-code/v1",
+        json={
+            "dashboard_id": "otp_code_dashboard",
+            "title": "OTP Code Dashboard",
+            "html": "<div id='app'></div>",
+            "javascript": "window.ALLINGPT.runQuery('blended_journey',{tenant_id:'tenant@example.com'})",
+            "data_contract": {
+                "data_sources": {"ga4": {"property_id": "529884683"}},
+                "metrics": {
+                    "otp_views": {"source": "ga4_event", "event_name": "otp_screen_view"},
+                    "otp_rate": {"source": "formula", "expression": "otp_views / 24"},
+                },
+                "stages": [
+                    {"id": "otp_views", "label": "OTP Views", "metric_id": "otp_views", "position": 1},
+                    {"id": "otp_rate", "label": "OTP Rate", "metric_id": "otp_rate", "position": 2},
+                ],
+            },
+        },
+    )
+
+    response = client.post(
+        "/api/dashboard-runtime/query",
+        json={
+            "dashboard_id": "otp_code_dashboard",
+            "query_id": "blended_journey",
+            "filters": {"tenant_id": "tenant@example.com", "property_id": "529884683"},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    by_id = {stage["id"]: stage for stage in data["stages"]}
+    assert data["dashboard_id"] == "otp_code_dashboard"
+    assert data["debug"]["query_plan"]["dashboard_id"] == "otp_code_dashboard"
+    assert "customer_journey" not in data["debug"]["query_plan"]["dashboard_id"]
+    assert by_id["otp_views"]["numeric_value"] == 12
+    assert by_id["otp_rate"]["numeric_value"] == 0.5
+    assert data["source_map"]["otp_views"]["source"] == "ga4_event"
+    assert data["filters_sent"]["tenant_id"] == "tenant@example.com"
+
+
+def test_dashboard_runtime_supports_ga4_page_metric(monkeypatch):
+    async def fake_resolve_access_token(request):
+        raise HTTPException(status_code=401, detail="Meta is not connected.")
+
+    def fake_run_ga4_report(tenant_id, property_id, dimensions, metrics, start_date, end_date, limit=100, **kwargs):
+        assert kwargs["filters"]["page_path_contains"] == "verify-otp"
+        return {
+            "property_id": property_id,
+            "dimensionHeaders": [{"name": "pagePathPlusQueryString"}],
+            "metricHeaders": [{"name": "sessions"}],
+            "rows": [
+                {"dimensionValues": [{"value": "/verify-otp"}], "metricValues": [{"value": "31"}]},
+            ],
+        }
+
+    monkeypatch.setattr(journey_dashboard_v7, "resolve_access_token", fake_resolve_access_token)
+    monkeypatch.setattr(journey_dashboard_v7, "run_ga4_report", fake_run_ga4_report)
+
+    client.post(
+        "/api/dashboard-definitions/v2",
+        json={
+            "dashboard_id": "website_analytics_probe",
+            "data_sources": {"ga4": {"property_id": "529884683"}},
+            "metrics": {"otp_page_sessions": {"source": "ga4_page", "page_path_contains": "verify-otp", "metric": "sessions"}},
+            "stages": [{"id": "otp_page_sessions", "label": "OTP Page Sessions", "metric_id": "otp_page_sessions", "position": 1}],
+        },
+    )
+
+    response = client.post(
+        "/api/dashboard-runtime/query",
+        json={"dashboard_id": "website_analytics_probe", "query_id": "ga4_report", "filters": {"tenant_id": "tenant@example.com"}},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["dashboard_id"] == "website_analytics_probe"
+    assert data["stages"][0]["numeric_value"] == 31
+    assert data["connector_status"]["ga4"] == "success"
+
+
 def test_journey_funnel_uses_live_meta_without_server_error(monkeypatch):
     async def fake_resolve_access_token(request):
         return "live-token"
