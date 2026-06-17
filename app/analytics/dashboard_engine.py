@@ -225,12 +225,16 @@ def build_live_funnel(
     definition = definition or DEFAULT_DASHBOARD_DEFINITION
     rows = meta_insights_payload.get("data") or []
     row = rows[0] if rows else {}
+    external_metrics = {
+        "ga4": meta_insights_payload.get("_ga4_metrics") or {},
+        "clarity": meta_insights_payload.get("_clarity_metrics") or {},
+    }
     spend = _number(row.get("spend"))
     metric_defs = _definition_metrics(definition)
     resolved_metrics = {}
     resolver_warnings = []
     for metric_id, metric_definition in metric_defs.items():
-        resolved = resolve_metric(metric_definition, row)
+        resolved = resolve_metric(metric_definition, row, external_metrics)
         resolved_metrics[metric_id] = resolved
         resolver_warnings.extend(resolved.get("warnings") or [])
 
@@ -354,7 +358,7 @@ def _action_value(row: dict, action_type: str) -> float:
     return total
 
 
-def resolve_metric(metric_definition: dict, raw_meta_row: dict) -> dict:
+def resolve_metric(metric_definition: dict, raw_meta_row: dict, external_metrics: dict | None = None) -> dict:
     source = str(metric_definition.get("source") or "").strip()
     if source == "meta" and metric_definition.get("field"):
         field = str(metric_definition["field"])
@@ -368,10 +372,67 @@ def resolve_metric(metric_definition: dict, raw_meta_row: dict) -> dict:
     if source in {"meta_action", "meta_event"}:
         return _resolve_action_metric(metric_definition, raw_meta_row)
 
+    if source == "ga4":
+        return _resolve_ga4_metric(metric_definition, (external_metrics or {}).get("ga4") or {})
+
+    if source == "clarity":
+        return _resolve_clarity_metric(metric_definition, (external_metrics or {}).get("clarity") or {})
+
     return {
         "value": 0,
         "metric_source": {**metric_definition, "resolved": False},
         "warnings": [f"Unsupported metric source: {source or 'missing'}"],
+    }
+
+
+def _resolve_ga4_metric(metric_definition: dict, ga4_metrics: dict) -> dict:
+    event_name = str(metric_definition.get("event_name") or "").strip()
+    field = str(metric_definition.get("field") or "").strip()
+    if event_name:
+        events = ga4_metrics.get("events") or {}
+        value = _number(events.get(event_name))
+        return {
+            "value": value,
+            "metric_source": {**metric_definition, "resolved": event_name in events, "resolved_event_name": event_name},
+            "warnings": [] if event_name in events else [f"GA4 event not found: {event_name}"],
+        }
+    if field:
+        summary = ga4_metrics.get("summary") or {}
+        value = _number(summary.get(field))
+        return {
+            "value": value,
+            "metric_source": {**metric_definition, "resolved": field in summary, "resolved_field": field},
+            "warnings": [] if field in summary else [f"GA4 field not found: {field}"],
+        }
+    return {
+        "value": 0,
+        "metric_source": {**metric_definition, "resolved": False},
+        "warnings": ["GA4 metric needs event_name or field"],
+    }
+
+
+def _resolve_clarity_metric(metric_definition: dict, clarity_metrics: dict) -> dict:
+    field = str(metric_definition.get("field") or "").strip()
+    aliases = {
+        "quickback": "quickback_events",
+        "quickback_click": "quickback_events",
+        "dead_click": "dead_click_events",
+        "deadclick": "dead_click_events",
+        "rage_click": "rage_click_events",
+        "script_error": "script_error_events",
+        "avg_active_time": "average_active_time",
+        "average_active_time": "average_active_time",
+        "scroll_depth": "average_scroll_depth",
+        "average_scroll_depth": "average_scroll_depth",
+        "sessions": "clarity_sessions",
+    }
+    resolved_field = aliases.get(field.casefold(), field)
+    summary = clarity_metrics.get("summary") or clarity_metrics
+    value = _number(summary.get(resolved_field))
+    return {
+        "value": value,
+        "metric_source": {**metric_definition, "resolved": resolved_field in summary, "resolved_field": resolved_field},
+        "warnings": [] if resolved_field in summary else [f"Clarity field not found: {field}"],
     }
 
 

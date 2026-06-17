@@ -18,7 +18,11 @@ from app.analytics.dashboard_engine import (
     stage_detail,
     trend,
 )
+from app.analytics.clarity_metrics import normalize_clarity_export, summarize_clarity_metrics
+from app.analytics.ga4_preprocessing import normalize_ga4_report
 from app.core.auth import resolve_access_token
+from app.core.clarity_client import run_clarity_live_insights_with_fallbacks
+from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call
 
 router = APIRouter(tags=["journey-dashboard-v7"])
@@ -707,7 +711,12 @@ async def discover_dashboard_events(
 
 
 async def _live_or_fallback_funnel(request: Request, filters: dict, definition: dict) -> dict:
-    debug = {"connector_errors": [], "connector_status": {"meta": "not_attempted"}, "filters_sent": filters, "mode": "fallback_data"}
+    debug = {
+        "connector_errors": [],
+        "connector_status": {"meta": "not_attempted", "ga4": "not_attempted", "clarity": "not_attempted"},
+        "filters_sent": filters,
+        "mode": "fallback_data",
+    }
     token = None
     try:
         token = await resolve_access_token(request)
@@ -715,11 +724,16 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
         debug["connector_errors"].append({"source": "meta", "stage": "auth", "error": exc.detail})
         debug["connector_status"]["meta"] = "auth_failed"
     if not token:
+        optional_payload = _optional_sources_payload(filters, definition, request, debug)
+        if optional_payload:
+            debug["mode"] = "mixed_live_data"
+            return build_mixed_funnel(optional_payload, filters, debug=debug, definition=definition)
         return build_mixed_funnel(None, filters, debug=debug, definition=definition)
 
     try:
         meta_payload, meta_debug = _fetch_live_meta_funnel(filters, definition, token)
         debug.update(meta_debug)
+        _attach_live_ga4_and_clarity(meta_payload, filters, definition, request, debug)
         debug["mode"] = "live_data"
         debug["connector_status"]["meta"] = "success"
         return build_mixed_funnel(meta_payload, filters, debug=debug, definition=definition)
@@ -729,7 +743,159 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
     except Exception as exc:
         debug["connector_errors"].append({"source": "meta", "stage": "insights", "error": str(exc)})
         debug["connector_status"]["meta"] = "failed"
+    optional_payload = _optional_sources_payload(filters, definition, request, debug)
+    if optional_payload:
+        debug["mode"] = "mixed_live_data"
+        return build_mixed_funnel(optional_payload, filters, debug=debug, definition=definition)
     return build_mixed_funnel(None, filters, debug=debug, definition=definition)
+
+
+def _optional_sources_payload(filters: dict, definition: dict, request: Request, debug: dict) -> dict | None:
+    payload = {"data": [{}]}
+    _attach_live_ga4_and_clarity(payload, filters, definition, request, debug)
+    if payload.get("_ga4_metrics") or payload.get("_clarity_metrics"):
+        return payload
+    return None
+
+
+def _attach_live_ga4_and_clarity(meta_payload: dict, filters: dict, definition: dict, request: Request, debug: dict) -> None:
+    _attach_live_ga4(meta_payload, filters, definition, request, debug)
+    _attach_live_clarity(meta_payload, filters, request, debug)
+
+
+def _attach_live_ga4(meta_payload: dict, filters: dict, definition: dict, request: Request, debug: dict) -> None:
+    tenant_id = _runtime_tenant_id(filters, request)
+    if not tenant_id:
+        debug["connector_status"]["ga4"] = "skipped_no_tenant"
+        return
+    event_names = _ga4_event_names(definition)
+    fields = _ga4_summary_fields(definition)
+    if not event_names and not fields:
+        debug["connector_status"]["ga4"] = "skipped_no_ga4_metrics"
+        return
+    property_id = _runtime_ga4_property_id(filters, definition)
+    date_from, date_to = _runtime_date_range(filters)
+    ga4_metrics = {"events": {}, "summary": {}, "rows": []}
+    try:
+        if event_names:
+            event_payload = run_ga4_report(
+                tenant_id,
+                property_id,
+                ["eventName"],
+                ["eventCount"],
+                date_from,
+                date_to,
+                limit=200,
+            )
+            event_rows = normalize_ga4_report(event_payload)
+            ga4_metrics["events"] = {
+                str(row.get("eventName") or ""): _to_number(row.get("eventCount"))
+                for row in event_rows
+                if row.get("eventName")
+            }
+            ga4_metrics["rows"].extend(event_rows)
+            debug["ga4_property_id"] = event_payload.get("property_id")
+        if fields:
+            summary_payload = run_ga4_report(
+                tenant_id,
+                property_id,
+                [],
+                sorted(fields),
+                date_from,
+                date_to,
+                limit=1,
+            )
+            summary_rows = normalize_ga4_report(summary_payload)
+            if summary_rows:
+                ga4_metrics["summary"].update(summary_rows[0])
+            ga4_metrics["rows"].extend(summary_rows)
+            debug["ga4_property_id"] = summary_payload.get("property_id")
+        meta_payload["_ga4_metrics"] = ga4_metrics
+        debug["connector_status"]["ga4"] = "success"
+        debug["ga4_events_found"] = sorted(ga4_metrics["events"])
+    except HTTPException as exc:
+        debug["connector_status"]["ga4"] = "failed"
+        debug["connector_errors"].append({"source": "ga4", "stage": "dashboard_runtime", "error": exc.detail})
+    except Exception as exc:
+        debug["connector_status"]["ga4"] = "failed"
+        debug["connector_errors"].append({"source": "ga4", "stage": "dashboard_runtime", "error": str(exc)})
+
+
+def _attach_live_clarity(meta_payload: dict, filters: dict, request: Request, debug: dict) -> None:
+    tenant_id = _runtime_tenant_id(filters, request)
+    if not tenant_id:
+        debug["connector_status"]["clarity"] = "skipped_no_tenant"
+        return
+    try:
+        payload = run_clarity_live_insights_with_fallbacks(
+            tenant_id,
+            _clarity_days(filters),
+            _clarity_dimensions(filters),
+        )
+        rows = normalize_clarity_export(payload)
+        meta_payload["_clarity_metrics"] = {"summary": summarize_clarity_metrics(rows), "rows": rows[:100]}
+        debug["connector_status"]["clarity"] = "success"
+        debug["clarity_dimensions"] = payload.get("dimensions")
+        debug["clarity_fallback_used"] = payload.get("fallback_used")
+    except HTTPException as exc:
+        debug["connector_status"]["clarity"] = "failed"
+        debug["connector_errors"].append({"source": "clarity", "stage": "dashboard_runtime", "error": exc.detail})
+    except Exception as exc:
+        debug["connector_status"]["clarity"] = "failed"
+        debug["connector_errors"].append({"source": "clarity", "stage": "dashboard_runtime", "error": str(exc)})
+
+
+def _runtime_tenant_id(filters: dict, request: Request) -> str | None:
+    value = str(filters.get("tenant_id") or request.session.get("tenant_id") or "").strip()
+    return value or None
+
+
+def _runtime_ga4_property_id(filters: dict, definition: dict) -> str | None:
+    value = str(filters.get("property_id") or filters.get("ga4_property_id") or "").strip()
+    if value and value.lower() != "all":
+        return value
+    source = (definition.get("data_sources") or {}).get("ga4") or {}
+    value = str(source.get("property_id") or source.get("ga4_property_id") or "").strip()
+    return value or None
+
+
+def _runtime_date_range(filters: dict) -> tuple[str, str]:
+    date_from = str(filters.get("date_from") or filters.get("start_date") or "30daysAgo").strip()
+    date_to = str(filters.get("date_to") or filters.get("end_date") or "today").strip()
+    return date_from, date_to
+
+
+def _ga4_event_names(definition: dict) -> set[str]:
+    metrics = (definition.get("metrics") or {}) if isinstance(definition.get("metrics"), dict) else {}
+    return {
+        str(metric.get("event_name") or "").strip()
+        for metric in metrics.values()
+        if isinstance(metric, dict) and metric.get("source") == "ga4" and metric.get("event_name")
+    }
+
+
+def _ga4_summary_fields(definition: dict) -> set[str]:
+    metrics = (definition.get("metrics") or {}) if isinstance(definition.get("metrics"), dict) else {}
+    return {
+        str(metric.get("field") or "").strip()
+        for metric in metrics.values()
+        if isinstance(metric, dict) and metric.get("source") == "ga4" and metric.get("field")
+    }
+
+
+def _clarity_days(filters: dict) -> int:
+    value = filters.get("clarity_num_of_days") or filters.get("num_of_days") or 1
+    try:
+        return min(max(int(value), 1), 3)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _clarity_dimensions(filters: dict) -> list[str]:
+    dimensions = filters.get("clarity_dimensions")
+    if isinstance(dimensions, list) and dimensions:
+        return [str(item) for item in dimensions[:3]]
+    return ["Campaign", "URL", "Device"]
 
 
 def _fetch_live_meta_funnel(filters: dict, definition: dict, token: str) -> tuple[dict, dict]:

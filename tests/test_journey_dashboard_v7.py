@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from app.analytics.dashboard_engine import build_fallback_funnel, build_live_funnel, stage_detail
 from app.api import journey_dashboard_v7
@@ -194,6 +195,89 @@ def test_dashboard_runtime_query_uses_live_meta_when_available(monkeypatch):
     assert data["debug"]["mode"] == "live_data"
     assert data["spend"] == 1594.31
     assert data["summary"]["raw_meta"]["unique_inline_link_clicks"] == 93
+
+
+def test_dashboard_runtime_query_uses_ga4_and_clarity_without_meta(monkeypatch):
+    async def fake_resolve_access_token(request):
+        raise HTTPException(status_code=401, detail="Meta is not connected.")
+
+    def fake_run_ga4_report(tenant_id, property_id, dimensions, metrics, start_date, end_date, limit=100, **kwargs):
+        assert tenant_id == "tenant@example.com"
+        assert property_id == "529884683"
+        if dimensions == ["eventName"]:
+            return {
+                "property_id": property_id,
+                "dimensionHeaders": [{"name": "eventName"}],
+                "metricHeaders": [{"name": "eventCount"}],
+                "rows": [
+                    {"dimensionValues": [{"value": "landing_stayed_10s"}], "metricValues": [{"value": "42"}]},
+                ],
+            }
+        return {
+            "property_id": property_id,
+            "dimensionHeaders": [],
+            "metricHeaders": [{"name": metric} for metric in metrics],
+            "rows": [{"metricValues": [{"value": "100"} for _ in metrics]}],
+        }
+
+    def fake_clarity(tenant_id, num_of_days, dimensions):
+        assert tenant_id == "tenant@example.com"
+        return {
+            "tenant_id": tenant_id,
+            "dimensions": dimensions,
+            "raw": [
+                {
+                    "metricName": "QuickbackClick",
+                    "information": [{"URL": "https://beon.chat/", "subTotal": 7, "totalSessionCount": 100}],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(journey_dashboard_v7, "resolve_access_token", fake_resolve_access_token)
+    monkeypatch.setattr(journey_dashboard_v7, "run_ga4_report", fake_run_ga4_report)
+    monkeypatch.setattr(journey_dashboard_v7, "run_clarity_live_insights_with_fallbacks", fake_clarity)
+
+    manifest = {
+        "dashboard_id": "ga4_clarity_probe",
+        "title": "GA4 Clarity Probe",
+        "data_sources": {
+            "ga4": {"property_id": "529884683"},
+            "clarity": {"connector": "clarity"},
+        },
+        "metrics": {
+            "stayed_10s": {"source": "ga4", "event_name": "landing_stayed_10s"},
+            "quickback": {"source": "clarity", "field": "quickback"},
+        },
+        "stages": [
+            {"id": "stayed_10s", "label": "Stayed 10s", "metric_id": "stayed_10s", "position": 1},
+            {"id": "quickback", "label": "Quickback", "metric_id": "quickback", "position": 2},
+        ],
+    }
+    client.post("/api/dashboard-definitions/v2", json=manifest)
+
+    response = client.post(
+        "/api/dashboard-runtime/query",
+        json={
+            "dashboard_id": "ga4_clarity_probe",
+            "query_id": "journey_funnel",
+            "filters": {
+                "tenant_id": "tenant@example.com",
+                "property_id": "529884683",
+                "date_from": "2026-06-15",
+                "date_to": "2026-06-16",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    by_id = {stage["id"]: stage for stage in data["stages"]}
+    assert data["debug"]["mode"] == "mixed_live_data"
+    assert data["debug"]["connector_status"]["meta"] == "auth_failed"
+    assert data["debug"]["connector_status"]["ga4"] == "success"
+    assert data["debug"]["connector_status"]["clarity"] == "success"
+    assert by_id["stayed_10s"]["numeric_value"] == 42
+    assert by_id["quickback"]["numeric_value"] == 7
 
 
 def test_journey_funnel_uses_live_meta_without_server_error(monkeypatch):

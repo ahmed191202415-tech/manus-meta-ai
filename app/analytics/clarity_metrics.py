@@ -41,6 +41,10 @@ def normalize_clarity_export(payload: dict) -> list[dict]:
 def summarize_clarity_metrics(rows: list[dict]) -> dict:
     sessions = _estimate_sessions(rows)
     bot_sessions = sum(_num(row.get("totalBotSessionCount")) for row in rows if row.get("metricName") == "Traffic")
+    dead_click_events = _clarity_event_total(rows, {"DeadClickCount", "Dead Click Count"}, ["deadClickCount", "Dead Click Count"])
+    rage_click_events = _clarity_event_total(rows, {"RageClickCount", "Rage Click Count"}, ["rageClickCount", "Rage Click Count"])
+    quickback_events = _clarity_event_total(rows, {"QuickbackClick", "Quickback Click"}, ["quickbackClick", "Quickback Click"])
+    script_error_events = _clarity_event_total(rows, {"ScriptErrorCount", "Script Error Count"}, ["scriptErrorCount", "Script Error Count"])
     frustration = sum(_num(row.get("subTotal")) for row in rows if row.get("metricName") in FRUSTRATION_METRICS)
     frustration += sum(sum(_num(row.get(key)) for key in FRUSTRATION_KEYS) for row in rows)
     scroll_values = _metric_values(rows, {"ScrollDepth", "Scroll Depth"}, ["scrollDepth", "Scroll Depth"])
@@ -51,6 +55,10 @@ def summarize_clarity_metrics(rows: list[dict]) -> dict:
         "bot_session_rate": _safe_div(bot_sessions, sessions + bot_sessions),
         "frustration_events": frustration,
         "frustration_rate": _safe_div(frustration, sessions),
+        "dead_click_events": dead_click_events,
+        "rage_click_events": rage_click_events,
+        "quickback_events": quickback_events,
+        "script_error_events": script_error_events,
         "average_scroll_depth": _avg(scroll_values),
         "average_active_time": _avg(active_time_values),
         "row_count": len(rows),
@@ -108,3 +116,15 @@ def _metric_values(rows: list[dict], metric_names: set[str], field_names: list[s
                 values.append(_num(row.get(field)))
                 break
     return values
+
+
+def _clarity_event_total(rows: list[dict], metric_names: set[str], field_names: list[str]) -> float:
+    total = 0.0
+    for row in rows:
+        if row.get("metricName") in metric_names:
+            total += _num(row.get("subTotal"))
+            continue
+        for field in field_names:
+            if row.get(field) is not None:
+                total += _num(row.get(field))
+    return total
