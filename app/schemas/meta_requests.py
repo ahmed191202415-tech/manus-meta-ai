@@ -18,6 +18,16 @@ class RawMetaRequest(BaseModel):
     )
     params: Dict[str, Any] = Field(default_factory=dict, description="Optional Meta Graph query parameters.")
     data: Dict[str, Any] = Field(default_factory=dict, description="Confirmed Meta Graph write payload.")
+    source_audience_id: Optional[str] = Field(
+        default=None,
+        description="For Custom Audience creation, clone the accepted rule from this existing Meta audience.",
+    )
+    audience_retention_days: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=365,
+        description="For a cloned engagement audience, replace rule retention with this number of days.",
+    )
 
 
 class ReadOnlyMetaQueryRequest(BaseModel):
@@ -119,7 +129,7 @@ class CustomAudienceCreateRequest(BaseModel):
     name: str
     subtype: str = "CUSTOM"
     description: Optional[str] = None
-    customer_file_source: Optional[str] = "USER_PROVIDED_ONLY"
+    customer_file_source: Optional[str] = None
     rule: Optional[Dict[str, Any]] = None
     prefill: Optional[bool] = None
     retention_days: Optional[int] = None

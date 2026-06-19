@@ -102,3 +102,92 @@ def test_meta_write_passes_explicit_page_id_to_token_router(monkeypatch):
     assert result == {"id": "reply_1"}
     assert routing_calls[0]["page_id"] == "page_1"
     assert graph_calls == [("POST", "comment_1/comments", "page_token", {}, {"message": "Thanks"})]
+
+
+def test_meta_write_clones_existing_engagement_audience_rule(monkeypatch):
+    calls = []
+
+    def fake_meta_call(method, path, token, params=None, data=None):
+        calls.append((method, path, token, params, data))
+        if method == "GET":
+            return {
+                "id": "120247050271910505",
+                "name": "Warm Page Contact Signals - BeOn 365d",
+                "subtype": "CUSTOM",
+                "retention_days": 365,
+                "rule": {
+                    "inclusions": {
+                        "operator": "or",
+                        "rules": [
+                            {
+                                "event_sources": [{"id": "487462921107773", "type": "page"}],
+                                "retention_seconds": 31536000,
+                                "filter": {"event": {"eq": "page_engaged"}},
+                            }
+                        ],
+                    }
+                },
+            }
+        return {"id": "new_audience_1"}
+
+    monkeypatch.setattr(meta_raw, "meta_call", fake_meta_call)
+
+    result = asyncio.run(
+        meta_raw.raw_meta_request(
+            RawMetaRequest(
+                method="POST",
+                path="act_763606732391242/customaudiences",
+                source_audience_id="120247050271910505",
+                audience_retention_days=30,
+                data={
+                    "name": "BeOn_All_Meta_Engagers_30D_Exclude_Frequency",
+                    "subtype": "CUSTOM",
+                    "customer_file_source": "USER_PROVIDED_ONLY",
+                },
+            ),
+            token="user_token",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["audience"]["id"] == "new_audience_1"
+    payload = calls[1][4]
+    assert payload["retention_days"] == 30
+    assert payload["prefill"] is True
+    assert "customer_file_source" not in payload
+    assert payload["rule"]["inclusions"]["rules"][0]["retention_seconds"] == 2592000
+
+
+def test_meta_write_returns_exact_error_when_cloned_rule_is_rejected(monkeypatch):
+    def fake_meta_call(method, path, token, params=None, data=None):
+        if method == "GET":
+            return {
+                "id": "source_1",
+                "name": "Working engagement audience",
+                "subtype": "CUSTOM",
+                "rule": {"retention_seconds": 31536000, "event": "page_engaged"},
+            }
+        raise meta_raw.HTTPException(
+            status_code=400,
+            detail={"message": "Invalid rule", "code": 100, "error_subcode": 1885364},
+        )
+
+    monkeypatch.setattr(meta_raw, "meta_call", fake_meta_call)
+
+    result = asyncio.run(
+        meta_raw.raw_meta_request(
+            RawMetaRequest(
+                method="POST",
+                path="act_1/customaudiences",
+                source_audience_id="source_1",
+                audience_retention_days=30,
+                data={"name": "New 30d audience"},
+            ),
+            token="user_token",
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["message"] == "Invalid rule"
+    assert result["error"]["error_subcode"] == 1885364
+    assert result["payload_sent"]["rule"]["retention_seconds"] == 2592000

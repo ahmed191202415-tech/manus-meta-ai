@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.meta_requests import RawMetaRequest, ReadOnlyMetaQueryRequest, SmartMetaInsightsRequest
@@ -191,4 +193,102 @@ async def raw_meta_request(body: RawMetaRequest, token: str = Depends(resolve_ac
         data=body.data,
         page_id=body.page_id,
     )
+    if body.method == "POST" and _is_custom_audience_create_path(body.path):
+        return _create_custom_audience_write(body, effective_token)
     return meta_call(body.method, body.path, effective_token, params=body.params, data=body.data)
+
+
+def _is_custom_audience_create_path(path: str) -> bool:
+    clean_path = str(path or "").strip().strip("/").casefold()
+    return clean_path.startswith("act_") and clean_path.endswith("/customaudiences")
+
+
+def _create_custom_audience_write(body: RawMetaRequest, token: str) -> dict:
+    data = dict(body.data or {})
+    source_rule = None
+    source_audience = None
+    if body.source_audience_id:
+        source_audience = meta_call(
+            "GET",
+            str(body.source_audience_id),
+            token,
+            params={"fields": "id,name,description,subtype,rule,retention_days"},
+        )
+        source_rule = _parse_audience_rule(source_audience.get("rule"))
+        if not source_rule:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "The source audience does not expose a reusable rule.",
+                    "source_audience_id": body.source_audience_id,
+                },
+            )
+        retention_days = body.audience_retention_days or data.get("retention_days") or 30
+        data["rule"] = _replace_rule_retention(source_rule, int(retention_days))
+        data["retention_days"] = int(retention_days)
+        data.setdefault("subtype", source_audience.get("subtype") or "CUSTOM")
+        data.setdefault("prefill", True)
+
+    if data.get("rule"):
+        data.pop("customer_file_source", None)
+
+    try:
+        created = meta_call("POST", body.path, token, params=body.params, data=data)
+    except HTTPException as exc:
+        if source_audience:
+            return {
+                "ok": False,
+                "action": "create_custom_audience_from_existing_rule",
+                "path": body.path,
+                "source_audience": {
+                    "id": source_audience.get("id"),
+                    "name": source_audience.get("name"),
+                    "subtype": source_audience.get("subtype"),
+                },
+                "retention_days": body.audience_retention_days or data.get("retention_days"),
+                "payload_sent": data,
+                "error": exc.detail,
+                "diagnosis": (
+                    "Meta rejected a rule cloned from an existing audience. Inspect the exact Graph error; "
+                    "do not describe this as a generic read-permission problem."
+                ),
+            }
+        raise
+    return {
+        "ok": True,
+        "action": "create_custom_audience_from_existing_rule" if source_audience else "create_custom_audience",
+        "path": body.path,
+        "source_audience_id": body.source_audience_id,
+        "retention_days": body.audience_retention_days or data.get("retention_days"),
+        "audience": created,
+    }
+
+
+def _parse_audience_rule(rule) -> dict | list | None:
+    if isinstance(rule, (dict, list)):
+        return rule
+    if isinstance(rule, str) and rule.strip():
+        try:
+            parsed = json.loads(rule)
+            return parsed if isinstance(parsed, (dict, list)) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _replace_rule_retention(rule, retention_days: int):
+    retention_seconds = max(1, int(retention_days)) * 86400
+    if isinstance(rule, list):
+        return [_replace_rule_retention(item, retention_days) for item in rule]
+    if not isinstance(rule, dict):
+        return rule
+    updated = {}
+    for key, value in rule.items():
+        clean_key = str(key).casefold()
+        if clean_key == "retention_seconds":
+            updated[key] = retention_seconds
+        elif clean_key == "retention_days":
+            updated[key] = retention_days
+        else:
+            updated[key] = _replace_rule_retention(value, retention_days)
+    return updated

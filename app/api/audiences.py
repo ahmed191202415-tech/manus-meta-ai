@@ -51,6 +51,8 @@ async def create_custom_audience(body: CustomAudienceCreateRequest, token: str =
     if body.pixel_id is not None:
         payload["pixel_id"] = body.pixel_id
     payload.update(body.extra_params)
+    if payload.get("rule"):
+        payload.pop("customer_file_source", None)
     return meta_call("POST", f"{account_id}/customaudiences", token, data=payload)
 
 
