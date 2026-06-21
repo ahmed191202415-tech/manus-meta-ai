@@ -6,6 +6,9 @@
 
 - جدول العملاء `tenant_accounts`
 - إعدادات Meta لكل عميل `tenant_meta_apps`
+- الداشبوردات العامة `dynamic_dashboards`
+- مخازن البيانات المرنة `dashboard_datasets`
+- سجلات JSON الخاصة بكل مخزن `dashboard_dataset_records`
 - ربط Meta لكل عميل `meta_connections`
 - ربط Google / GA4 لكل عميل `google_connections`
 - أكواد OAuth المؤقتة `oauth_codes`

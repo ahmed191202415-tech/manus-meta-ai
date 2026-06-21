@@ -504,8 +504,8 @@ def test_report_dispatcher_accepts_flat_pptx_fields(monkeypatch):
 
 
 def test_dashboard_dispatcher_creates_dynamic_dashboard(monkeypatch):
-    async def fake_create(body, request, token):
-        return {"url": "/dynamic_dashboards/dash_1", "title": body.title, "token": token}
+    async def fake_create(body, request):
+        return {"url": "/dynamic_dashboards/dash_1", "title": body.title}
 
     monkeypatch.setattr(gpt_tools.dynamic_dashboards, "create_dashboard", fake_create)
     result = asyncio.run(
@@ -518,11 +518,10 @@ def test_dashboard_dispatcher_creates_dynamic_dashboard(monkeypatch):
                 initial_snapshot={"kpis": {"spend": "100"}},
             ),
             object(),
-            token="user_token",
         )
     )
 
-    assert result == {"url": "/dynamic_dashboards/dash_1", "title": "Journey dashboard", "token": "user_token"}
+    assert result == {"url": "/dynamic_dashboards/dash_1", "title": "Journey dashboard"}
 
 
 def test_dashboard_schema_exposes_flexible_dashboard_tool():
@@ -532,8 +531,14 @@ def test_dashboard_schema_exposes_flexible_dashboard_tool():
     assert "/tools/dashboards" in schema["paths"]
     assert "create_dashboard" in properties["action"]["enum"]
     assert "refresh_dashboard" in properties["action"]["enum"]
+    assert "create_dataset" in properties["action"]["enum"]
+    assert "upsert_records" in properties["action"]["enum"]
+    assert "query_dataset" in properties["action"]["enum"]
     assert "widgets" in properties
     assert "data_sources" in properties
+    assert "html" in properties
+    assert "javascript" in properties
+    assert "records" in properties
 
 
 def test_dashboard_dispatcher_routes_refresh(monkeypatch):
@@ -550,8 +555,37 @@ def test_dashboard_dispatcher_routes_refresh(monkeypatch):
                 snapshot={"kpis": {"spend": 10}},
             ),
             object(),
-            token="user_token",
         )
     )
 
     assert result == {"dashboard_id": "dash_1", "snapshot": {"kpis": {"spend": 10}}}
+
+
+def test_dashboard_dispatcher_routes_arbitrary_dataset_upsert(monkeypatch):
+    async def fake_upsert(body, request):
+        return {
+            "dataset_id": body.dataset_id,
+            "records": body.records,
+            "external_key_field": body.external_key_field,
+        }
+
+    monkeypatch.setattr(gpt_tools.dynamic_dashboards, "upsert_dataset_records", fake_upsert)
+    result = asyncio.run(
+        gpt_tools.dashboard_tool(
+            DashboardToolRequest(
+                action="upsert_records",
+                tenant_id="tenant_1",
+                dataset_id="data_1",
+                records=[
+                    {"order_id": "A-1", "customer": "Ahmed", "value": 250},
+                    {"order_id": "A-2", "customer": "Mona", "value": 400},
+                ],
+                external_key_field="order_id",
+            ),
+            object(),
+        )
+    )
+
+    assert result["dataset_id"] == "data_1"
+    assert result["external_key_field"] == "order_id"
+    assert result["records"][1]["customer"] == "Mona"

@@ -36,6 +36,10 @@ from app.schemas.report_requests import (
     SavePptxReportRequest,
 )
 from app.schemas.dynamic_dashboard_requests import (
+    DashboardDatasetCreateRequest,
+    DashboardDatasetDeleteRecordsRequest,
+    DashboardDatasetQueryRequest,
+    DashboardDatasetRecordsRequest,
     DynamicDashboardCreateRequest,
     DynamicDashboardRefreshRequest,
     DynamicDashboardSnapshotRequest,
@@ -682,12 +686,54 @@ async def report_tool(body: ReportToolRequest):
 @router.post(
     "/dashboards",
     summary="Dynamic dashboards",
-    description="Create, update, list, or refresh dynamic dashboards owned by a tenant. Returns shareable dashboard links.",
+    description=(
+        "Universal dashboard and backend-data tool. Create manifest or full-code dashboards, manage tenant datasets "
+        "with arbitrary JSON records, query stored data, and return persistent shareable dashboard links."
+    ),
 )
-async def dashboard_tool(body: DashboardToolRequest, request: Request, token: str = Depends(resolve_access_token)):
+async def dashboard_tool(body: DashboardToolRequest, request: Request):
     payload = body.merged_payload()
+    if body.action == "create_dataset":
+        dataset_payload = {
+            **payload,
+            "name": payload.get("dataset_name") or payload.get("name"),
+            "schema": payload.get("dataset_schema") or payload.get("schema") or {},
+        }
+        return await dynamic_dashboards.create_dataset(
+            _validated(DashboardDatasetCreateRequest, dataset_payload),
+            request,
+        )
+    if body.action == "list_datasets":
+        return await dynamic_dashboards.list_datasets(
+            request,
+            tenant_id=payload.get("tenant_id"),
+            dashboard_id=payload.get("dashboard_id"),
+            limit=payload.get("limit") or 100,
+        )
+    if body.action == "upsert_records":
+        return await dynamic_dashboards.upsert_dataset_records(
+            _validated(DashboardDatasetRecordsRequest, payload),
+            request,
+        )
+    if body.action == "query_dataset":
+        query_payload = {**payload, "filters": payload.get("query_filters") or payload.get("filters") or {}}
+        return await dynamic_dashboards.query_dataset(
+            _validated(DashboardDatasetQueryRequest, query_payload),
+            request,
+        )
+    if body.action == "delete_records":
+        return await dynamic_dashboards.remove_dataset_records(
+            _validated(DashboardDatasetDeleteRecordsRequest, payload),
+            request,
+        )
+    if body.action == "delete_dataset":
+        return await dynamic_dashboards.remove_dataset(
+            _required_text(payload, "dataset_id"),
+            request,
+            tenant_id=payload.get("tenant_id"),
+        )
     if body.action == "create_dashboard":
-        return await dynamic_dashboards.create_dashboard(_validated(DynamicDashboardCreateRequest, payload), request, token)
+        return await dynamic_dashboards.create_dashboard(_validated(DynamicDashboardCreateRequest, payload), request)
     if body.action == "list_dashboards":
         return await dynamic_dashboards.list_dashboards(
             request,

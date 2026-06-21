@@ -274,7 +274,20 @@ class ReportToolRequest(GPTToolRequest):
 
 
 class DashboardToolRequest(GPTToolRequest):
-    action: Literal["create_dashboard", "update_dashboard", "update_snapshot", "refresh_dashboard", "list_dashboards", "delete_dashboard"]
+    action: Literal[
+        "create_dashboard",
+        "update_dashboard",
+        "update_snapshot",
+        "refresh_dashboard",
+        "list_dashboards",
+        "delete_dashboard",
+        "create_dataset",
+        "list_datasets",
+        "upsert_records",
+        "query_dataset",
+        "delete_records",
+        "delete_dataset",
+    ]
     tenant_id: str | None = Field(default=None, description="Tenant ID for the dashboard owner.")
     dashboard_id: str | None = Field(default=None, description="Dashboard ID for update, snapshot, or delete.")
     title: str | None = Field(default=None, description="Dashboard title.")
@@ -286,6 +299,24 @@ class DashboardToolRequest(GPTToolRequest):
     initial_snapshot: dict[str, Any] | None = Field(default=None, description="Initial data snapshot for create_dashboard.")
     snapshot: dict[str, Any] | None = Field(default=None, description="Data snapshot for update_snapshot.")
     refresh_policy: dict[str, Any] | None = Field(default=None, description="Refresh policy such as on_open, hourly, or daily.")
+    render_mode: Literal["manifest", "code"] | None = Field(default=None, description="Manifest renderer or fully custom HTML/CSS/JS.")
+    html: str | None = Field(default=None, description="Full dashboard body HTML when render_mode=code.")
+    css: str | None = Field(default=None, description="Dashboard CSS when render_mode=code.")
+    javascript: str | None = Field(default=None, description="Dashboard JavaScript when render_mode=code.")
+    data_contract: dict[str, Any] | None = Field(default=None, description="Runtime connectors, metrics, formulas, and query definitions.")
+    dataset_id: str | None = Field(default=None, description="Dataset ID for record operations.")
+    dataset_name: str | None = Field(default=None, description="Dataset name for create_dataset.")
+    dataset_schema: dict[str, Any] | None = Field(default=None, description="Optional descriptive schema for arbitrary JSON records.")
+    metadata: dict[str, Any] | None = Field(default=None, description="Optional dataset metadata.")
+    records: list[dict[str, Any]] | None = Field(default=None, description="Arbitrary JSON records to insert or update.")
+    external_key_field: str | None = Field(default=None, description="Record field used as a stable upsert key.")
+    query_filters: dict[str, Any] | None = Field(default=None, description="Exact, contains, gte, or lte record filters.")
+    search: str | None = Field(default=None, description="Optional full-record text search.")
+    sort_by: str | None = Field(default=None, description="Optional field path used to sort records.")
+    sort_order: Literal["asc", "desc"] | None = Field(default=None, description="Record sort direction.")
+    offset: int | None = Field(default=None, ge=0, description="Dataset query offset.")
+    record_ids: list[str] | None = Field(default=None, description="Record IDs to delete.")
+    external_keys: list[str] | None = Field(default=None, description="External record keys to delete.")
     limit: int | None = Field(default=None, ge=1, le=200, description="Maximum dashboards to list.")
     payload: dict[str, Any] = Field(default_factory=dict, description="Backward-compatible nested inputs.")
 
@@ -302,5 +333,23 @@ class DashboardToolRequest(GPTToolRequest):
             "initial_snapshot",
             "snapshot",
             "refresh_policy",
+            "render_mode",
+            "html",
+            "css",
+            "javascript",
+            "data_contract",
+            "dataset_id",
+            "dataset_name",
+            "dataset_schema",
+            "metadata",
+            "records",
+            "external_key_field",
+            "query_filters",
+            "search",
+            "sort_by",
+            "sort_order",
+            "offset",
+            "record_ids",
+            "external_keys",
             "limit",
         )

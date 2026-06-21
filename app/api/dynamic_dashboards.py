@@ -2,21 +2,31 @@ from html import escape
 from json import dumps
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.config import PUBLIC_BASE_URL
-from app.core.auth import resolve_access_token
 from app.core.oauth_store import (
+    create_dashboard_dataset,
     create_dynamic_dashboard,
+    delete_dashboard_dataset,
+    delete_dashboard_dataset_records,
     delete_dynamic_dashboard,
     get_app_token_data,
+    get_dashboard_dataset,
     get_dynamic_dashboard,
+    list_dashboard_dataset_records,
+    list_dashboard_datasets,
     list_dynamic_dashboards,
+    upsert_dashboard_dataset_records,
     update_dynamic_dashboard_config,
     update_dynamic_dashboard_snapshot,
 )
 from app.schemas.dynamic_dashboard_requests import (
+    DashboardDatasetCreateRequest,
+    DashboardDatasetDeleteRecordsRequest,
+    DashboardDatasetQueryRequest,
+    DashboardDatasetRecordsRequest,
     DynamicDashboardCreateRequest,
     DynamicDashboardRefreshRequest,
     DynamicDashboardSnapshotRequest,
@@ -55,6 +65,10 @@ def _config_from_body(body: DynamicDashboardCreateRequest | DynamicDashboardUpda
         config["widgets"] = [item.model_dump() for item in (body.widgets or [])]
     if getattr(body, "layout", None) is not None:
         config["layout"] = body.layout or {}
+    for key in ("render_mode", "html", "css", "javascript", "data_contract"):
+        value = getattr(body, key, None)
+        if value is not None:
+            config[key] = value
     return config
 
 
@@ -145,13 +159,25 @@ def _refresh_steps(row: dict) -> list[dict]:
             steps.append({"source": name, "tool": "/tools/clarity", "body": query})
         elif source_type == "journey":
             steps.append({"source": name, "tool": "/tools/journey", "body": query})
+        elif source_type in {"dataset", "backend_dataset"}:
+            steps.append(
+                {
+                    "source": name,
+                    "tool": "/tools/dashboards",
+                    "body": {
+                        "action": "query_dataset",
+                        "dataset_id": source.get("dataset_id") or query.get("dataset_id"),
+                        **query,
+                    },
+                }
+            )
         else:
             steps.append({"source": name, "tool": "manual_snapshot", "body": query})
     return steps
 
 
 @router.post("/create")
-async def create_dashboard(body: DynamicDashboardCreateRequest, request: Request, token: str = Depends(resolve_access_token)):
+async def create_dashboard(body: DynamicDashboardCreateRequest, request: Request):
     tenant_id = _tenant_from_request(request, body.tenant_id)
     row = create_dynamic_dashboard(
         tenant_id=tenant_id,
@@ -238,17 +264,193 @@ async def remove_dashboard(dashboard_id: str, body: DynamicDashboardSnapshotRequ
     return {"success": True, "dashboard_id": dashboard_id}
 
 
+async def create_dataset(body: DashboardDatasetCreateRequest, request: Request):
+    tenant_id = _tenant_from_request(request, body.tenant_id)
+    if body.dashboard_id:
+        dashboard = get_dynamic_dashboard(body.dashboard_id)
+        if not dashboard or str(dashboard.get("tenant_id") or "") != tenant_id:
+            raise HTTPException(status_code=404, detail="Dashboard was not found.")
+    row = create_dashboard_dataset(
+        tenant_id=tenant_id,
+        dashboard_id=body.dashboard_id,
+        name=body.name,
+        description=body.description,
+        schema=body.dataset_schema,
+        metadata=body.metadata,
+    )
+    return {"success": True, "dataset": row}
+
+
+async def list_datasets(request: Request, tenant_id: str | None = None, dashboard_id: str | None = None, limit: int = 100):
+    resolved_tenant_id = _tenant_from_request(request, tenant_id)
+    return {
+        "tenant_id": resolved_tenant_id,
+        "datasets": list_dashboard_datasets(resolved_tenant_id, dashboard_id=dashboard_id, limit=limit),
+    }
+
+
+async def upsert_dataset_records(body: DashboardDatasetRecordsRequest, request: Request):
+    tenant_id = _tenant_from_request(request, body.tenant_id)
+    dataset = get_dashboard_dataset(tenant_id, body.dataset_id)
+    if not dataset or dataset.get("status") == "deleted":
+        raise HTTPException(status_code=404, detail="Dataset was not found.")
+    rows = upsert_dashboard_dataset_records(
+        tenant_id,
+        body.dataset_id,
+        body.records,
+        external_key_field=body.external_key_field,
+    )
+    return {
+        "success": True,
+        "dataset_id": body.dataset_id,
+        "upserted_count": len(rows),
+        "records": rows,
+    }
+
+
+async def query_dataset(body: DashboardDatasetQueryRequest, request: Request):
+    tenant_id = _tenant_from_request(request, body.tenant_id)
+    dataset = get_dashboard_dataset(tenant_id, body.dataset_id)
+    if not dataset or dataset.get("status") == "deleted":
+        raise HTTPException(status_code=404, detail="Dataset was not found.")
+    raw_rows = list_dashboard_dataset_records(
+        tenant_id,
+        body.dataset_id,
+        limit=min(max(body.limit + body.offset, body.limit), 1000),
+        offset=0,
+    )
+    rows = [_dataset_record_view(item) for item in raw_rows]
+    rows = [item for item in rows if _record_matches(item, body.filters, body.search)]
+    if body.sort_by:
+        rows.sort(
+            key=lambda item: _sort_value(_nested_value(item, body.sort_by)),
+            reverse=body.sort_order == "desc",
+        )
+    paged = rows[body.offset : body.offset + body.limit]
+    return {
+        "dataset": dataset,
+        "records": paged,
+        "row_count": len(paged),
+        "matched_count": len(rows),
+        "filters": body.filters,
+        "search": body.search,
+    }
+
+
+async def remove_dataset_records(body: DashboardDatasetDeleteRecordsRequest, request: Request):
+    tenant_id = _tenant_from_request(request, body.tenant_id)
+    dataset = get_dashboard_dataset(tenant_id, body.dataset_id)
+    if not dataset or dataset.get("status") == "deleted":
+        raise HTTPException(status_code=404, detail="Dataset was not found.")
+    delete_dashboard_dataset_records(
+        tenant_id,
+        body.dataset_id,
+        record_ids=body.record_ids,
+        external_keys=body.external_keys,
+    )
+    return {"success": True, "dataset_id": body.dataset_id}
+
+
+async def remove_dataset(dataset_id: str, request: Request, tenant_id: str | None = None):
+    resolved_tenant_id = _tenant_from_request(request, tenant_id)
+    row = delete_dashboard_dataset(resolved_tenant_id, dataset_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Dataset was not found.")
+    return {"success": True, "dataset": row}
+
+
+def _dataset_record_view(row: dict) -> dict:
+    data = dict(row.get("data") or {})
+    return {
+        **data,
+        "_record_id": row.get("record_id"),
+        "_external_key": row.get("external_key"),
+        "_created_at": row.get("created_at"),
+        "_updated_at": row.get("updated_at"),
+    }
+
+
+def _nested_value(item: dict, path: str):
+    value = item
+    for part in str(path or "").split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _record_matches(item: dict, filters: dict, search: str | None) -> bool:
+    for key, expected in (filters or {}).items():
+        actual = _nested_value(item, key)
+        if isinstance(expected, list):
+            if actual not in expected:
+                return False
+        elif isinstance(expected, dict):
+            if "contains" in expected and str(expected["contains"]).casefold() not in str(actual or "").casefold():
+                return False
+            if "gte" in expected and (actual is None or actual < expected["gte"]):
+                return False
+            if "lte" in expected and (actual is None or actual > expected["lte"]):
+                return False
+        elif actual != expected:
+            return False
+    if search:
+        return str(search).casefold() in dumps(item, ensure_ascii=False).casefold()
+    return True
+
+
+def _sort_value(value):
+    if value is None:
+        return (1, "")
+    if isinstance(value, (int, float)):
+        return (0, float(value))
+    return (0, str(value).casefold())
+
+
+def _linked_dataset_snapshot(row: dict) -> dict:
+    tenant_id = str(row.get("tenant_id") or "")
+    dashboard_id = str(row.get("dashboard_id") or "")
+    datasets = list_dashboard_datasets(tenant_id, dashboard_id=dashboard_id, limit=100)
+    config_sources = (row.get("config") or {}).get("data_sources") or []
+    configured_ids = {
+        str(source.get("dataset_id") or (source.get("query") or {}).get("dataset_id") or "")
+        for source in config_sources
+        if source.get("source") in {"dataset", "backend_dataset"}
+    }
+    for dataset_id in configured_ids:
+        if dataset_id and not any(str(item.get("dataset_id")) == dataset_id for item in datasets):
+            dataset = get_dashboard_dataset(tenant_id, dataset_id)
+            if dataset and dataset.get("status") != "deleted":
+                datasets.append(dataset)
+    snapshot = {}
+    details = []
+    for dataset in datasets:
+        records = [
+            _dataset_record_view(item)
+            for item in list_dashboard_dataset_records(tenant_id, str(dataset.get("dataset_id")), limit=500)
+        ]
+        dataset_id = str(dataset.get("dataset_id") or "")
+        name = str(dataset.get("name") or dataset_id)
+        snapshot[dataset_id] = records
+        snapshot[name] = records
+        details.append({**dataset, "records": records, "row_count": len(records)})
+    return {"snapshot": snapshot, "datasets": details}
+
+
 @router.get("/{dashboard_id}/data")
 async def dashboard_data(dashboard_id: str):
     row = get_dynamic_dashboard(dashboard_id)
     if not row or row.get("status") == "deleted":
         raise HTTPException(status_code=404, detail="Dashboard was not found.")
+    dataset_data = _linked_dataset_snapshot(row)
+    snapshot = {**(row.get("snapshot") or {}), **dataset_data["snapshot"]}
     return {
         "dashboard_id": dashboard_id,
         "title": row.get("title"),
         "description": row.get("description"),
         "config": row.get("config") or {},
-        "snapshot": row.get("snapshot") or {},
+        "snapshot": snapshot,
+        "datasets": dataset_data["datasets"],
         "refresh_policy": row.get("refresh_policy") or {},
         "last_refreshed_at": row.get("last_refreshed_at"),
         "updated_at": row.get("updated_at"),
@@ -260,13 +462,15 @@ async def dashboard_data(dashboard_id: str):
 def _dashboard_html(row: dict) -> str:
     title = escape(str(row.get("title") or "Dashboard"))
     description = escape(str(row.get("description") or ""))
+    dataset_data = _linked_dataset_snapshot(row)
     payload = dumps(
         {
             "dashboard_id": row.get("dashboard_id"),
             "title": row.get("title"),
             "description": row.get("description"),
             "config": row.get("config") or {},
-            "snapshot": row.get("snapshot") or {},
+            "snapshot": {**(row.get("snapshot") or {}), **dataset_data["snapshot"]},
+            "datasets": dataset_data["datasets"],
             "last_refreshed_at": row.get("last_refreshed_at"),
             "refresh_status": _refresh_status(row),
         },
@@ -474,9 +678,81 @@ renderWidgets();
 </html>"""
 
 
+def _code_dashboard_html(row: dict) -> str:
+    config = row.get("config") or {}
+    dataset_data = _linked_dataset_snapshot(row)
+    dashboard = {
+        "dashboard_id": row.get("dashboard_id"),
+        "title": row.get("title"),
+        "description": row.get("description"),
+        "data_contract": config.get("data_contract") or {},
+        "snapshot": {**(row.get("snapshot") or {}), **dataset_data["snapshot"]},
+        "datasets": dataset_data["datasets"],
+    }
+    dashboard_json = dumps(dashboard, ensure_ascii=False).replace("</script", "<\\/script")
+    html = str(config.get("html") or "<main id=\"app\"></main>")
+    css = str(config.get("css") or "")
+    javascript = str(config.get("javascript") or "").replace("</script", "<\\/script")
+    title = escape(str(row.get("title") or "Dashboard"))
+    return f"""<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:Arial,sans-serif; background:#f6f8fb; color:#172033; }}
+{css}
+</style>
+</head>
+<body>
+{html}
+<script>
+window.ALLINGPT_DASHBOARD = {dashboard_json};
+window.ALLINGPT = {{
+  dashboard: window.ALLINGPT_DASHBOARD,
+  snapshot: window.ALLINGPT_DASHBOARD.snapshot || {{}},
+  datasets: window.ALLINGPT_DASHBOARD.datasets || [],
+  async reload() {{
+    const response = await fetch("/dynamic_dashboards/" + encodeURIComponent(this.dashboard.dashboard_id) + "/data", {{cache:"no-store"}});
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    this.dashboard = data;
+    this.snapshot = data.snapshot || {{}};
+    this.datasets = data.datasets || [];
+    return data;
+  }},
+  async runQuery(queryId, filters={{}}, context={{}}) {{
+    const response = await fetch("/api/dashboard-runtime/query", {{
+      method:"POST",
+      headers:{{"Content-Type":"application/json"}},
+      body:JSON.stringify({{
+        dashboard_id:this.dashboard.dashboard_id,
+        query_id:queryId,
+        filters,
+        context:{{...context,data_contract:this.dashboard.data_contract || {{}}}}
+      }})
+    }});
+    if (!response.ok) throw new Error(await response.text());
+    return await response.json();
+  }},
+  dataset(nameOrId) {{
+    return this.snapshot[nameOrId] || [];
+  }}
+}};
+{javascript}
+</script>
+</body>
+</html>"""
+
+
 @router.get("/{dashboard_id}", response_class=HTMLResponse)
 async def view_dashboard(dashboard_id: str):
     row = get_dynamic_dashboard(dashboard_id)
     if not row or row.get("status") == "deleted":
         raise HTTPException(status_code=404, detail="Dashboard was not found.")
+    if str((row.get("config") or {}).get("render_mode") or "manifest") == "code":
+        return HTMLResponse(_code_dashboard_html(row))
     return HTMLResponse(_dashboard_html(row))

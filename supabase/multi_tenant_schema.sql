@@ -178,6 +178,31 @@ create table if not exists public.dynamic_dashboards (
   updated_at timestamptz default now()
 );
 
+create table if not exists public.dashboard_datasets (
+  dataset_id text primary key,
+  tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
+  dashboard_id text references public.dynamic_dashboards(dashboard_id) on delete set null,
+  name text not null,
+  description text,
+  schema jsonb default '{}'::jsonb,
+  metadata jsonb default '{}'::jsonb,
+  status text default 'active',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (tenant_id, name)
+);
+
+create table if not exists public.dashboard_dataset_records (
+  record_id text primary key,
+  dataset_id text not null references public.dashboard_datasets(dataset_id) on delete cascade,
+  tenant_id text not null references public.tenant_accounts(tenant_id) on delete cascade,
+  external_key text not null,
+  data jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (dataset_id, external_key)
+);
+
 alter table public.dynamic_dashboards add column if not exists title text;
 alter table public.dynamic_dashboards add column if not exists description text;
 alter table public.dynamic_dashboards add column if not exists status text default 'active';
@@ -246,6 +271,18 @@ create index if not exists idx_dynamic_dashboards_tenant_updated
 create index if not exists idx_dynamic_dashboards_status
   on public.dynamic_dashboards (status);
 
+create index if not exists idx_dashboard_datasets_tenant_updated
+  on public.dashboard_datasets (tenant_id, updated_at desc);
+
+create index if not exists idx_dashboard_datasets_dashboard
+  on public.dashboard_datasets (dashboard_id, updated_at desc);
+
+create index if not exists idx_dashboard_dataset_records_dataset_updated
+  on public.dashboard_dataset_records (dataset_id, updated_at desc);
+
+create index if not exists idx_dashboard_dataset_records_tenant_updated
+  on public.dashboard_dataset_records (tenant_id, updated_at desc);
+
 do $$
 begin
   if not exists (
@@ -313,6 +350,16 @@ create trigger trg_dynamic_dashboards_updated_at
 before update on public.dynamic_dashboards
 for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_dashboard_datasets_updated_at on public.dashboard_datasets;
+create trigger trg_dashboard_datasets_updated_at
+before update on public.dashboard_datasets
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_dashboard_dataset_records_updated_at on public.dashboard_dataset_records;
+create trigger trg_dashboard_dataset_records_updated_at
+before update on public.dashboard_dataset_records
+for each row execute function public.set_updated_at();
+
 alter table public.tenant_accounts enable row level security;
 alter table public.tenant_meta_apps enable row level security;
 alter table public.meta_connections enable row level security;
@@ -325,6 +372,8 @@ alter table public.comment_automation_logs enable row level security;
 alter table public.comment_webhook_events enable row level security;
 alter table public.comment_post_aliases enable row level security;
 alter table public.dynamic_dashboards enable row level security;
+alter table public.dashboard_datasets enable row level security;
+alter table public.dashboard_dataset_records enable row level security;
 
 -- The FastAPI server uses SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS.
 -- No anon/authenticated policies are created here, so browser clients cannot

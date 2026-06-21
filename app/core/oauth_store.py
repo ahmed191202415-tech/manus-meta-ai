@@ -91,7 +91,7 @@ def _get_single(table: str, params: dict | None = None):
     return rows[0] if rows else None
 
 
-def _post(table: str, payload: dict, params: dict | None = None, prefer: str = "resolution=merge-duplicates,return=representation"):
+def _post(table: str, payload: dict | list, params: dict | None = None, prefer: str = "resolution=merge-duplicates,return=representation"):
     _raise_if_unconfigured()
     r = requests.post(_rest_url(table), headers=_headers(prefer=prefer), params=params or {}, json=payload, timeout=30)
     r.raise_for_status()
@@ -1037,6 +1037,8 @@ def purge_tenant_integrations(tenant_id: str):
     _delete("comment_webhook_events", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_post_aliases", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("comment_automation_rules", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("dashboard_dataset_records", {"tenant_id": f"eq.{clean_tenant_id}"})
+    _delete("dashboard_datasets", {"tenant_id": f"eq.{clean_tenant_id}"})
     _delete("dynamic_dashboards", {"tenant_id": f"eq.{clean_tenant_id}"})
     return True
 
@@ -1110,6 +1112,139 @@ def delete_dynamic_dashboard(tenant_id: str, dashboard_id: str):
     rows = _patch(
         "dynamic_dashboards",
         params={"tenant_id": f"eq.{_clean(tenant_id)}", "dashboard_id": f"eq.{_clean(dashboard_id)}"},
+        payload={"status": "deleted"},
+    )
+    return rows[0] if rows else None
+
+
+def create_dashboard_dataset(
+    tenant_id: str,
+    name: str,
+    description: str | None = None,
+    dashboard_id: str | None = None,
+    schema: dict | None = None,
+    metadata: dict | None = None,
+):
+    payload = {
+        "dataset_id": "data_" + secrets.token_urlsafe(12),
+        "tenant_id": _clean(tenant_id),
+        "dashboard_id": _clean(dashboard_id) or None,
+        "name": _clean(name) or "Untitled dataset",
+        "description": _clean(description),
+        "schema": schema or {},
+        "metadata": metadata or {},
+        "status": "active",
+    }
+    rows = _post("dashboard_datasets", payload, prefer="return=representation") or []
+    return rows[0] if rows else payload
+
+
+def list_dashboard_datasets(
+    tenant_id: str,
+    dashboard_id: str | None = None,
+    include_deleted: bool = False,
+    limit: int = 100,
+):
+    params = {
+        "tenant_id": f"eq.{_clean(tenant_id)}",
+        "select": "*",
+        "order": "updated_at.desc",
+        "limit": str(max(1, min(int(limit or 100), 200))),
+    }
+    if dashboard_id:
+        params["dashboard_id"] = f"eq.{_clean(dashboard_id)}"
+    if not include_deleted:
+        params["status"] = "neq.deleted"
+    return _get_many("dashboard_datasets", params=params)
+
+
+def get_dashboard_dataset(tenant_id: str, dataset_id: str):
+    return _get_single(
+        "dashboard_datasets",
+        params={
+            "tenant_id": f"eq.{_clean(tenant_id)}",
+            "dataset_id": f"eq.{_clean(dataset_id)}",
+            "select": "*",
+            "limit": "1",
+        },
+    )
+
+
+def upsert_dashboard_dataset_records(
+    tenant_id: str,
+    dataset_id: str,
+    records: list[dict],
+    external_key_field: str | None = None,
+):
+    payload = []
+    key_field = _clean(external_key_field)
+    for record in records or []:
+        clean_record = dict(record or {})
+        external_key = _clean(clean_record.get(key_field)) if key_field else ""
+        external_key = external_key or _clean(clean_record.get("external_key")) or "row_" + secrets.token_urlsafe(12)
+        payload.append(
+            {
+                "record_id": "rec_" + secrets.token_urlsafe(12),
+                "dataset_id": _clean(dataset_id),
+                "tenant_id": _clean(tenant_id),
+                "external_key": external_key,
+                "data": clean_record,
+            }
+        )
+    if not payload:
+        return []
+    return _post(
+        "dashboard_dataset_records",
+        payload,
+        params={"on_conflict": "dataset_id,external_key"},
+        prefer="resolution=merge-duplicates,return=representation",
+    ) or payload
+
+
+def list_dashboard_dataset_records(
+    tenant_id: str,
+    dataset_id: str,
+    limit: int = 200,
+    offset: int = 0,
+):
+    return _get_many(
+        "dashboard_dataset_records",
+        params={
+            "tenant_id": f"eq.{_clean(tenant_id)}",
+            "dataset_id": f"eq.{_clean(dataset_id)}",
+            "select": "record_id,dataset_id,external_key,data,created_at,updated_at",
+            "order": "updated_at.desc",
+            "limit": str(max(1, min(int(limit or 200), 1000))),
+            "offset": str(max(0, int(offset or 0))),
+        },
+    )
+
+
+def delete_dashboard_dataset_records(
+    tenant_id: str,
+    dataset_id: str,
+    record_ids: list[str] | None = None,
+    external_keys: list[str] | None = None,
+):
+    params = {
+        "tenant_id": f"eq.{_clean(tenant_id)}",
+        "dataset_id": f"eq.{_clean(dataset_id)}",
+    }
+    clean_record_ids = [_clean(item) for item in (record_ids or []) if _clean(item)]
+    clean_external_keys = [_clean(item) for item in (external_keys or []) if _clean(item)]
+    if clean_record_ids:
+        params["record_id"] = f"in.({','.join(clean_record_ids)})"
+    elif clean_external_keys:
+        params["external_key"] = f"in.({','.join(clean_external_keys)})"
+    else:
+        raise ValueError("record_ids or external_keys are required.")
+    return _delete("dashboard_dataset_records", params)
+
+
+def delete_dashboard_dataset(tenant_id: str, dataset_id: str):
+    rows = _patch(
+        "dashboard_datasets",
+        params={"tenant_id": f"eq.{_clean(tenant_id)}", "dataset_id": f"eq.{_clean(dataset_id)}"},
         payload={"status": "deleted"},
     )
     return rows[0] if rows else None
