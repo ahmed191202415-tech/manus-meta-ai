@@ -107,6 +107,63 @@ def test_code_dashboard_definition_returns_renderable_link():
     assert "runQuery" in page.text
 
 
+def test_code_dashboard_can_be_loaded_from_persistent_dynamic_dashboard(monkeypatch):
+    journey_dashboard_v7._CODE_DASHBOARDS.pop("persisted_code_dashboard", None)
+    journey_dashboard_v7._DEFINITIONS.pop("persisted_code_dashboard", None)
+
+    monkeypatch.setattr(
+        journey_dashboard_v7,
+        "get_dynamic_dashboard",
+        lambda dashboard_id: {
+            "dashboard_id": dashboard_id,
+            "tenant_id": "system",
+            "title": "Persisted Code Dashboard",
+            "description": "Survives redeploys.",
+            "status": "active",
+            "config": {
+                "render_mode": "code",
+                "html": "<main>Persisted</main>",
+                "css": "main{padding:12px}",
+                "javascript": "window.loaded=true;",
+                "data_contract": {"queries": {"journey_funnel": {"source": "runtime"}}},
+            },
+        },
+    )
+
+    dashboard = journey_dashboard_v7._get_code_dashboard("persisted_code_dashboard")
+
+    assert dashboard["title"] == "Persisted Code Dashboard"
+    assert dashboard["html"] == "<main>Persisted</main>"
+
+
+def test_save_code_dashboard_persists_with_stable_dashboard_id(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(journey_dashboard_v7, "get_dynamic_dashboard", lambda dashboard_id: None)
+    monkeypatch.setattr(journey_dashboard_v7, "update_dynamic_dashboard_config", lambda *args, **kwargs: None)
+
+    def fake_create_dynamic_dashboard(**kwargs):
+        calls.update(kwargs)
+        return {"dashboard_id": kwargs["dashboard_id"]}
+
+    monkeypatch.setattr(journey_dashboard_v7, "create_dynamic_dashboard", fake_create_dynamic_dashboard)
+
+    journey_dashboard_v7._save_code_dashboard(
+        {
+            "dashboard_id": "stable_code_dashboard",
+            "tenant_id": "tenant_1",
+            "title": "Stable",
+            "html": "<main></main>",
+            "css": "",
+            "javascript": "",
+            "data_contract": {},
+        }
+    )
+
+    assert calls["tenant_id"] == "tenant_1"
+    assert calls["dashboard_id"] == "stable_code_dashboard"
+    assert calls["config"]["render_mode"] == "code"
+
+
 def test_code_dashboard_schema_exposes_full_code_fields():
     schema = app.openapi()
     path = schema["paths"]["/api/dashboard-code/v1"]["post"]

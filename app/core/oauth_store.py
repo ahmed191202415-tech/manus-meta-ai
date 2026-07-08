@@ -1050,10 +1050,11 @@ def create_dynamic_dashboard(
     config: dict | None = None,
     snapshot: dict | None = None,
     refresh_policy: dict | None = None,
+    dashboard_id: str | None = None,
 ):
     now = _dt(datetime.now(timezone.utc))
     payload = {
-        "dashboard_id": "dash_" + secrets.token_urlsafe(12),
+        "dashboard_id": _clean(dashboard_id) or "dash_" + secrets.token_urlsafe(12),
         "tenant_id": _clean(tenant_id),
         "title": _clean(title) or "Untitled dashboard",
         "description": _clean(description),

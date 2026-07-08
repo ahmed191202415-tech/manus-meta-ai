@@ -24,6 +24,7 @@ from app.core.auth import resolve_access_token
 from app.core.clarity_client import run_clarity_live_insights_with_fallbacks
 from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call
+from app.core.oauth_store import create_dynamic_dashboard, get_dynamic_dashboard, update_dynamic_dashboard_config
 
 router = APIRouter(tags=["journey-dashboard-v7"])
 
@@ -333,7 +334,7 @@ loadDefinition().then(loadFilters).then(reloadAll);
 
 @router.get("/dashboards/custom/{dashboard_id}", response_class=HTMLResponse)
 async def custom_dashboard_page(dashboard_id: str):
-    definition = _DEFINITIONS.get(dashboard_id)
+    definition = _get_dashboard_definition(dashboard_id)
     if not definition:
         raise HTTPException(status_code=404, detail="Dashboard definition was not found.")
     return HTMLResponse(_custom_dashboard_html(definition))
@@ -341,7 +342,7 @@ async def custom_dashboard_page(dashboard_id: str):
 
 @router.get("/dashboards/code/{dashboard_id}", response_class=HTMLResponse)
 async def code_dashboard_page(dashboard_id: str):
-    dashboard = _CODE_DASHBOARDS.get(dashboard_id)
+    dashboard = _get_code_dashboard(dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Code dashboard was not found.")
     return HTMLResponse(_code_dashboard_html(dashboard))
@@ -554,6 +555,7 @@ def _save_dashboard_definition(definition: dict, dashboard_id: str | None = None
     resolved_dashboard_id = str(dashboard_id or definition.get("dashboard_id") or "custom_dashboard")
     definition["dashboard_id"] = resolved_dashboard_id
     _DEFINITIONS[resolved_dashboard_id] = definition
+    _persist_dashboard_definition(definition)
     return {"success": True, "definition": definition, "url": _dashboard_url(resolved_dashboard_id)}
 
 
@@ -564,7 +566,128 @@ def _save_code_dashboard(dashboard: dict[str, Any], dashboard_id: str | None = N
     data_contract = dashboard.get("data_contract") or {}
     if isinstance(data_contract, dict):
         _DEFINITIONS[resolved_dashboard_id] = _definition_from_code_dashboard(dashboard)
+    _persist_code_dashboard(dashboard)
     return {"success": True, "dashboard": dashboard, "url": _code_dashboard_url(resolved_dashboard_id)}
+
+
+def _persist_tenant_id(payload: dict) -> str:
+    return str(payload.get("tenant_id") or payload.get("owner_tenant_id") or "system").strip() or "system"
+
+
+def _persist_dashboard_definition(definition: dict) -> None:
+    if not definition.get("dashboard_id"):
+        return
+    config = {
+        "render_mode": "manifest",
+        "definition": definition,
+        "filters": definition.get("filters") or [],
+        "data_sources": definition.get("data_sources") or {},
+        "metrics": definition.get("metrics") or {},
+        "charts": definition.get("charts") or [],
+        "stages": definition.get("stages") or [],
+        "widgets": definition.get("widgets") or [],
+        "layout": definition.get("layout") or {},
+        "interactions": definition.get("interactions") or [],
+        "runtime_queries": definition.get("runtime_queries") or {},
+        "formulas": definition.get("formulas") or {},
+    }
+    _upsert_persistent_dashboard(definition, config)
+
+
+def _persist_code_dashboard(dashboard: dict) -> None:
+    if not dashboard.get("dashboard_id"):
+        return
+    config = {
+        "render_mode": "code",
+        "html": dashboard.get("html") or "",
+        "css": dashboard.get("css") or "",
+        "javascript": dashboard.get("javascript") or "",
+        "data_contract": dashboard.get("data_contract") or {},
+    }
+    _upsert_persistent_dashboard(dashboard, config)
+
+
+def _upsert_persistent_dashboard(payload: dict, config: dict) -> None:
+    tenant_id = _persist_tenant_id(payload)
+    dashboard_id = str(payload.get("dashboard_id") or "")
+    try:
+        existing = get_dynamic_dashboard(dashboard_id)
+        if existing:
+            update_dynamic_dashboard_config(
+                str(existing.get("tenant_id") or tenant_id),
+                dashboard_id,
+                {
+                    "title": payload.get("title"),
+                    "description": payload.get("description"),
+                    "config": config,
+                    "refresh_policy": {"mode": "manual"},
+                    "status": "active",
+                },
+            )
+            return
+        create_dynamic_dashboard(
+            tenant_id=tenant_id,
+            title=str(payload.get("title") or dashboard_id),
+            description=payload.get("description"),
+            config=config,
+            snapshot={},
+            refresh_policy={"mode": "manual"},
+            dashboard_id=dashboard_id,
+        )
+    except Exception:
+        # Persistence is best-effort so dashboard creation still works if Supabase is temporarily unavailable.
+        return
+
+
+def _stored_dashboard_row(dashboard_id: str) -> dict | None:
+    try:
+        row = get_dynamic_dashboard(dashboard_id)
+    except Exception:
+        return None
+    if not row or row.get("status") == "deleted":
+        return None
+    return row
+
+
+def _stored_definition(dashboard_id: str) -> dict | None:
+    row = _stored_dashboard_row(dashboard_id)
+    config = (row or {}).get("config") or {}
+    if config.get("render_mode") == "manifest" and isinstance(config.get("definition"), dict):
+        return config["definition"]
+    if config.get("render_mode") == "code":
+        return _definition_from_code_dashboard(
+            {
+                "dashboard_id": dashboard_id,
+                "title": row.get("title"),
+                "description": row.get("description"),
+                "data_contract": config.get("data_contract") or {},
+            }
+        )
+    return None
+
+
+def _stored_code_dashboard(dashboard_id: str) -> dict | None:
+    row = _stored_dashboard_row(dashboard_id)
+    config = (row or {}).get("config") or {}
+    if config.get("render_mode") != "code":
+        return None
+    return {
+        "dashboard_id": dashboard_id,
+        "title": row.get("title"),
+        "description": row.get("description"),
+        "html": config.get("html") or "",
+        "css": config.get("css") or "",
+        "javascript": config.get("javascript") or "",
+        "data_contract": config.get("data_contract") or {},
+    }
+
+
+def _get_dashboard_definition(dashboard_id: str) -> dict | None:
+    return _DEFINITIONS.get(dashboard_id) or _stored_definition(dashboard_id)
+
+
+def _get_code_dashboard(dashboard_id: str) -> dict | None:
+    return _CODE_DASHBOARDS.get(dashboard_id) or _stored_code_dashboard(dashboard_id)
 
 
 def _definition_from_code_dashboard(dashboard: dict[str, Any]) -> dict:
@@ -608,7 +731,7 @@ async def create_dashboard_definition_v2(body: DashboardDefinitionRequest):
 
 @router.get("/api/dashboard-definitions/{dashboard_id}")
 async def get_dashboard_definition(dashboard_id: str):
-    return _DEFINITIONS.get(dashboard_id, DEFAULT_DASHBOARD_DEFINITION)
+    return _get_dashboard_definition(dashboard_id) or DEFAULT_DASHBOARD_DEFINITION
 
 
 @router.put("/api/dashboard-definitions/{dashboard_id}", operation_id="update_dashboard_definition_manifest_v1")
@@ -631,7 +754,7 @@ async def create_code_dashboard(body: DashboardCodeRequest):
 
 @router.get("/api/dashboard-code/v1/{dashboard_id}", operation_id="get_full_code_dashboard_v1")
 async def get_code_dashboard(dashboard_id: str):
-    dashboard = _CODE_DASHBOARDS.get(dashboard_id)
+    dashboard = _get_code_dashboard(dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Code dashboard was not found.")
     return dashboard
@@ -665,10 +788,12 @@ def _runtime_definition(dashboard_id: str, context: dict | None = None) -> dict:
         return definition
     if context and isinstance(context.get("data_contract"), dict):
         return _definition_from_code_dashboard({"dashboard_id": dashboard_id, "data_contract": context["data_contract"]})
-    if dashboard_id in _DEFINITIONS:
-        return _DEFINITIONS[dashboard_id]
-    if dashboard_id in _CODE_DASHBOARDS:
-        return _definition_from_code_dashboard(_CODE_DASHBOARDS[dashboard_id])
+    definition = _get_dashboard_definition(dashboard_id)
+    if definition:
+        return definition
+    code_dashboard = _get_code_dashboard(dashboard_id)
+    if code_dashboard:
+        return _definition_from_code_dashboard(code_dashboard)
     return {**DEFAULT_DASHBOARD_DEFINITION, "dashboard_id": dashboard_id or DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]}
 
 
