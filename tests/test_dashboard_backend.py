@@ -56,6 +56,21 @@ def test_dashboard_data_includes_linked_arbitrary_dataset(monkeypatch):
     assert result["datasets"][0]["row_count"] == 1
 
 
+def test_dashboard_data_survives_missing_dataset_tables(monkeypatch):
+    monkeypatch.setattr(dynamic_dashboards, "get_dynamic_dashboard", lambda dashboard_id: _dashboard_row())
+
+    def missing_table(*args, **kwargs):
+        raise RuntimeError("relation dashboard_datasets does not exist")
+
+    monkeypatch.setattr(dynamic_dashboards, "list_dashboard_datasets", missing_table)
+
+    result = asyncio.run(dynamic_dashboards.dashboard_data("dash_1"))
+
+    assert result["snapshot"]["manual_note"] == "ready"
+    assert result["datasets"] == []
+    assert result["warnings"][0]["source"] == "dashboard_datasets"
+
+
 def test_code_dashboard_is_persistent_and_uses_backend_datasets(monkeypatch):
     row = _dashboard_row(render_mode="code")
     monkeypatch.setattr(dynamic_dashboards, "list_dashboard_datasets", lambda *args, **kwargs: [])

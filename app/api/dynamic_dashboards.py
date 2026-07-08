@@ -410,7 +410,21 @@ def _sort_value(value):
 def _linked_dataset_snapshot(row: dict) -> dict:
     tenant_id = str(row.get("tenant_id") or "")
     dashboard_id = str(row.get("dashboard_id") or "")
-    datasets = list_dashboard_datasets(tenant_id, dashboard_id=dashboard_id, limit=100)
+    warnings = []
+    try:
+        datasets = list_dashboard_datasets(tenant_id, dashboard_id=dashboard_id, limit=100)
+    except Exception as exc:
+        return {
+            "snapshot": {},
+            "datasets": [],
+            "warnings": [
+                {
+                    "source": "dashboard_datasets",
+                    "message": "Linked dashboard datasets are unavailable. Run supabase/multi_tenant_schema.sql to enable dataset-backed dashboards.",
+                    "detail": str(exc),
+                }
+            ],
+        }
     config_sources = (row.get("config") or {}).get("data_sources") or []
     configured_ids = {
         str(source.get("dataset_id") or (source.get("query") or {}).get("dataset_id") or "")
@@ -419,22 +433,44 @@ def _linked_dataset_snapshot(row: dict) -> dict:
     }
     for dataset_id in configured_ids:
         if dataset_id and not any(str(item.get("dataset_id")) == dataset_id for item in datasets):
-            dataset = get_dashboard_dataset(tenant_id, dataset_id)
+            try:
+                dataset = get_dashboard_dataset(tenant_id, dataset_id)
+            except Exception as exc:
+                warnings.append(
+                    {
+                        "source": "dashboard_dataset",
+                        "dataset_id": dataset_id,
+                        "message": "A configured dashboard dataset could not be loaded.",
+                        "detail": str(exc),
+                    }
+                )
+                continue
             if dataset and dataset.get("status") != "deleted":
                 datasets.append(dataset)
     snapshot = {}
     details = []
     for dataset in datasets:
-        records = [
-            _dataset_record_view(item)
-            for item in list_dashboard_dataset_records(tenant_id, str(dataset.get("dataset_id")), limit=500)
-        ]
         dataset_id = str(dataset.get("dataset_id") or "")
+        try:
+            records = [
+                _dataset_record_view(item)
+                for item in list_dashboard_dataset_records(tenant_id, dataset_id, limit=500)
+            ]
+        except Exception as exc:
+            warnings.append(
+                {
+                    "source": "dashboard_dataset_records",
+                    "dataset_id": dataset_id,
+                    "message": "Dashboard dataset records could not be loaded.",
+                    "detail": str(exc),
+                }
+            )
+            records = []
         name = str(dataset.get("name") or dataset_id)
         snapshot[dataset_id] = records
         snapshot[name] = records
         details.append({**dataset, "records": records, "row_count": len(records)})
-    return {"snapshot": snapshot, "datasets": details}
+    return {"snapshot": snapshot, "datasets": details, "warnings": warnings}
 
 
 @router.get("/{dashboard_id}/data")
@@ -451,6 +487,7 @@ async def dashboard_data(dashboard_id: str):
         "config": row.get("config") or {},
         "snapshot": snapshot,
         "datasets": dataset_data["datasets"],
+        "warnings": dataset_data.get("warnings", []),
         "refresh_policy": row.get("refresh_policy") or {},
         "last_refreshed_at": row.get("last_refreshed_at"),
         "updated_at": row.get("updated_at"),
@@ -471,6 +508,7 @@ def _dashboard_html(row: dict) -> str:
             "config": row.get("config") or {},
             "snapshot": {**(row.get("snapshot") or {}), **dataset_data["snapshot"]},
             "datasets": dataset_data["datasets"],
+            "warnings": dataset_data.get("warnings", []),
             "last_refreshed_at": row.get("last_refreshed_at"),
             "refresh_status": _refresh_status(row),
         },
