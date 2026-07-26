@@ -27,6 +27,45 @@ from app.core.auth import resolve_access_token
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
+ANALYSIS_NUMERIC_COLUMNS = [
+    "spend",
+    "reach",
+    "frequency",
+    "impressions",
+    "clicks",
+    "inline_link_clicks",
+    "ctr",
+    "cpc",
+    "cpm",
+    "results",
+    "result_rate",
+    "video_p25",
+    "video_p50",
+    "video_p75",
+    "video_p95",
+    "video_p100",
+    "p50_rate",
+    "p75_rate",
+    "cpl",
+    "click_to_result_rate",
+]
+
+
+def _analysis_ready_df(df):
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for column in ANALYSIS_NUMERIC_COLUMNS:
+        if column not in out.columns:
+            out[column] = 0.0
+    if "actions" not in out.columns:
+        out["actions"] = [[] for _ in range(len(out))]
+    if "objective" not in out.columns:
+        out["objective"] = ""
+    if "result_action_type" not in out.columns:
+        out["result_action_type"] = "unknown"
+    return out
+
 
 @router.post("/run")
 async def analysis_run(body: AnalysisRunRequest, request: Request):
@@ -66,6 +105,30 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
             body.filters,
             body.sort,
         )
+
+    try:
+        adset_rows = fetch_adset_delivery_context(body.account_id, token)
+    except Exception:
+        adset_rows = []
+    current_df = attach_delivery_context(current_df, adset_rows)
+    compare_df = attach_delivery_context(compare_df, adset_rows)
+    current_df = _analysis_ready_df(current_df)
+    compare_df = _analysis_ready_df(compare_df)
+    campaign_ids, adset_ids = relevant_entity_ids(current_df)
+    delivery_context = summarize_delivery_context(adset_rows, campaign_ids=campaign_ids, adset_ids=adset_ids)
+    goal_context = build_goal_context(current_df, delivery_context)
+    analyst_brief = build_professional_analyst_brief(current_df, compare_df, body.level, adsets=adset_rows)
+
+    def response(result, **extra):
+        payload = {
+            "analysis_type": body.analysis_type,
+            "goal_context": goal_context,
+            "delivery_context": delivery_context,
+            "analyst_brief": analyst_brief,
+            "result": result,
+        }
+        payload.update(extra)
+        return payload
 
     if body.analysis_type == "summary_kpis":
         return response(summarize_df(current_df))
@@ -154,28 +217,6 @@ async def analysis_run(body: AnalysisRunRequest, request: Request):
                 gross_margin_pct=body.gross_margin_pct,
             )
         )
-
-    try:
-        adset_rows = fetch_adset_delivery_context(body.account_id, token)
-    except Exception:
-        adset_rows = []
-    current_df = attach_delivery_context(current_df, adset_rows)
-    compare_df = attach_delivery_context(compare_df, adset_rows)
-    campaign_ids, adset_ids = relevant_entity_ids(current_df)
-    delivery_context = summarize_delivery_context(adset_rows, campaign_ids=campaign_ids, adset_ids=adset_ids)
-    goal_context = build_goal_context(current_df, delivery_context)
-    analyst_brief = build_professional_analyst_brief(current_df, compare_df, body.level, adsets=adset_rows)
-
-    def response(result, **extra):
-        payload = {
-            "analysis_type": body.analysis_type,
-            "goal_context": goal_context,
-            "delivery_context": delivery_context,
-            "analyst_brief": analyst_brief,
-            "result": result,
-        }
-        payload.update(extra)
-        return payload
 
     if body.analysis_type == "audit_snapshot":
         return response(build_audit_snapshot(current_df, compare_df, body.level), compare_range={"since": compare_since, "until": compare_until})

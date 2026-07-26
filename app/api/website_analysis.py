@@ -17,31 +17,91 @@ def _resolve_tenant_id(request: Request, tenant_id: str | None = None) -> str:
 
 def _fetch_standard_reports(tenant_id: str, property_id: str | None, start_date: str, end_date: str, limit: int) -> dict:
     resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
-    traffic = normalize_ga4_report(run_ga4_report(
-        tenant_id, resolved_property_id,
+    errors = []
+    traffic = _safe_ga4_rows(
+        errors,
+        "traffic_sources",
+        tenant_id,
+        resolved_property_id,
         ["sessionSourceMedium", "sessionCampaignName"],
         ["sessions", "activeUsers", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
-        start_date, end_date, limit,
-    ))
-    landing = normalize_ga4_report(run_ga4_report(
-        tenant_id, resolved_property_id,
+        start_date,
+        end_date,
+        limit,
+    )
+    landing = _safe_ga4_rows(
+        errors,
+        "landing_pages",
+        tenant_id,
+        resolved_property_id,
         ["landingPagePlusQueryString", "sessionSourceMedium", "deviceCategory"],
         ["sessions", "activeUsers", "engagedSessions", "engagementRate", "averageSessionDuration", "conversions", "totalRevenue"],
-        start_date, end_date, limit,
-    ))
-    events = normalize_ga4_report(run_ga4_report(
-        tenant_id, resolved_property_id,
+        start_date,
+        end_date,
+        limit,
+    )
+    events = _safe_ga4_rows(
+        errors,
+        "events",
+        tenant_id,
+        resolved_property_id,
         ["eventName"],
         ["eventCount", "activeUsers"],
-        start_date, end_date, limit,
-    ))
-    devices = normalize_ga4_report(run_ga4_report(
-        tenant_id, resolved_property_id,
+        start_date,
+        end_date,
+        limit,
+    )
+    devices = _safe_ga4_rows(
+        errors,
+        "devices",
+        tenant_id,
+        resolved_property_id,
         ["deviceCategory"],
         ["sessions", "engagedSessions", "engagementRate", "conversions", "totalRevenue"],
-        start_date, end_date, limit,
-    ))
-    return {"property_id": resolved_property_id, "traffic_sources": traffic, "landing_pages": landing, "events": events, "devices": devices}
+        start_date,
+        end_date,
+        limit,
+    )
+    return {
+        "property_id": resolved_property_id,
+        "traffic_sources": traffic,
+        "landing_pages": landing,
+        "events": events,
+        "devices": devices,
+        "_errors": errors,
+    }
+
+
+def _safe_ga4_rows(
+    errors: list[dict],
+    report_name: str,
+    tenant_id: str,
+    property_id: str,
+    dimensions: list[str],
+    metrics: list[str],
+    start_date: str,
+    end_date: str,
+    limit: int,
+) -> list[dict]:
+    try:
+        return normalize_ga4_report(run_ga4_report(tenant_id, property_id, dimensions, metrics, start_date, end_date, limit))
+    except Exception as exc:
+        fallback_metrics = [metric for metric in metrics if metric not in {"conversions", "totalRevenue"}]
+        errors.append({"source": f"ga4_{report_name}", "message": _safe_error(exc), "fallback_metrics": fallback_metrics})
+        if not fallback_metrics:
+            return []
+        try:
+            return normalize_ga4_report(run_ga4_report(tenant_id, property_id, dimensions, fallback_metrics, start_date, end_date, limit))
+        except Exception as fallback_exc:
+            errors.append({"source": f"ga4_{report_name}_fallback", "message": _safe_error(fallback_exc)})
+            return []
+
+
+def _safe_error(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    if detail is not None:
+        return str(detail)
+    return str(exc)
 
 
 @router.post("/analyze")
@@ -76,6 +136,8 @@ async def website_analyze(body: WebsiteAnalysisRequest, request: Request):
             "devices": top_entities(reports["devices"]),
         },
         "missing_data": summary.get("missing_metrics", []),
+        "partial_data": bool(reports.get("_errors")),
+        "data_errors": reports.get("_errors", []),
         "recommended_focus": _recommended_focus(signals),
     }
 
