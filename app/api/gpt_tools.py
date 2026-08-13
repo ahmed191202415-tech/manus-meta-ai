@@ -309,7 +309,7 @@ async def intent_tool(body: IntentToolRequest):
             needs=[] if property_id else ["property_id or selected GA4 property"],
         )
 
-    if _has_any(text, "tracking", "تتبع", "utm", "attribution", "انالتكس", "analytics", "ga4"):
+    if _has_any(text, "tracking", "تتبع", "utm", "attribution", "انالتكس", "انالتيكس", "analytics", "ga4"):
         return _tool_plan(
             "website_or_journey_tracking",
             "medium",
@@ -361,7 +361,7 @@ async def intent_tool(body: IntentToolRequest):
             notes=["If Meta rejects the call, run diagnose_lead_access to see missing page permissions."],
         )
 
-    if _has_any(text, "comment", "reply", "كومنت", "تعليق", "رد تلقائي", "ماسنجر"):
+    if _has_any(text, "comment", "comments", "reply", "كومنت", "تعليق", "تعليقات", "رد تلقائي", "ماسنجر"):
         return _tool_plan(
             "comment_automation",
             "medium",
@@ -385,7 +385,29 @@ async def intent_tool(body: IntentToolRequest):
             notes=["Generate the analysis payload first, then pass it to /tools/reports in the requested format."],
         )
 
-    if _has_any(text, "meta", "facebook", "campaign", "adset", "ad ", "اعلان", "إعلان", "حملة", "ادسيت"):
+    if _has_any(
+        text,
+        "meta",
+        "facebook",
+        "campaign",
+        "adset",
+        "ad ",
+        "analysis",
+        "analyze",
+        "performance",
+        "diagnose",
+        "diagnosis",
+        "اعلان",
+        "إعلان",
+        "حملة",
+        "ادسيت",
+        "فيس",
+        "تحليل",
+        "حلل",
+        "تشخيص",
+        "اداء",
+        "أداء",
+    ):
         target = body.ad_id or body.adset_id or body.campaign_id
         level = "ad" if body.ad_id else "adset" if body.adset_id else "campaign"
         if target:

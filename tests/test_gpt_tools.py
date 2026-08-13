@@ -95,6 +95,37 @@ def test_intent_router_maps_known_campaign_to_smart_meta_insights():
     assert result["payload"]["campaign_id"] == "120246445412420505"
 
 
+def test_intent_router_maps_arabic_diagnosis_to_meta_insights():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(
+                request="اعمل تشخيص اداء الحملة",
+                meta_account_id="act_763606732391242",
+                campaign_id="120246445412420505",
+            )
+        )
+    )
+
+    assert result["intent"] == "meta_campaign_insights"
+    assert result["recommended_tool"] == "/meta/smart_insights"
+    assert result["payload"]["campaign_id"] == "120246445412420505"
+
+
+def test_intent_router_maps_arabic_comments_to_comment_automation():
+    result = asyncio.run(
+        gpt_tools.intent_tool(
+            IntentToolRequest(
+                request="راجع التعليقات والرد التلقائي",
+                page_id="123456789",
+            )
+        )
+    )
+
+    assert result["intent"] == "comment_automation"
+    assert result["recommended_tool"] == "/comment_automations/manage"
+    assert result["payload"]["page_id"] == "123456789"
+
+
 def test_intent_router_maps_ga4_funnel_alias_to_funnel_tool():
     result = asyncio.run(
         gpt_tools.intent_tool(
