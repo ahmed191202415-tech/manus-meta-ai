@@ -39,6 +39,7 @@ from app.api.clarity import router as clarity_router
 from app.api.legal import router as legal_router
 from app.api.comment_automations import router as comment_automations_router
 from app.api.gpt_tools import router as gpt_tools_router
+from app.api.dashboard_runtime import router as universal_dashboard_runtime_router
 
 openapi_servers = [{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else None
 GPT_DATA_PATHS = {
@@ -62,7 +63,7 @@ GPT_DATA_PATHS = {
     "/api/dashboard-code/v1",
     "/api/dashboard-code/v1/{dashboard_id}",
     "/api/dashboard-runtime/query",
-    "/api/dashboard-runtime/connectors",
+    "/api/dashboard-runtime/v2/workflow",
     "/api/dashboard-runtime/events/discover",
     "/dashboards/custom/{dashboard_id}",
     "/dashboards/code/{dashboard_id}",
@@ -133,8 +134,13 @@ def openapi_gpt_schema():
             "received, use action=received_pixel_events; do not substitute Custom Conversions. "
             "Use /tools/website for GA4-only site intelligence, /tools/journey for Meta plus GA4 customer-journey "
             "analysis, /tools/clarity for behavior data, /tools/reports for report files, and /tools/dashboards "
-            "to create dynamic dashboard links that stay attached to each tenant portal. The dashboard tool is also "
-            "a general tenant backend: create_dataset, upsert_records, query_dataset, delete_records, list_datasets, "
+            "to create dynamic dashboard links that stay attached to each tenant portal. "
+            "For every new dashboard section, use the universal runtime v2 workflow: inspect capabilities, validate "
+            "a declarative query plan, preview live values and their sources in chat, wait for explicit user confirmation, "
+            "then publish the section with the returned confirmation_token. Never publish a section directly from guessed "
+            "metrics or a static snapshot. Runtime plans may compose Meta, GA4, Clarity, and safe transforms for filters, "
+            "KPIs, funnels, charts, tables, comparisons, and alerts without adding a new endpoint per dashboard request. "
+            "The dashboard tool is also a general tenant backend: create_dataset, upsert_records, query_dataset, delete_records, list_datasets, "
             "and delete_dataset store arbitrary JSON without requiring a new backend table per user request. Link a "
             "dataset to any dashboard with dashboard_id or a data source whose source is dataset. Use render_mode=code "
             "with html, css, javascript, and data_contract for a fully custom persistent dashboard. For custom live dashboards, "
@@ -211,3 +217,4 @@ app.include_router(clarity_router)
 app.include_router(legal_router)
 app.include_router(comment_automations_router)
 app.include_router(gpt_tools_router)
+app.include_router(universal_dashboard_runtime_router)

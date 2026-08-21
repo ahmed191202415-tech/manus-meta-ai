@@ -25,6 +25,8 @@ from app.core.clarity_client import run_clarity_live_insights_with_fallbacks
 from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call
 from app.core.oauth_store import create_dynamic_dashboard, get_dynamic_dashboard, update_dynamic_dashboard_config
+from app.core.dashboard_runtime import execute_plan as execute_universal_dashboard_plan
+from app.schemas.dashboard_runtime_requests import DashboardPlanValidateRequest
 
 router = APIRouter(tags=["journey-dashboard-v7"])
 
@@ -772,6 +774,11 @@ async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: R
     query_id = str(body.query_id or "journey_funnel")
     filters = body.filters or {}
     definition = _runtime_definition(dashboard_id, body.context)
+    saved_query = (definition.get("runtime_queries") or {}).get(query_id)
+    if isinstance(saved_query, dict) and saved_query.get("nodes"):
+        plan = DashboardPlanValidateRequest.model_validate({"plan": saved_query}).plan
+        trigger = str(body.context.get("trigger") or "manual")
+        return await execute_universal_dashboard_plan(plan, request, filters, trigger)
     if query_id in {"journey_funnel", "blended_journey", "dashboard_bootstrap", "meta_insights", "ga4_report", "clarity_behavior", "source_breakdown", "stage_detail"}:
         return await _live_or_fallback_funnel(request, filters, definition)
     if query_id == "journey_trend":

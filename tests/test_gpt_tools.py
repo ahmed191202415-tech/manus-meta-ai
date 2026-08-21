@@ -38,7 +38,7 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_and_dashboard_runtime():
         "/api/dashboard-code/v1",
         "/api/dashboard-code/v1/{dashboard_id}",
         "/api/dashboard-runtime/query",
-        "/api/dashboard-runtime/connectors",
+        "/api/dashboard-runtime/v2/workflow",
         "/api/dashboard-runtime/events/discover",
         "/dashboards/custom/{dashboard_id}",
         "/dashboards/code/{dashboard_id}",
