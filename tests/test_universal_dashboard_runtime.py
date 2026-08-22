@@ -4,6 +4,8 @@ from app.api import dashboard_runtime
 from app.core import dashboard_runtime as runtime
 from app.main import app
 from app.schemas.dashboard_runtime_requests import DashboardPlanValidateRequest
+from app.core.dashboard_plan import resolve_templates
+from app.core.dashboard_transforms import build_options, safe_formula
 
 
 client = TestClient(app)
@@ -59,6 +61,39 @@ def test_plan_rejects_unknown_connector_operation():
     assert response.status_code == 200
     assert response.json()["valid"] is False
     assert "Unsupported operation" in response.json()["errors"][0]["message"]
+
+
+def test_plan_rejects_template_dependency_that_is_not_declared():
+    plan = _cascading_plan()
+    plan["nodes"][2]["depends_on"] = []
+    plan["nodes"][2]["params"]["from"] = "{{nodes.campaigns}}"
+
+    response = client.post("/api/dashboard-runtime/v2/validate", json={"plan": plan})
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert "depends_on" in response.json()["errors"][0]["message"]
+
+
+def test_template_interpolation_preserves_zero_and_false_values():
+    context = {"inputs": {"count": 0, "enabled": False}}
+
+    assert resolve_templates("count={{inputs.count}}", context) == "count=0"
+    assert resolve_templates("enabled={{inputs.enabled}}", context) == "enabled=False"
+
+
+def test_options_skip_rows_without_values_and_fallback_to_value_label():
+    results = {"campaigns": {"data": [{"id": "1", "name": "One"}, {"id": "2"}, {"name": "Missing"}]}}
+
+    assert build_options({"from": "campaigns"}, results) == [
+        {"label": "One", "value": "1"},
+        {"label": "2", "value": "2"},
+    ]
+
+
+def test_formula_supports_negative_values_and_safe_zero_division():
+    assert safe_formula("-spend + revenue", {"spend": 10.0, "revenue": 25.0}) == 15.0
+    assert safe_formula("revenue / 0", {"revenue": 25.0}) is None
 
 
 def test_cascading_campaign_query_uses_selected_account_and_real_meta_path(monkeypatch):
