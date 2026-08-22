@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.config import PUBLIC_BASE_URL
+from app.core.dataset_query import nested_value, record_matches, sort_value
 from app.core.oauth_store import (
     create_dashboard_dataset,
     create_dynamic_dashboard,
@@ -320,10 +321,10 @@ async def query_dataset(body: DashboardDatasetQueryRequest, request: Request):
         offset=0,
     )
     rows = [_dataset_record_view(item) for item in raw_rows]
-    rows = [item for item in rows if _record_matches(item, body.filters, body.search)]
+    rows = [item for item in rows if record_matches(item, body.filters, body.search)]
     if body.sort_by:
         rows.sort(
-            key=lambda item: _sort_value(_nested_value(item, body.sort_by)),
+            key=lambda item: sort_value(nested_value(item, body.sort_by)),
             reverse=body.sort_order == "desc",
         )
     paged = rows[body.offset : body.offset + body.limit]
@@ -368,43 +369,6 @@ def _dataset_record_view(row: dict) -> dict:
         "_created_at": row.get("created_at"),
         "_updated_at": row.get("updated_at"),
     }
-
-
-def _nested_value(item: dict, path: str):
-    value = item
-    for part in str(path or "").split("."):
-        if not isinstance(value, dict):
-            return None
-        value = value.get(part)
-    return value
-
-
-def _record_matches(item: dict, filters: dict, search: str | None) -> bool:
-    for key, expected in (filters or {}).items():
-        actual = _nested_value(item, key)
-        if isinstance(expected, list):
-            if actual not in expected:
-                return False
-        elif isinstance(expected, dict):
-            if "contains" in expected and str(expected["contains"]).casefold() not in str(actual or "").casefold():
-                return False
-            if "gte" in expected and (actual is None or actual < expected["gte"]):
-                return False
-            if "lte" in expected and (actual is None or actual > expected["lte"]):
-                return False
-        elif actual != expected:
-            return False
-    if search:
-        return str(search).casefold() in dumps(item, ensure_ascii=False).casefold()
-    return True
-
-
-def _sort_value(value):
-    if value is None:
-        return (1, "")
-    if isinstance(value, (int, float)):
-        return (0, float(value))
-    return (0, str(value).casefold())
 
 
 def _linked_dataset_snapshot(row: dict) -> dict:
