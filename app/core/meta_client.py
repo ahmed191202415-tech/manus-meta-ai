@@ -13,6 +13,7 @@ from app.config import (
     META_RETRY_BASE_DELAY_SECONDS,
 )
 from app.core.http_client import SESSION
+from app.core.external_http import require_object, response_json
 from app.core.meta_context import get_current_meta_app_secret
 
 
@@ -98,11 +99,13 @@ def meta_call(
     proof = appsecret_proof(access_token, app_secret=app_secret)
     if proof:
         params["appsecret_proof"] = proof
+    method = method.upper()
+    can_retry = method in {"GET", "HEAD", "OPTIONS"}
     last_network_error: Exception | None = None
     for attempt in range(1, META_RETRY_MAX_ATTEMPTS + 1):
         try:
             response = SESSION.request(
-                method=method.upper(),
+                method=method,
                 url=url,
                 headers=headers,
                 params=params,
@@ -111,20 +114,17 @@ def meta_call(
             )
         except Exception as exc:
             last_network_error = exc
-            if attempt < META_RETRY_MAX_ATTEMPTS:
+            if can_retry and attempt < META_RETRY_MAX_ATTEMPTS:
                 time.sleep(META_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)))
                 continue
             raise HTTPException(status_code=502, detail=f"Meta request failed: {exc}") from exc
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise HTTPException(status_code=502, detail=response.text) from exc
+        payload = require_object(response_json(response, "Meta Graph API"), "Meta Graph API")
 
         if response.status_code < 400 and "error" not in payload:
             return payload
 
-        if attempt < META_RETRY_MAX_ATTEMPTS and _is_retryable_meta_error(response.status_code, payload):
+        if can_retry and attempt < META_RETRY_MAX_ATTEMPTS and _is_retryable_meta_error(response.status_code, payload):
             time.sleep(META_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)))
             continue
 

@@ -11,7 +11,9 @@ def create_retry_session() -> requests.Session:
         read=3,
         backoff_factor=1,
         status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET", "POST", "DELETE"],
+        # Never retry POST/PATCH automatically: the upstream may have applied
+        # the mutation before the connection or response failed.
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
         raise_on_status=False,
     )
     adapter = HTTPAdapter(max_retries=retries)
