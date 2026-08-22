@@ -1,10 +1,17 @@
 from datetime import datetime, timedelta, timezone
-import re
-
 import requests
 from fastapi import HTTPException
 
 from app.core.google_oauth import get_google_service_account_token, refresh_google_access_token
+from app.core.external_http import require_object, response_json
+from app.core.ga4_requests import (
+    build_funnel_request,
+    build_report_request,
+    dimension as _dimension,
+    metric as _metric,
+    normalize_ga4_filters,
+    normalize_ga4_order_bys,
+)
 from app.core.oauth_store import (
     get_active_google_connection_for_tenant,
     update_google_tokens,
@@ -12,29 +19,6 @@ from app.core.oauth_store import (
 
 GA4_ADMIN_ACCOUNT_SUMMARIES_URL = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
 GA4_DATA_BASE_URL = "https://analyticsdata.googleapis.com/v1beta"
-SAFE_GA4_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-STRING_FILTER_MATCH_TYPES = {
-    "exact": "EXACT",
-    "begins_with": "BEGINS_WITH",
-    "ends_with": "ENDS_WITH",
-    "contains": "CONTAINS",
-    "full_regexp": "FULL_REGEXP",
-    "partial_regexp": "PARTIAL_REGEXP",
-}
-NUMERIC_FILTER_OPERATIONS = {
-    "equal": "EQUAL",
-    "less_than": "LESS_THAN",
-    "less_than_or_equal": "LESS_THAN_OR_EQUAL",
-    "greater_than": "GREATER_THAN",
-    "greater_than_or_equal": "GREATER_THAN_OR_EQUAL",
-}
-DIMENSION_ORDER_TYPES = {
-    "alphanumeric": "ALPHANUMERIC",
-    "case_insensitive_alphanumeric": "CASE_INSENSITIVE_ALPHANUMERIC",
-    "numeric": "NUMERIC",
-}
-
-
 def _parse_dt(value: str | None):
     if not value:
         return None
@@ -113,7 +97,7 @@ def list_ga4_properties(tenant_id: str) -> list[dict]:
         headers=_auth_headers(credentials["access_token"]),
         timeout=30,
     )
-    data = response.json()
+    data = require_object(response_json(response, "GA4 Admin API"), "GA4 Admin API")
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail={"message": "Could not list GA4 properties.", "google_response": data})
 
@@ -138,197 +122,6 @@ def list_ga4_properties(tenant_id: str) -> list[dict]:
     return properties
 
 
-def _dimension(name: str) -> dict:
-    return {"name": name}
-
-
-def _metric(name: str) -> dict:
-    return {"name": name}
-
-
-def _date_range(start_date: str, end_date: str) -> dict:
-    return {"startDate": start_date, "endDate": end_date}
-
-
-def _string_filter_expression(field_name: str, value: str, operator: str = "contains", case_sensitive: bool = False) -> dict:
-    clean_field_name = str(field_name or "").strip()
-    clean_value = str(value or "").strip()
-    clean_operator = str(operator or "contains").strip().lower()
-    if not SAFE_GA4_NAME.match(clean_field_name):
-        raise HTTPException(status_code=400, detail=f"Invalid GA4 filter dimension: {clean_field_name}")
-    if not clean_value:
-        raise HTTPException(status_code=400, detail="GA4 string filter value is required.")
-    if clean_operator not in STRING_FILTER_MATCH_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unsupported GA4 string filter operator: {clean_operator}")
-    return {
-        "filter": {
-            "fieldName": clean_field_name,
-            "stringFilter": {
-                "matchType": STRING_FILTER_MATCH_TYPES[clean_operator],
-                "value": clean_value,
-                "caseSensitive": bool(case_sensitive),
-            },
-        }
-    }
-
-
-def _safe_ga4_name(value: str, label: str) -> str:
-    clean_value = str(value or "").strip()
-    if not SAFE_GA4_NAME.match(clean_value):
-        raise HTTPException(status_code=400, detail=f"Invalid GA4 {label}: {clean_value}")
-    return clean_value
-
-
-def _maybe_exclude(expression: dict, exclude: bool = False) -> dict:
-    return {"notExpression": expression} if exclude else expression
-
-
-def _in_list_filter_expression(field_name: str, values: list[str], case_sensitive: bool = False) -> dict:
-    clean_values = [str(value).strip() for value in (values or []) if str(value).strip()]
-    if not clean_values:
-        raise HTTPException(status_code=400, detail="GA4 in-list filter values are required.")
-    return {
-        "filter": {
-            "fieldName": _safe_ga4_name(field_name, "filter dimension"),
-            "inListFilter": {"values": clean_values, "caseSensitive": bool(case_sensitive)},
-        }
-    }
-
-
-def _numeric_value(value) -> dict:
-    try:
-        return {"doubleValue": float(value)}
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid GA4 numeric filter value: {value}") from exc
-
-
-def _numeric_filter_expression(field_name: str, value, operator: str = "equal") -> dict:
-    clean_operator = str(operator or "equal").strip().lower()
-    if clean_operator not in NUMERIC_FILTER_OPERATIONS:
-        raise HTTPException(status_code=400, detail=f"Unsupported GA4 numeric filter operator: {clean_operator}")
-    return {
-        "filter": {
-            "fieldName": _safe_ga4_name(field_name, "filter metric"),
-            "numericFilter": {
-                "operation": NUMERIC_FILTER_OPERATIONS[clean_operator],
-                "value": _numeric_value(value),
-            },
-        }
-    }
-
-
-def _between_filter_expression(field_name: str, from_value, to_value) -> dict:
-    return {
-        "filter": {
-            "fieldName": _safe_ga4_name(field_name, "filter metric"),
-            "betweenFilter": {
-                "fromValue": _numeric_value(from_value),
-                "toValue": _numeric_value(to_value),
-            },
-        }
-    }
-
-
-def _empty_filter_expression(field_name: str) -> dict:
-    return {"filter": {"fieldName": _safe_ga4_name(field_name, "filter dimension"), "emptyFilter": {}}}
-
-
-def _combine_expressions(expressions: list[dict]) -> dict | None:
-    if len(expressions) == 1:
-        return expressions[0]
-    if expressions:
-        return {"andGroup": {"expressions": expressions}}
-    return None
-
-
-def normalize_ga4_filters(filters: dict | None) -> dict:
-    clean_filters = filters or {}
-    result = {}
-    dimension_expressions = []
-    if clean_filters.get("dimensionFilter"):
-        dimension_expressions.append(clean_filters["dimensionFilter"])
-    if clean_filters.get("page_path_contains"):
-        dimension_expressions.append(
-            _string_filter_expression("pagePathPlusQueryString", clean_filters["page_path_contains"])
-        )
-    for item in clean_filters.get("dimension_string_filters") or []:
-        dimension_expressions.append(
-            _maybe_exclude(
-                _string_filter_expression(
-                    item.get("dimension"),
-                    item.get("value"),
-                    item.get("operator", "contains"),
-                    item.get("case_sensitive", False),
-                ),
-                item.get("exclude", False),
-            )
-        )
-    for item in clean_filters.get("dimension_in_list_filters") or []:
-        dimension_expressions.append(
-            _maybe_exclude(
-                _in_list_filter_expression(
-                    item.get("dimension"),
-                    item.get("values"),
-                    item.get("case_sensitive", False),
-                ),
-                item.get("exclude", False),
-            )
-        )
-    for item in clean_filters.get("dimension_empty_filters") or []:
-        dimension_expressions.append(
-            _maybe_exclude(_empty_filter_expression(item.get("dimension")), item.get("exclude", False))
-        )
-    combined_dimensions = _combine_expressions(dimension_expressions)
-    if combined_dimensions:
-        result["dimensionFilter"] = combined_dimensions
-    metric_expressions = []
-    if clean_filters.get("metricFilter"):
-        metric_expressions.append(clean_filters["metricFilter"])
-    for item in clean_filters.get("metric_numeric_filters") or []:
-        metric_expressions.append(
-            _maybe_exclude(
-                _numeric_filter_expression(item.get("metric"), item.get("value"), item.get("operator", "equal")),
-                item.get("exclude", False),
-            )
-        )
-    for item in clean_filters.get("metric_between_filters") or []:
-        metric_expressions.append(
-            _maybe_exclude(
-                _between_filter_expression(item.get("metric"), item.get("from"), item.get("to")),
-                item.get("exclude", False),
-            )
-        )
-    combined_metrics = _combine_expressions(metric_expressions)
-    if combined_metrics:
-        result["metricFilter"] = combined_metrics
-    return result
-
-
-def normalize_ga4_order_bys(order_by: list[dict] | None) -> list[dict]:
-    normalized = []
-    for item in order_by or []:
-        if "metric" in item or "dimension" in item or "pivot" in item:
-            normalized.append(item)
-            continue
-        order_type = str(item.get("type") or "metric").strip().lower()
-        name = _safe_ga4_name(item.get("name"), "order-by field")
-        result = {"desc": bool(item.get("descending", item.get("desc", False)))}
-        if order_type == "metric":
-            result["metric"] = {"metricName": name}
-        elif order_type == "dimension":
-            dimension_order_type = str(item.get("order_type") or "alphanumeric").strip().lower()
-            if dimension_order_type not in DIMENSION_ORDER_TYPES:
-                raise HTTPException(status_code=400, detail=f"Unsupported GA4 dimension order type: {dimension_order_type}")
-            result["dimension"] = {
-                "dimensionName": name,
-                "orderType": DIMENSION_ORDER_TYPES[dimension_order_type],
-            }
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported GA4 order-by type: {order_type}")
-        normalized.append(result)
-    return normalized
-
-
 def run_ga4_report(
     tenant_id: str,
     property_id: str | None,
@@ -344,30 +137,16 @@ def run_ga4_report(
 ) -> dict:
     resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
     credentials = get_google_credentials_for_tenant(tenant_id)
-    body = {
-        "dateRanges": [_date_range(start_date, end_date)],
-        "dimensions": [_dimension(item) for item in dimensions],
-        "metrics": [_metric(item) for item in metrics],
-        "limit": str(min(max(int(limit or 100), 1), 1000)),
-        "offset": str(max(int(offset or 0), 0)),
-    }
-    normalized_filters = normalize_ga4_filters(filters)
-    if normalized_filters.get("dimensionFilter"):
-        body["dimensionFilter"] = normalized_filters["dimensionFilter"]
-    if normalized_filters.get("metricFilter"):
-        body["metricFilter"] = normalized_filters["metricFilter"]
-    normalized_order_bys = normalize_ga4_order_bys(order_by)
-    if normalized_order_bys:
-        body["orderBys"] = normalized_order_bys
-    if metric_aggregations:
-        body["metricAggregations"] = metric_aggregations
+    body = build_report_request(
+        dimensions, metrics, start_date, end_date, limit, offset, filters, order_by, metric_aggregations
+    )
     response = requests.post(
         f"{GA4_DATA_BASE_URL}/properties/{resolved_property_id}:runReport",
         headers=_auth_headers(credentials["access_token"]),
         json=body,
         timeout=45,
     )
-    data = response.json()
+    data = require_object(response_json(response, "GA4 Data API"), "GA4 Data API")
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail={"message": "GA4 report failed.", "google_response": data})
     data["property_id"] = resolved_property_id
@@ -382,33 +161,16 @@ def run_ga4_funnel_report(
     start_date: str = "30daysAgo",
     end_date: str = "today",
 ) -> dict:
-    if not steps:
-        raise HTTPException(status_code=400, detail="At least one funnel step is required.")
     resolved_property_id = resolve_ga4_property_id(tenant_id, property_id)
     credentials = get_google_credentials_for_tenant(tenant_id)
-    body = {
-        "dateRanges": [_date_range(start_date, end_date)],
-        "funnel": {
-            "steps": [
-                {
-                    "name": step["name"],
-                    "filterExpression": {
-                        "funnelEventFilter": {
-                            "eventName": step["event_name"],
-                        }
-                    },
-                }
-                for step in steps
-            ]
-        },
-    }
+    body = build_funnel_request(steps, start_date, end_date)
     response = requests.post(
         f"https://analyticsdata.googleapis.com/v1alpha/properties/{resolved_property_id}:runFunnelReport",
         headers=_auth_headers(credentials["access_token"]),
         json=body,
         timeout=45,
     )
-    data = response.json()
+    data = require_object(response_json(response, "GA4 Funnel API"), "GA4 Funnel API")
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail={"message": "GA4 funnel report failed.", "google_response": data})
     data["property_id"] = resolved_property_id
@@ -435,7 +197,7 @@ def run_ga4_realtime_report(
         json=body,
         timeout=45,
     )
-    data = response.json()
+    data = require_object(response_json(response, "GA4 Realtime API"), "GA4 Realtime API")
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail={"message": "GA4 realtime report failed.", "google_response": data})
     data["property_id"] = resolved_property_id
@@ -450,7 +212,7 @@ def get_ga4_metadata(tenant_id: str, property_id: str | None = None) -> dict:
         headers=_auth_headers(credentials["access_token"]),
         timeout=45,
     )
-    data = response.json()
+    data = require_object(response_json(response, "GA4 Metadata API"), "GA4 Metadata API")
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail={"message": "GA4 metadata failed.", "google_response": data})
     data["property_id"] = resolved_property_id
