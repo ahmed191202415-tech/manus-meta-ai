@@ -5,18 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+from app.core.supabase_rest import DEFAULT_PREFER, SupabaseRestClient
+
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 PASSWORD_ITERATIONS = int(os.getenv("PASSWORD_ITERATIONS", "600000"))
-
-
-def _headers(prefer: str = "resolution=merge-duplicates,return=representation"):
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": prefer,
-    }
 
 
 def _dt(dt):
@@ -70,20 +63,13 @@ def get_subscription_state(account: dict | None) -> dict:
     }
 
 
-def _rest_url(table: str) -> str:
-    return f"{SUPABASE_URL}/rest/v1/{table}"
-
-
-def _raise_if_unconfigured():
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.")
+def _rest_client() -> SupabaseRestClient:
+    """Build from current settings so tests and runtime configuration stay isolated."""
+    return SupabaseRestClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, requests)
 
 
 def _get_many(table: str, params: dict | None = None):
-    _raise_if_unconfigured()
-    r = requests.get(_rest_url(table), headers=_headers(), params=params or {}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    return _rest_client().get_many(table, params)
 
 
 def _get_single(table: str, params: dict | None = None):
@@ -91,28 +77,16 @@ def _get_single(table: str, params: dict | None = None):
     return rows[0] if rows else None
 
 
-def _post(table: str, payload: dict | list, params: dict | None = None, prefer: str = "resolution=merge-duplicates,return=representation"):
-    _raise_if_unconfigured()
-    r = requests.post(_rest_url(table), headers=_headers(prefer=prefer), params=params or {}, json=payload, timeout=30)
-    r.raise_for_status()
-    if r.text.strip():
-        return r.json()
-    return None
+def _post(table: str, payload: dict | list, params: dict | None = None, prefer: str = DEFAULT_PREFER):
+    return _rest_client().post(table, payload, params, prefer)
 
 
 def _patch(table: str, params: dict, payload: dict, prefer: str = "return=representation"):
-    _raise_if_unconfigured()
-    r = requests.patch(_rest_url(table), headers=_headers(prefer=prefer), params=params, json=payload, timeout=30)
-    r.raise_for_status()
-    if r.text.strip():
-        return r.json()
-    return None
+    return _rest_client().patch(table, params, payload, prefer)
 
 
 def _delete(table: str, params: dict):
-    _raise_if_unconfigured()
-    r = requests.delete(_rest_url(table), headers=_headers(prefer="return=minimal"), params=params, timeout=30)
-    r.raise_for_status()
+    _rest_client().delete(table, params)
     return True
 
 
