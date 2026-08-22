@@ -26,6 +26,7 @@ from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call
 from app.core.oauth_store import create_dynamic_dashboard, get_dynamic_dashboard, update_dynamic_dashboard_config
 from app.core.dashboard_runtime import execute_plan as execute_universal_dashboard_plan
+from app.core.dashboard_store import DashboardStore
 from app.schemas.dashboard_runtime_requests import DashboardPlanValidateRequest
 
 router = APIRouter(tags=["journey-dashboard-v7"])
@@ -36,6 +37,16 @@ META_DASHBOARD_FIELDS = (
     "campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,"
     "unique_inline_link_clicks,unique_ctr,actions,date_start,date_stop"
 )
+
+
+def _dashboard_store() -> DashboardStore:
+    return DashboardStore(
+        definitions=_DEFINITIONS,
+        code_dashboards=_CODE_DASHBOARDS,
+        create_dashboard=create_dynamic_dashboard,
+        get_dashboard=get_dynamic_dashboard,
+        update_dashboard=update_dynamic_dashboard_config,
+    )
 
 
 class DashboardDefinitionRequest(BaseModel):
@@ -554,169 +565,37 @@ renderFilters(); reloadDashboard();
 
 
 def _save_dashboard_definition(definition: dict, dashboard_id: str | None = None) -> dict:
-    resolved_dashboard_id = str(dashboard_id or definition.get("dashboard_id") or "custom_dashboard")
-    definition["dashboard_id"] = resolved_dashboard_id
-    _DEFINITIONS[resolved_dashboard_id] = definition
-    _persist_dashboard_definition(definition)
-    return {"success": True, "definition": definition, "url": _dashboard_url(resolved_dashboard_id)}
+    saved = _dashboard_store().save_definition(definition, dashboard_id)
+    return {"success": True, "definition": saved, "url": _dashboard_url(saved["dashboard_id"])}
 
 
 def _save_code_dashboard(dashboard: dict[str, Any], dashboard_id: str | None = None) -> dict:
-    resolved_dashboard_id = str(dashboard_id or dashboard.get("dashboard_id") or "custom_code_dashboard")
-    dashboard["dashboard_id"] = resolved_dashboard_id
-    _CODE_DASHBOARDS[resolved_dashboard_id] = dashboard
-    data_contract = dashboard.get("data_contract") or {}
-    if isinstance(data_contract, dict):
-        _DEFINITIONS[resolved_dashboard_id] = _definition_from_code_dashboard(dashboard)
-    _persist_code_dashboard(dashboard)
-    return {"success": True, "dashboard": dashboard, "url": _code_dashboard_url(resolved_dashboard_id)}
-
-
-def _persist_tenant_id(payload: dict) -> str:
-    return str(payload.get("tenant_id") or payload.get("owner_tenant_id") or "system").strip() or "system"
-
-
-def _persist_dashboard_definition(definition: dict) -> None:
-    if not definition.get("dashboard_id"):
-        return
-    config = {
-        "render_mode": "manifest",
-        "definition": definition,
-        "filters": definition.get("filters") or [],
-        "data_sources": definition.get("data_sources") or {},
-        "metrics": definition.get("metrics") or {},
-        "charts": definition.get("charts") or [],
-        "stages": definition.get("stages") or [],
-        "widgets": definition.get("widgets") or [],
-        "layout": definition.get("layout") or {},
-        "interactions": definition.get("interactions") or [],
-        "runtime_queries": definition.get("runtime_queries") or {},
-        "formulas": definition.get("formulas") or {},
-    }
-    _upsert_persistent_dashboard(definition, config)
-
-
-def _persist_code_dashboard(dashboard: dict) -> None:
-    if not dashboard.get("dashboard_id"):
-        return
-    config = {
-        "render_mode": "code",
-        "html": dashboard.get("html") or "",
-        "css": dashboard.get("css") or "",
-        "javascript": dashboard.get("javascript") or "",
-        "data_contract": dashboard.get("data_contract") or {},
-    }
-    _upsert_persistent_dashboard(dashboard, config)
-
-
-def _upsert_persistent_dashboard(payload: dict, config: dict) -> None:
-    tenant_id = _persist_tenant_id(payload)
-    dashboard_id = str(payload.get("dashboard_id") or "")
-    try:
-        existing = get_dynamic_dashboard(dashboard_id)
-        if existing:
-            update_dynamic_dashboard_config(
-                str(existing.get("tenant_id") or tenant_id),
-                dashboard_id,
-                {
-                    "title": payload.get("title"),
-                    "description": payload.get("description"),
-                    "config": config,
-                    "refresh_policy": {"mode": "manual"},
-                    "status": "active",
-                },
-            )
-            return
-        create_dynamic_dashboard(
-            tenant_id=tenant_id,
-            title=str(payload.get("title") or dashboard_id),
-            description=payload.get("description"),
-            config=config,
-            snapshot={},
-            refresh_policy={"mode": "manual"},
-            dashboard_id=dashboard_id,
-        )
-    except Exception:
-        # Persistence is best-effort so dashboard creation still works if Supabase is temporarily unavailable.
-        return
+    saved = _dashboard_store().save_code(dashboard, dashboard_id)
+    return {"success": True, "dashboard": saved, "url": _code_dashboard_url(saved["dashboard_id"])}
 
 
 def _stored_dashboard_row(dashboard_id: str) -> dict | None:
-    try:
-        row = get_dynamic_dashboard(dashboard_id)
-    except Exception:
-        return None
-    if not row or row.get("status") == "deleted":
-        return None
-    return row
+    return _dashboard_store().stored_row(dashboard_id)
 
 
 def _stored_definition(dashboard_id: str) -> dict | None:
-    row = _stored_dashboard_row(dashboard_id)
-    config = (row or {}).get("config") or {}
-    if config.get("render_mode") == "manifest" and isinstance(config.get("definition"), dict):
-        return config["definition"]
-    if config.get("render_mode") == "code":
-        return _definition_from_code_dashboard(
-            {
-                "dashboard_id": dashboard_id,
-                "title": row.get("title"),
-                "description": row.get("description"),
-                "data_contract": config.get("data_contract") or {},
-            }
-        )
-    return None
+    return _dashboard_store().stored_definition(dashboard_id)
 
 
 def _stored_code_dashboard(dashboard_id: str) -> dict | None:
-    row = _stored_dashboard_row(dashboard_id)
-    config = (row or {}).get("config") or {}
-    if config.get("render_mode") != "code":
-        return None
-    return {
-        "dashboard_id": dashboard_id,
-        "title": row.get("title"),
-        "description": row.get("description"),
-        "html": config.get("html") or "",
-        "css": config.get("css") or "",
-        "javascript": config.get("javascript") or "",
-        "data_contract": config.get("data_contract") or {},
-    }
+    return _dashboard_store().stored_code(dashboard_id)
 
 
 def _get_dashboard_definition(dashboard_id: str) -> dict | None:
-    return _DEFINITIONS.get(dashboard_id) or _stored_definition(dashboard_id)
+    return _dashboard_store().get_definition(dashboard_id)
 
 
 def _get_code_dashboard(dashboard_id: str) -> dict | None:
-    return _CODE_DASHBOARDS.get(dashboard_id) or _stored_code_dashboard(dashboard_id)
+    return _dashboard_store().get_code(dashboard_id)
 
 
 def _definition_from_code_dashboard(dashboard: dict[str, Any]) -> dict:
-    data_contract = dashboard.get("data_contract") or {}
-    if not isinstance(data_contract, dict):
-        data_contract = {}
-    definition = {
-        "dashboard_id": dashboard.get("dashboard_id"),
-        "title": dashboard.get("title"),
-        "description": dashboard.get("description"),
-        "data_sources": data_contract.get("data_sources") or {},
-        "metrics": data_contract.get("metrics") or {},
-        "stages": data_contract.get("stages") or [],
-        "widgets": data_contract.get("widgets") or [],
-        "runtime_queries": data_contract.get("runtime_queries") or data_contract.get("queries") or {},
-        "formulas": data_contract.get("formulas") or {},
-        "filters": data_contract.get("filters") or [],
-        "interactions": data_contract.get("interactions") or [],
-        "layout": data_contract.get("layout") or {},
-    }
-    formulas = definition.get("formulas") or {}
-    if isinstance(formulas, dict):
-        for metric_id, formula in formulas.items():
-            if metric_id not in definition["metrics"]:
-                expression = formula.get("expression") if isinstance(formula, dict) else str(formula)
-                definition["metrics"][metric_id] = {"source": "formula", "expression": expression}
-    return definition
+    return DashboardStore.definition_from_code(dashboard)
 
 
 @router.post("/api/dashboard-definitions", operation_id="create_dashboard_definition_manifest_v1")
@@ -789,19 +668,7 @@ async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: R
 
 
 def _runtime_definition(dashboard_id: str, context: dict | None = None) -> dict:
-    if context and isinstance(context.get("manifest"), dict):
-        definition = dict(context["manifest"])
-        definition["dashboard_id"] = dashboard_id or definition.get("dashboard_id")
-        return definition
-    if context and isinstance(context.get("data_contract"), dict):
-        return _definition_from_code_dashboard({"dashboard_id": dashboard_id, "data_contract": context["data_contract"]})
-    definition = _get_dashboard_definition(dashboard_id)
-    if definition:
-        return definition
-    code_dashboard = _get_code_dashboard(dashboard_id)
-    if code_dashboard:
-        return _definition_from_code_dashboard(code_dashboard)
-    return {**DEFAULT_DASHBOARD_DEFINITION, "dashboard_id": dashboard_id or DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]}
+    return _dashboard_store().runtime_definition(dashboard_id, DEFAULT_DASHBOARD_DEFINITION, context)
 
 
 @router.get("/api/dashboard-runtime/connectors")
