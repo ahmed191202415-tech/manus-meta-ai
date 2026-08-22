@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import base64
 import hashlib
 import hmac
@@ -15,34 +14,12 @@ from app.analytics.ga4_preprocessing import normalize_ga4_report
 from app.config import SESSION_SECRET
 from app.core.auth import resolve_access_token
 from app.core.clarity_client import run_clarity_live_insights_with_fallbacks
+from app.core.dashboard_plan import connector_catalog, lookup, resolve_templates, validate_plan
+from app.core.dashboard_transforms import build_options, flatten_numeric_results, safe_formula, select_value
 from app.core.ga4_client import list_ga4_properties, run_ga4_funnel_report, run_ga4_report
 from app.core.meta_client import meta_call, normalize_account_id
 from app.schemas.dashboard_runtime_requests import DashboardQueryNode, DashboardQueryPlan
 
-
-CONNECTOR_OPERATIONS = {
-    "meta": {
-        "list_accounts": {"required": [], "description": "List available Meta ad accounts."},
-        "list_campaigns": {"required": ["account_id"], "description": "List campaigns for an ad account."},
-        "list_adsets": {"required": ["account_id"], "description": "List ad sets, optionally filtered by campaign_id."},
-        "list_ads": {"required": ["account_id"], "description": "List ads, optionally filtered by adset_id or campaign_id."},
-        "insights": {"required": ["scope_id"], "description": "Read insights for an account, campaign, ad set, or ad."},
-        "graph_read": {"required": ["path"], "description": "Read any safe Meta Graph path."},
-    },
-    "ga4": {
-        "list_properties": {"required": ["tenant_id"], "description": "List connected GA4 properties."},
-        "report": {"required": ["tenant_id", "metrics"], "description": "Run an arbitrary GA4 report."},
-        "funnel": {"required": ["tenant_id", "steps"], "description": "Run a GA4 funnel report."},
-    },
-    "clarity": {
-        "insights": {"required": ["tenant_id"], "description": "Read Clarity live insights."},
-    },
-    "transform": {
-        "select": {"required": ["from", "path"], "description": "Select a nested value from a previous node."},
-        "formula": {"required": ["expression"], "description": "Calculate a numeric expression from prior results."},
-        "options": {"required": ["from"], "description": "Convert rows into label/value dropdown options."},
-    },
-}
 
 _DEFAULT_FIELDS = {
     "accounts": "id,name,account_id,account_status,currency,timezone_name",
@@ -52,62 +29,6 @@ _DEFAULT_FIELDS = {
 }
 
 
-def connector_catalog() -> dict:
-    return {
-        "connectors": [
-            {
-                "id": connector,
-                "operations": [
-                    {"id": operation, **metadata}
-                    for operation, metadata in operations.items()
-                ],
-            }
-            for connector, operations in CONNECTOR_OPERATIONS.items()
-        ],
-        "template_syntax": "{{inputs.key}} or {{nodes.node_id.path}}",
-        "workflow": ["validate", "preview", "user_confirmation", "publish"],
-    }
-
-
-def validate_plan(plan: DashboardQueryPlan) -> dict:
-    errors: list[dict] = []
-    warnings: list[dict] = []
-    node_ids = {node.id for node in plan.nodes}
-    for node in plan.nodes:
-        operations = CONNECTOR_OPERATIONS.get(node.connector, {})
-        if node.operation not in operations:
-            errors.append({"node_id": node.id, "message": f"Unsupported operation: {node.connector}.{node.operation}"})
-            continue
-        missing_declared = [
-            key for key in operations[node.operation].get("required", [])
-            if key not in node.params and key not in node.required_inputs
-        ]
-        if missing_declared:
-            errors.append({"node_id": node.id, "message": "Required parameters are missing.", "missing": missing_declared})
-        for dependency in node.depends_on:
-            if dependency not in node_ids:
-                errors.append({"node_id": node.id, "message": f"Unknown dependency: {dependency}"})
-        if node.connector == "meta" and node.operation == "graph_read":
-            path = str(node.params.get("path") or "")
-            if path.startswith(("http://", "https://")):
-                errors.append({"node_id": node.id, "message": "Meta graph_read accepts Graph paths only."})
-        if not node.depends_on and "{{nodes." in json.dumps(node.params):
-            warnings.append({"node_id": node.id, "message": "The node references prior results but has no depends_on declaration."})
-    try:
-        execution_order = _execution_order(plan)
-    except ValueError as exc:
-        errors.append({"message": str(exc)})
-        execution_order = []
-    return {
-        "valid": not errors,
-        "plan_id": plan.id,
-        "node_count": len(plan.nodes),
-        "errors": errors,
-        "warnings": warnings,
-        "execution_order": execution_order,
-    }
-
-
 async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict | None = None, trigger: str = "manual") -> dict:
     validation = validate_plan(plan)
     if not validation["valid"]:
@@ -115,9 +36,10 @@ async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict 
     inputs = inputs or {}
     results: dict[str, Any] = {}
     statuses: list[dict] = []
+    nodes_by_id = {node.id: node for node in plan.nodes}
     for node_id in validation["execution_order"]:
-        node = next(item for item in plan.nodes if item.id == node_id)
-        missing_inputs = [key for key in node.required_inputs if _lookup(inputs, key) in (None, "")]
+        node = nodes_by_id[node_id]
+        missing_inputs = [key for key in node.required_inputs if lookup(inputs, key) in (None, "")]
         if missing_inputs:
             statuses.append({"node_id": node.id, "status": "waiting_for_input", "missing_inputs": missing_inputs})
             continue
@@ -127,7 +49,7 @@ async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict 
         if any(dependency not in results for dependency in node.depends_on):
             statuses.append({"node_id": node.id, "status": "blocked_by_dependency"})
             continue
-        params = _resolve_templates(node.params, {"inputs": inputs, "nodes": results})
+        params = resolve_templates(node.params, {"inputs": inputs, "nodes": results})
         try:
             result = await _execute_node(node, params, request, results)
             results[node.id] = result
@@ -143,7 +65,7 @@ async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict 
             statuses.append({"node_id": node.id, "status": "failed", "error": str(exc)})
             if not node.optional:
                 raise HTTPException(status_code=502, detail={"message": "Dashboard query plan failed.", "failed_node": node.id, "node_status": statuses, "connector_error": str(exc)}) from exc
-    output = _resolve_templates(plan.output, {"inputs": inputs, "nodes": results}) if plan.output else results
+    output = resolve_templates(plan.output, {"inputs": inputs, "nodes": results}) if plan.output else results
     return {
         "plan_id": plan.id,
         "status": "success" if all(item["status"] in {"success", "not_triggered"} for item in statuses) else "partial",
@@ -244,99 +166,10 @@ def _execute_clarity(params: dict, request: Request) -> dict:
 
 def _execute_transform(operation: str, params: dict, results: dict) -> Any:
     if operation == "select":
-        source = _resolve_reference(params.get("from"), results)
-        return _lookup(source, str(params.get("path") or ""))
+        return select_value(params, results)
     if operation == "options":
-        source = _resolve_reference(params.get("from"), results)
-        rows = source.get("data", []) if isinstance(source, dict) else source or []
-        label_field = str(params.get("label_field") or "name")
-        value_field = str(params.get("value_field") or "id")
-        return [{"label": _lookup(row, label_field), "value": _lookup(row, value_field)} for row in rows]
-    names = _flatten_numeric_results(results)
-    return _safe_formula(str(params.get("expression") or ""), names)
-
-
-def _execution_order(plan: DashboardQueryPlan) -> list[str]:
-    remaining = {node.id: set(node.depends_on) for node in plan.nodes}
-    order: list[str] = []
-    while remaining:
-        ready = [node_id for node_id, deps in remaining.items() if not deps]
-        if not ready:
-            raise ValueError("Query plan contains a dependency cycle.")
-        for node_id in ready:
-            order.append(node_id)
-            remaining.pop(node_id)
-            for deps in remaining.values():
-                deps.discard(node_id)
-    return order
-
-
-def _resolve_templates(value: Any, context: dict) -> Any:
-    if isinstance(value, dict):
-        return {key: _resolve_templates(item, context) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_resolve_templates(item, context) for item in value]
-    if not isinstance(value, str):
-        return value
-    if value.startswith("{{") and value.endswith("}}") and value.count("{{") == 1:
-        return _lookup(context, value[2:-2].strip())
-    rendered = value
-    while "{{" in rendered and "}}" in rendered:
-        start = rendered.index("{{")
-        end = rendered.index("}}", start)
-        path = rendered[start + 2:end].strip()
-        rendered = rendered[:start] + str(_lookup(context, path) or "") + rendered[end + 2:]
-    return rendered
-
-
-def _lookup(value: Any, path: str) -> Any:
-    current = value
-    for part in [item for item in str(path or "").split(".") if item]:
-        if isinstance(current, dict):
-            current = current.get(part)
-        elif isinstance(current, list) and part.isdigit():
-            index = int(part)
-            current = current[index] if index < len(current) else None
-        else:
-            return None
-    return current
-
-
-def _resolve_reference(reference: Any, results: dict) -> Any:
-    text = str(reference or "")
-    return _lookup(results, text.removeprefix("nodes."))
-
-
-def _flatten_numeric_results(results: dict) -> dict[str, float]:
-    values: dict[str, float] = {}
-    for node_id, result in results.items():
-        if isinstance(result, (int, float)):
-            values[node_id] = float(result)
-        if isinstance(result, dict):
-            for key, value in result.items():
-                if isinstance(value, (int, float)):
-                    values[f"{node_id}_{key}"] = float(value)
-    return values
-
-
-_FORMULA_OPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b, ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b if b else None}
-
-
-def _safe_formula(expression: str, names: dict[str, float]) -> float | None:
-    def evaluate(node):
-        if isinstance(node, ast.Expression):
-            return evaluate(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return float(node.value)
-        if isinstance(node, ast.Name) and node.id in names:
-            return names[node.id]
-        if isinstance(node, ast.BinOp) and type(node.op) in _FORMULA_OPS:
-            return _FORMULA_OPS[type(node.op)](evaluate(node.left), evaluate(node.right))
-        raise HTTPException(status_code=422, detail="Formula contains an unsupported expression.")
-    try:
-        return evaluate(ast.parse(expression, mode="eval"))
-    except (SyntaxError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid formula: {exc}") from exc
+        return build_options(params, results)
+    return safe_formula(str(params.get("expression") or ""), flatten_numeric_results(results))
 
 
 def create_confirmation_token(plan: DashboardQueryPlan, preview: dict, ttl_seconds: int = 1800) -> str:
