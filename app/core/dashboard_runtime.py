@@ -72,6 +72,15 @@ def _meta_scope_id(values: dict) -> str:
     return normalize_account_id(account_id) if account_id else ""
 
 
+def _missing_required_input(key: str, inputs: dict) -> bool:
+    """Interpret dashboard sentinel values according to their filter semantics."""
+    if key in {"campaign_id", "adset_id", "ad_id"} and not _present_input(lookup(inputs, key)):
+        return False
+    if key in {"since", "until"} and str(inputs.get("date_preset") or "").casefold() != "custom":
+        return False
+    return not _present_input(lookup(inputs, key))
+
+
 async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict | None = None, trigger: str = "manual") -> dict:
     validation = validate_plan(plan)
     if not validation["valid"]:
@@ -86,7 +95,7 @@ async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict 
     nodes_by_id = {node.id: node for node in plan.nodes}
     for node_id in validation["execution_order"]:
         node = nodes_by_id[node_id]
-        missing_inputs = [key for key in node.required_inputs if not _present_input(lookup(inputs, key))]
+        missing_inputs = [key for key in node.required_inputs if _missing_required_input(key, inputs)]
         if missing_inputs:
             statuses.append({"node_id": node.id, "status": "waiting_for_input", "missing_inputs": missing_inputs})
             continue
