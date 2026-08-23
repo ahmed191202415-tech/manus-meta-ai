@@ -502,6 +502,13 @@ function filters() {{
   const out = {{}};
   effectiveFilters().forEach(f => out[f.key] = filterValue(f.key));
   ["date_from","date_to","campaign_id","adset_id","ad_id","device","placement"].forEach(k => {{ if(out[k] === undefined) out[k] = k.includes("_id") || ["device","placement"].includes(k) ? "all" : ""; }});
+  const selected = key => String(out[key] || "").trim() && String(out[key]).toLowerCase() !== "all" ? out[key] : "";
+  const adId = selected("ad_id"), adsetId = selected("adset_id"), campaignId = selected("campaign_id"), accountId = selected("account_id");
+  out.scope_id = adId || adsetId || campaignId || accountId || "";
+  out.analysis_level = adId ? "ad" : adsetId ? "adset" : "campaign";
+  out.since = out.date_from || "";
+  out.until = out.date_to || "";
+  out.date_preset = out.since && out.until ? "custom" : "last_30d";
   return out;
 }}
 function spanClass(widget) {{ const span = Number(widget.span || widget.width || (widget.type === "kpi" ? 3 : 6)); return "span-" + ([3,4,6,8,12].includes(span) ? span : 6); }}
@@ -521,6 +528,11 @@ function queryIdForWidget(widget) {{
   if(widget.data_query) return widget.data_query;
   if(definition.runtime_queries && definition.runtime_queries[widget.id]) return widget.id;
   return "journey_funnel";
+}}
+function isControlWidget(widget) {{
+  if(widget.type === "filters") return true;
+  const plan = definition.runtime_queries && definition.runtime_queries[queryIdForWidget(widget)];
+  return Boolean(plan && (plan.nodes || []).some(node => node.connector === "meta" && node.operation === "list_accounts"));
 }}
 function findNodeOptions(result, keys) {{
   const nodes = (result && result.nodes) || {{}};
@@ -606,7 +618,7 @@ function renderWidget(widget) {{
   const rows = widgetRows(widget);
   const type = widget.type || "table";
   const title = widget.title || widget.id || type;
-  if(type === "filters") return "";
+  if(isControlWidget(widget)) return "";
   if(type === "kpi") {{
     const stage = rows.find(s => s.id === widget.stage || s.id === widget.metric || s.id === widget.metric_id) || rows[0] || {{}};
     return `<div class="panel ${{spanClass(widget)}}"><div class="muted">${{title}}</div><div class="value">${{stage.value ?? stage.numeric_value ?? "-"}}</div><div class="src">${{stage.source || ""}}</div></div>`;
