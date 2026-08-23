@@ -1072,7 +1072,11 @@ def update_dynamic_dashboard_snapshot(tenant_id: str, dashboard_id: str, snapsho
 
 
 def update_dynamic_dashboard_config(tenant_id: str, dashboard_id: str, payload: dict):
-    allowed = {key: value for key, value in payload.items() if key in {"title", "description", "config", "refresh_policy", "status"}}
+    allowed = {
+        key: value
+        for key, value in payload.items()
+        if key in {"title", "description", "config", "refresh_policy", "status", "last_refreshed_at"}
+    }
     if not allowed:
         return get_dynamic_dashboard(dashboard_id)
     rows = _patch(

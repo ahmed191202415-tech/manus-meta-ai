@@ -1,6 +1,7 @@
 import asyncio
 
 from app.api import dynamic_dashboards
+from app.schemas.dynamic_dashboard_requests import DynamicDashboardRuntimeStateRequest
 
 
 def _dashboard_row(render_mode="manifest"):
@@ -82,6 +83,83 @@ def test_code_dashboard_is_persistent_and_uses_backend_datasets(monkeypatch):
     assert "dataset(nameOrId)" in html
     assert "/api/dashboard-runtime/query" in html
     assert "Any backend data" in html
+
+
+def test_manifest_renderer_executes_generic_runtime_options_and_cascades(monkeypatch):
+    row = _dashboard_row()
+    row["config"].update(
+        {
+            "filters": [
+                {
+                    "key": "parent_id",
+                    "name": "Parent",
+                    "type": "select",
+                    "required": True,
+                    "options_source": {"runtime_query": "controls", "node_id": "load_parents", "value_field": "id"},
+                    "on_change": {"clear": ["child_id"], "run": ["load_children"]},
+                },
+                {
+                    "key": "child_id",
+                    "name": "Child",
+                    "type": "select",
+                    "depends_on": ["parent_id"],
+                    "options_source": {"runtime_query": "controls", "node_id": "load_children", "value_field": "id"},
+                },
+            ],
+            "widgets": [
+                {
+                    "id": "controls",
+                    "title": "Controls",
+                    "type": "filter_bar",
+                    "actions": [{"id": "apply", "label": "Apply", "runtime_query": "controls", "node_id": "load_data"}],
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(dynamic_dashboards, "list_dashboard_datasets", lambda *args, **kwargs: [])
+
+    html = dynamic_dashboards._dashboard_html(row)
+
+    assert 'fetch("/api/dashboard-runtime/query"' in html
+    assert "loadDynamicFilter" in html
+    assert "clearDescendants" in html
+    assert "options_source" in html
+    assert "/runtime-state" in html
+    assert "Authentication required" in html
+
+
+def test_runtime_state_persists_inputs_and_real_refresh_timestamps(monkeypatch):
+    row = _dashboard_row()
+    captured = {}
+
+    class Request:
+        session = {"tenant_id": "tenant_1"}
+        headers = {}
+
+    monkeypatch.setattr(dynamic_dashboards, "get_dynamic_dashboard", lambda dashboard_id: row)
+
+    def fake_update(tenant_id, dashboard_id, payload):
+        captured.update(payload)
+        return {**row, **payload}
+
+    monkeypatch.setattr(dynamic_dashboards, "update_dynamic_dashboard_config", fake_update)
+    result = asyncio.run(
+        dynamic_dashboards.save_dashboard_runtime_state(
+            "dash_1",
+            DynamicDashboardRuntimeStateRequest(
+                query_id="controls",
+                inputs={"account_id": "123", "campaign_id": "cmp_1"},
+                status="success",
+            ),
+            Request(),
+        )
+    )
+
+    state = captured["config"]["runtime_state"]
+    assert state["last_query_inputs"]["campaign_id"] == "cmp_1"
+    assert state["last_successful_refresh"]
+    assert captured["last_refreshed_at"]
+    assert result["runtime_state"]["status"] == "success"
 
 
 def test_dataset_query_supports_nested_filters_search_and_sort(monkeypatch):

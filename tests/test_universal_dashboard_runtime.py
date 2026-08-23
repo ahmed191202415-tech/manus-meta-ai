@@ -117,6 +117,122 @@ def test_cascading_campaign_query_uses_selected_account_and_real_meta_path(monke
     assert response.json()["data"]["campaigns"] == [{"label": "Campaign One", "value": "cmp_1"}]
 
 
+def test_declared_runtime_inputs_are_forwarded_without_duplicate_param_templates(monkeypatch):
+    async def fake_token(request):
+        return "token"
+
+    calls = []
+
+    def fake_meta_call(method, path, token, params=None):
+        calls.append({"method": method, "path": path, "params": params})
+        return {"data": [{"id": "cmp_1", "name": "Campaign One"}]}
+
+    plan = {
+        "id": "generated_filters",
+        "nodes": [
+            {
+                "id": "get_campaigns",
+                "connector": "meta",
+                "operation": "list_campaigns",
+                "params": {},
+                "required_inputs": ["account_id"],
+                "run_when": "on_change",
+            }
+        ],
+    }
+    monkeypatch.setattr(runtime, "resolve_access_token", fake_token)
+    monkeypatch.setattr(runtime, "meta_call", fake_meta_call)
+
+    response = client.post(
+        "/api/dashboard-runtime/v2/execute",
+        json={"plan": plan, "inputs": {"account_id": "123"}, "trigger": "on_change"},
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["path"] == "act_123/campaigns"
+
+
+def test_meta_insights_query_uses_custom_time_range_and_drops_dashboard_only_filters():
+    query = runtime._meta_insights_query(
+        {
+            "scope_id": "cmp_1",
+            "account_id": "123",
+            "campaign_id": "cmp_1",
+            "analysis_level": "adset",
+            "adset_id": "all",
+            "ad_id": "all",
+            "date_preset": "custom",
+            "since": "2026-08-01",
+            "until": "2026-08-20",
+        }
+    )
+
+    assert query["time_range"] == '{"since":"2026-08-01","until":"2026-08-20"}'
+    assert query["level"] == "adset"
+    assert "account_id" not in query
+    assert "campaign_id" not in query
+    assert "date_preset" not in query
+
+
+def test_all_adsets_insights_fall_back_to_campaign_scope(monkeypatch):
+    async def fake_token(request):
+        return "token"
+
+    calls = []
+
+    def fake_meta_call(method, path, token, params=None):
+        calls.append({"path": path, "params": params})
+        return {"data": []}
+
+    plan = {
+        "id": "insight_filters",
+        "nodes": [
+            {
+                "id": "get_insights",
+                "connector": "meta",
+                "operation": "insights",
+                "params": {},
+                "required_inputs": [
+                    "scope_id",
+                    "account_id",
+                    "campaign_id",
+                    "analysis_level",
+                    "adset_id",
+                    "ad_id",
+                    "date_preset",
+                    "since",
+                    "until",
+                ],
+                "run_when": "manual",
+            }
+        ],
+    }
+    monkeypatch.setattr(runtime, "resolve_access_token", fake_token)
+    monkeypatch.setattr(runtime, "meta_call", fake_meta_call)
+    response = client.post(
+        "/api/dashboard-runtime/v2/execute",
+        json={
+            "plan": plan,
+            "trigger": "manual",
+            "inputs": {
+                "scope_id": "",
+                "account_id": "123",
+                "campaign_id": "cmp_1",
+                "analysis_level": "adset",
+                "adset_id": "all",
+                "ad_id": "all",
+                "date_preset": "last_7d",
+                "since": "all",
+                "until": "all",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["path"] == "cmp_1/insights"
+    assert calls[0]["params"]["level"] == "adset"
+
+
 def test_preview_token_is_bound_to_exact_plan(monkeypatch):
     async def fake_execute(plan, request, inputs=None, trigger="manual"):
         return {"plan_id": plan.id, "data": {"value": 12}, "nodes": {}, "node_status": []}

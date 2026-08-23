@@ -84,6 +84,13 @@ class DynamicDashboardRefreshRequest(BaseModel):
     force: bool = False
 
 
+class DynamicDashboardRuntimeStateRequest(BaseModel):
+    query_id: str | None = None
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["success", "error"]
+    error_message: str | None = None
+
+
 class DashboardDatasetCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

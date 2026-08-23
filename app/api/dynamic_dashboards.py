@@ -30,6 +30,7 @@ from app.schemas.dynamic_dashboard_requests import (
     DashboardDatasetRecordsRequest,
     DynamicDashboardCreateRequest,
     DynamicDashboardRefreshRequest,
+    DynamicDashboardRuntimeStateRequest,
     DynamicDashboardSnapshotRequest,
     DynamicDashboardUpdateRequest,
 )
@@ -253,6 +254,42 @@ async def refresh_dashboard(dashboard_id: str, body: DynamicDashboardRefreshRequ
         "refresh_status": _refresh_status(row),
         "refresh_steps": _refresh_steps(row),
         "next_step": "Run each refresh_step, merge the result into one snapshot, then call this endpoint again with snapshot.",
+    }
+
+
+@router.post("/{dashboard_id}/runtime-state", include_in_schema=False)
+async def save_dashboard_runtime_state(
+    dashboard_id: str,
+    body: DynamicDashboardRuntimeStateRequest,
+    request: Request,
+):
+    """Persist live filter-query state without turning the result into a snapshot."""
+    tenant_id = _tenant_from_request(request)
+    row = get_dynamic_dashboard(dashboard_id)
+    if not row or row.get("status") == "deleted" or str(row.get("tenant_id") or "") != tenant_id:
+        raise HTTPException(status_code=404, detail="Dashboard was not found.")
+    now = datetime.now(timezone.utc).isoformat()
+    config = dict(row.get("config") or {})
+    previous = dict(config.get("runtime_state") or {})
+    runtime_state = {
+        **previous,
+        "query_id": body.query_id,
+        "last_query_inputs": body.inputs,
+        "last_refresh_attempt": now,
+        "status": body.status,
+        "error_message": str(body.error_message or "")[:1000] or None,
+    }
+    payload = {"config": {**config, "runtime_state": runtime_state}}
+    if body.status == "success":
+        runtime_state["last_successful_refresh"] = now
+        payload["config"]["runtime_state"] = runtime_state
+        payload["last_refreshed_at"] = now
+    updated = update_dynamic_dashboard_config(tenant_id, dashboard_id, payload)
+    return {
+        "success": True,
+        "dashboard_id": dashboard_id,
+        "runtime_state": runtime_state,
+        "last_refreshed_at": (updated or {}).get("last_refreshed_at"),
     }
 
 
@@ -497,7 +534,21 @@ body {{ margin:0; font-family: Arial, sans-serif; background:#f6f8fb; color:#172
 .badge.warn {{ background:#fef3c7; color:#92400e; }}
 .badge.error {{ background:#fee2e2; color:#991b1b; }}
 .dot {{ width:8px; height:8px; border-radius:999px; background:currentColor; }}
-.filters {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:18px; }}
+.control-panel {{ position:sticky; top:0; z-index:20; margin-top:18px; padding:16px; background:rgba(246,248,251,.96); border:1px solid #dbe3ef; border-radius:14px; box-shadow:0 12px 30px rgba(15,23,42,.08); backdrop-filter:blur(10px); }}
+.filters {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }}
+.filter-field {{ background:white; border:1px solid #e5e7eb; border-radius:10px; padding:12px; min-width:0; }}
+.filter-field[hidden] {{ display:none; }}
+.filter-help {{ min-height:18px; margin-top:6px; color:#667085; font-size:12px; }}
+.filter-help.error {{ color:#b42318; }}
+.filter-help.loading {{ color:#1d4ed8; }}
+.control-actions {{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px; }}
+.runtime-status {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; margin-top:12px; padding-top:12px; border-top:1px solid #e5e7eb; font-size:13px; }}
+.runtime-status strong {{ display:block; color:#344054; margin-bottom:4px; }}
+.runtime-error {{ grid-column:1 / -1; color:#b42318; white-space:pre-wrap; overflow-wrap:anywhere; }}
+.retry-button {{ border:0; padding:0 6px; background:transparent; color:#1d4ed8; box-shadow:none; text-decoration:underline; font-size:12px; }}
+.retry-button:hover {{ background:transparent; transform:none; }}
+.secondary-button {{ background:#475467; box-shadow:none; }}
+.secondary-button:hover {{ background:#344054; }}
 .grid {{ display:block; margin-top:18px; }}
 .kpi-strip {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-bottom:14px; }}
 .content-grid {{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; align-items:start; }}
@@ -522,7 +573,7 @@ button[disabled] {{ cursor:wait; opacity:.72; transform:none; }}
 .empty {{ padding:14px; border:1px dashed #cbd5e1; border-radius:10px; color:#667085; background:#f8fafc; }}
 @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
 @media(max-width:920px) {{ .widget-funnel,.widget-bar,.widget-text {{ grid-column:1 / -1; }} }}
-@media(max-width:720px) {{ .hero {{ display:block; }} .shell {{ padding:14px; }} .content-grid {{ grid-template-columns:1fr; }} }}
+@media(max-width:720px) {{ .hero {{ display:block; }} .shell {{ padding:14px; }} .content-grid {{ grid-template-columns:1fr; }} .control-panel {{ position:relative; }} }}
 </style>
 </head>
 <body>
@@ -538,12 +589,34 @@ button[disabled] {{ cursor:wait; opacity:.72; transform:none; }}
     </div>
     <div class="actions"><button id="refreshButton" onclick="loadDashboard(true)"><span id="refreshIcon">↻</span><span id="refreshLabel">Refresh</span></button></div>
   </section>
-  <section id="filters" class="filters"></section>
+  <section id="dataControl" class="control-panel">
+    <div id="filters" class="filters"></div>
+    <div id="controlActions" class="control-actions"></div>
+    <div id="runtimeStatus" class="runtime-status"></div>
+  </section>
   <section id="widgets" class="grid"></section>
 </div>
 <script>
 const initialPayload = {payload};
 let dashboard = initialPayload;
+let filterState = {{}};
+let dynamicOptions = {{}};
+let runtimeState = {{...((dashboard.config || {{}}).runtime_state || {{}})}};
+let activeLoads = new Set();
+
+function escapeHtml(value) {{
+  return String(value ?? "").replace(/[&<>"']/g, char => ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}})[char]);
+}}
+function domId(key) {{ return "filter_" + String(key || "").replace(/[^A-Za-z0-9_-]/g, "_"); }}
+function filterSpecs() {{ return (dashboard.config && dashboard.config.filters) || []; }}
+function filterByKey(key) {{ return filterSpecs().find(item => item.key === key || item.id === key); }}
+function isEmpty(value) {{ return value === undefined || value === null || value === ""; }}
+function initializeFilterState() {{
+  for (const filter of filterSpecs()) {{
+    const key = filter.key || filter.id;
+    if (!(key in filterState)) filterState[key] = filter.default ?? "";
+  }}
+}}
 function valueFromSnapshot(key) {{
   const s = dashboard.snapshot || {{}};
   if (s[key] !== undefined) return s[key];
@@ -606,16 +679,287 @@ function setRefreshLoading(isLoading) {{
   icon.innerHTML = isLoading ? '<span class="spinner"></span>' : '↻';
   label.textContent = isLoading ? "Refreshing..." : "Refresh";
 }}
+function filterVisible(filter) {{
+  const conditions = filter.visible_when || {{}};
+  return Object.entries(conditions).every(([key, value]) => filterState[key] === value);
+}}
+function filterEnabled(filter) {{
+  return (filter.depends_on || []).every(key => !isEmpty(filterState[key]));
+}}
+function optionMarkup(option) {{
+  const value = option && typeof option === "object" ? (option.value ?? option.id ?? option.label) : option;
+  const label = option && typeof option === "object" ? (option.label ?? option.name ?? option.value ?? option.id) : option;
+  return `<option value="${{escapeHtml(value)}}">${{escapeHtml(label)}}</option>`;
+}}
+function renderFilterField(filter) {{
+  const key = filter.key || filter.id;
+  const label = filter.label || filter.name || key;
+  const visible = filterVisible(filter);
+  const enabled = filterEnabled(filter);
+  const id = domId(key);
+  let control = "";
+  if (filter.type === "select") {{
+    const options = filter.options_source ? (dynamicOptions[key] || []) : (filter.options || []);
+    const emptyLabel = filter.include_all?.label || (filter.required ? `اختر ${{label}}` : "All");
+    control = `<select id="${{id}}" data-filter-key="${{escapeHtml(key)}}" ${{enabled ? "" : "disabled"}}><option value="">${{escapeHtml(emptyLabel)}}</option>${{options.map(optionMarkup).join("")}}</select>`;
+  }} else if (filter.type === "date_range") {{
+    control = `<input id="${{id}}_from" type="date" data-filter-key="${{escapeHtml(key)}}.from"><input id="${{id}}_to" type="date" data-filter-key="${{escapeHtml(key)}}.to" style="margin-top:8px">`;
+  }} else {{
+    const type = filter.type === "date" ? "date" : "text";
+    control = `<input id="${{id}}" type="${{type}}" data-filter-key="${{escapeHtml(key)}}" value="${{escapeHtml(filterState[key])}}" ${{enabled ? "" : "disabled"}}>`;
+  }}
+  return `<div class="filter-field" data-filter-wrap="${{escapeHtml(key)}}" ${{visible ? "" : "hidden"}}><label for="${{id}}">${{escapeHtml(label)}}</label>${{control}}<div id="${{id}}_help" class="filter-help"></div></div>`;
+}}
 function renderFilters() {{
+  initializeFilterState();
   const box = document.getElementById("filters");
-  const filters = (dashboard.config && dashboard.config.filters) || [];
-  box.innerHTML = filters.map(f => {{
-    const label = f.label || f.key;
-    if (f.type === "date_range") return `<div class="panel"><label>${{label}}</label><input type="date"><input type="date" style="margin-top:8px"></div>`;
-    const options = (f.options || []).map(o => `<option value="${{o.value ?? o.label}}">${{o.label ?? o.value}}</option>`).join("");
-    if (f.type === "select") return `<div class="panel"><label>${{label}}</label><select><option value="">All</option>${{options}}</select></div>`;
-    return `<div class="panel"><label>${{label}}</label><input value="${{f.default ?? ""}}"></div>`;
-  }}).join("");
+  box.innerHTML = filterSpecs().map(renderFilterField).join("");
+  for (const filter of filterSpecs()) {{
+    const key = filter.key || filter.id;
+    const element = document.getElementById(domId(key));
+    if (!element) continue;
+    element.value = filterState[key] ?? "";
+    element.addEventListener("change", () => handleFilterChange(key, element.value));
+  }}
+}}
+function setFieldMessage(key, message="", kind="", retry=null) {{
+  const help = document.getElementById(domId(key) + "_help");
+  if (!help) return;
+  help.className = `filter-help ${{kind}}`;
+  help.textContent = message;
+  if (retry) {{
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "retry-button";
+    button.textContent = "Retry";
+    button.addEventListener("click", retry);
+    help.appendChild(document.createTextNode(" "));
+    help.appendChild(button);
+  }}
+}}
+function runtimeQueryId(filter) {{
+  return filter.options_source?.runtime_query || dashboard.config?.data_contract?.runtime_query || "";
+}}
+function nodeRows(result, nodeId) {{
+  const payload = result?.nodes?.[nodeId] ?? result?.data?.[nodeId] ?? result?.[nodeId];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}}
+function rowsToOptions(filter, rows) {{
+  const source = filter.options_source || {{}};
+  const valueField = source.value_field || "id";
+  const labelFields = source.label_fields || [source.label_field || "name", valueField];
+  return rows.map(row => {{
+    const value = row?.[valueField];
+    const parts = labelFields.map(field => row?.[field]).filter(value => !isEmpty(value));
+    return {{value, label:parts.join(" — ") || value}};
+  }}).filter(option => !isEmpty(option.value));
+}}
+function resolveBinding(value, derived={{}}) {{
+  if (typeof value !== "string") return value;
+  if (value.startsWith("$filters.")) return filterState[value.slice(9)];
+  if (value.startsWith("$derived.")) return derived[value.slice(9)];
+  return value;
+}}
+function derivedInputs() {{
+  const contract = dashboard.config?.data_contract || {{}};
+  const derived = {{}};
+  if (contract.scope_id && typeof contract.scope_id === "object") {{
+    const level = filterState.analysis_level;
+    derived.scope_id = resolveBinding(contract.scope_id[level], derived);
+  }}
+  return derived;
+}}
+function runtimeInputs(action=null) {{
+  const inputs = {{}};
+  for (const filter of filterSpecs()) {{
+    const key = filter.key || filter.id;
+    const value = filterState[key];
+    inputs[key] = isEmpty(value) && filter.include_all && action ? "all" : value;
+  }}
+  const derived = derivedInputs();
+  Object.assign(inputs, derived);
+  if (action?.params) {{
+    for (const [key, value] of Object.entries(action.params)) inputs[key] = resolveBinding(value, derived);
+  }}
+  if (action && inputs.date_preset !== "custom") {{
+    if (isEmpty(inputs.since)) inputs.since = "all";
+    if (isEmpty(inputs.until)) inputs.until = "all";
+  }}
+  return inputs;
+}}
+async function responseJson(response) {{
+  const text = await response.text();
+  let payload = {{}};
+  try {{ payload = text ? JSON.parse(text) : {{}}; }} catch {{ payload = {{detail:text}}; }}
+  if (!response.ok) {{
+    const detail = payload.detail ?? payload;
+    const message = typeof detail === "string" ? detail : (detail.connector_error || detail.message || JSON.stringify(detail));
+    const error = new Error(message || `Request failed (${{response.status}})`);
+    error.status = response.status;
+    error.failedNode = detail?.failed_node;
+    throw error;
+  }}
+  return payload;
+}}
+async function runRuntime(queryId, trigger, inputs) {{
+  if (!queryId) throw new Error("Runtime query is not configured for this control.");
+  const response = await fetch("/api/dashboard-runtime/query", {{
+    method:"POST",
+    credentials:"include",
+    headers:{{"Content-Type":"application/json"}},
+    body:JSON.stringify({{dashboard_id:dashboard.dashboard_id,query_id:queryId,filters:inputs,context:{{trigger}}}})
+  }});
+  return responseJson(response);
+}}
+async function persistRuntimeState(queryId, inputs, status, errorMessage=null) {{
+  try {{
+    const response = await fetch(`/dynamic_dashboards/${{encodeURIComponent(dashboard.dashboard_id)}}/runtime-state`, {{
+      method:"POST",
+      credentials:"include",
+      headers:{{"Content-Type":"application/json"}},
+      body:JSON.stringify({{query_id:queryId,inputs,status,error_message:errorMessage}})
+    }});
+    if (!response.ok) return;
+    const saved = await response.json();
+    runtimeState = saved.runtime_state || runtimeState;
+    dashboard.last_refreshed_at = saved.last_refreshed_at || dashboard.last_refreshed_at;
+  }} catch {{}}
+}}
+function updateRuntimeState(status, error=null, authRequired=false) {{
+  const now = new Date().toISOString();
+  runtimeState = {{
+    ...runtimeState,
+    status,
+    last_refresh_attempt:now,
+    error_message:error,
+    auth_required:authRequired,
+    ...(status === "success" ? {{last_successful_refresh:now}} : {{}})
+  }};
+  renderRuntimeStatus();
+}}
+async function loadDynamicFilter(filter, trigger="on_change") {{
+  const key = filter.key || filter.id;
+  const nodeId = filter.options_source?.node_id;
+  const queryId = runtimeQueryId(filter);
+  if (!nodeId || !queryId || !filterEnabled(filter)) return;
+  activeLoads.add(key);
+  setFieldMessage(key, "Loading live data…", "loading");
+  renderRuntimeStatus();
+  const inputs = runtimeInputs();
+  try {{
+    const result = await runRuntime(queryId, trigger, inputs);
+    const rows = nodeRows(result, nodeId);
+    dynamicOptions[key] = rowsToOptions(filter, rows);
+    renderFilters();
+    setFieldMessage(key, `${{dynamicOptions[key].length}} items loaded`, "");
+    updateRuntimeState("success");
+    await persistRuntimeState(queryId, inputs, "success");
+  }} catch (error) {{
+    dynamicOptions[key] = [];
+    renderFilters();
+    const message = `Failed to load ${{filter.label || filter.name || key}}: ${{error.message}}`;
+    setFieldMessage(key, message, "error", () => loadDynamicFilter(filter, trigger));
+    updateRuntimeState("error", message, error.status === 401);
+    if (error.status !== 401) await persistRuntimeState(queryId, inputs, "error", message);
+  }} finally {{
+    activeLoads.delete(key);
+    renderRuntimeStatus();
+  }}
+}}
+function directDependents(parentKey) {{
+  const parent = filterByKey(parentKey) || {{}};
+  const runNodes = new Set(parent.on_change?.run || []);
+  return filterSpecs().filter(filter =>
+    (filter.depends_on || []).includes(parentKey) || runNodes.has(filter.options_source?.node_id)
+  );
+}}
+function clearDescendants(parentKey, visited=new Set()) {{
+  if (visited.has(parentKey)) return;
+  visited.add(parentKey);
+  const parent = filterByKey(parentKey) || {{}};
+  const explicit = new Set(parent.on_change?.clear || []);
+  for (const filter of filterSpecs()) {{
+    const key = filter.key || filter.id;
+    if (!(explicit.has(key) || (filter.depends_on || []).includes(parentKey))) continue;
+    filterState[key] = "";
+    dynamicOptions[key] = [];
+    clearDescendants(key, visited);
+  }}
+}}
+async function handleFilterChange(key, value) {{
+  filterState[key] = value;
+  clearDescendants(key);
+  renderFilters();
+  renderControlActions();
+  for (const dependent of directDependents(key)) {{
+    if (filterEnabled(dependent)) await loadDynamicFilter(dependent, "on_change");
+  }}
+}}
+function dashboardActions() {{
+  const widgets = dashboard.config?.widgets || [];
+  return widgets.flatMap(widget => (widget.actions || []).map(action => ({{...action,widget_id:widget.id}})));
+}}
+function renderControlActions() {{
+  const box = document.getElementById("controlActions");
+  const actions = dashboardActions();
+  box.innerHTML = actions.map((action, index) => `<button type="button" data-dashboard-action="${{index}}">${{escapeHtml(action.label || action.id || "Apply")}}</button>`).join("");
+  box.querySelectorAll("[data-dashboard-action]").forEach(button => {{
+    button.addEventListener("click", () => applyDashboardAction(actions[Number(button.dataset.dashboardAction)], button));
+  }});
+}}
+function validateCurrentFilters() {{
+  for (const filter of filterSpecs()) {{
+    const key = filter.key || filter.id;
+    if (filter.required && filterVisible(filter) && isEmpty(filterState[key])) return `اختر ${{filter.label || filter.name || key}} أولًا.`;
+  }}
+  if (filterState.date_preset === "custom" && (isEmpty(filterState.since) || isEmpty(filterState.until))) return "حدد From وTo للتاريخ المخصص.";
+  return "";
+}}
+async function applyDashboardAction(action, button) {{
+  const validationError = validateCurrentFilters();
+  if (validationError) {{ updateRuntimeState("error", validationError); return; }}
+  const queryId = action.runtime_query || dashboard.config?.data_contract?.runtime_query;
+  const inputs = runtimeInputs(action);
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span><span>Refreshing…</span>';
+  try {{
+    await runRuntime(queryId, "manual", inputs);
+    updateRuntimeState("success");
+    await persistRuntimeState(queryId, inputs, "success");
+  }} catch (error) {{
+    const message = `Refresh failed: ${{error.message}}`;
+    updateRuntimeState("error", message, error.status === 401);
+    if (error.status !== 401) await persistRuntimeState(queryId, inputs, "error", message);
+  }} finally {{
+    button.disabled = false;
+    button.innerHTML = original;
+    renderRuntimeStatus();
+  }}
+}}
+function renderRuntimeStatus() {{
+  const box = document.getElementById("runtimeStatus");
+  const source = (dashboard.config?.data_sources || [])[0];
+  const status = activeLoads.size ? "Loading" : runtimeState.status === "success" ? "Connected" : runtimeState.auth_required ? "Authentication required" : runtimeState.status === "error" ? "Error" : "Not checked";
+  const lastSuccess = runtimeState.last_successful_refresh || dashboard.last_refreshed_at;
+  const login = runtimeState.auth_required ? '<a class="button secondary-button" href="/portal/client" target="_blank">تسجيل الدخول وربط المصدر</a>' : "";
+  box.innerHTML = `<div><strong>Data Source</strong>${{escapeHtml(source?.name || source?.source || "Backend")}}</div><div><strong>Connection Status</strong>${{escapeHtml(status)}}</div><div><strong>Last Successful Refresh</strong>${{escapeHtml(formatDateTime(lastSuccess) || "—")}}</div><div><strong>Last Refresh Attempt</strong>${{escapeHtml(formatDateTime(runtimeState.last_refresh_attempt) || "—")}}</div>${{runtimeState.error_message ? `<div class="runtime-error"><strong>Error</strong>${{escapeHtml(runtimeState.error_message)}}</div>` : ""}}${{login}}`;
+  const badge = document.getElementById("refreshBadge");
+  const failed = runtimeState.status === "error";
+  badge.className = `badge ${{failed ? "error" : activeLoads.size ? "warn" : runtimeState.status === "success" ? "ok" : "warn"}}`;
+  badge.innerHTML = `<i class="dot"></i><span>${{escapeHtml(status)}}</span>`;
+  document.getElementById("refreshMeta").textContent = lastSuccess ? `Last refresh: ${{formatDateTime(lastSuccess)}} Cairo time` : "No successful live refresh yet";
+}}
+async function initializeRuntime() {{
+  renderFilters();
+  renderControlActions();
+  renderRuntimeStatus();
+  const roots = filterSpecs().filter(filter => filter.options_source && !(filter.depends_on || []).length);
+  for (const filter of roots) await loadDynamicFilter(filter, "on_open");
 }}
 function tableHtml(widget, rows) {{
   rows = rowsFromData(rows);
@@ -644,17 +988,11 @@ function renderWidget(widget) {{
   return `<div class="panel widget-table"><h3>${{widget.title}}</h3>${{tableHtml(widget, data)}}</div>`;
 }}
 function renderWidgets() {{
-  const widgets = (dashboard.config && dashboard.config.widgets) || [];
+  const widgets = ((dashboard.config && dashboard.config.widgets) || []).filter(w => !["filter_bar", "connection_status"].includes(w.type));
   const kpis = widgets.filter(w => w.type === "kpi");
   const rest = widgets.filter(w => w.type !== "kpi");
   document.getElementById("widgets").innerHTML = `<section class="kpi-strip">${{kpis.map(renderWidget).join("")}}</section><section class="content-grid">${{rest.map(renderWidget).join("")}}</section>`;
-  const status = dashboard.refresh_status || {{}};
-  const badge = document.getElementById("refreshBadge");
-  const badgeText = status.stale ? "Needs refresh" : "Up to date";
-  badge.className = `badge ${{status.stale ? "warn" : "ok"}}`;
-  badge.innerHTML = `<i class="dot"></i><span>${{badgeText}}</span>`;
-  const formatted = formatDateTime(dashboard.last_refreshed_at);
-  document.getElementById("refreshMeta").textContent = formatted ? `Last refresh: ${{formatted}} Cairo time` : "No refresh time saved yet";
+  renderRuntimeStatus();
 }}
 async function loadDashboard(showFeedback=false) {{
   setRefreshLoading(true);
@@ -662,8 +1000,9 @@ async function loadDashboard(showFeedback=false) {{
     const res = await fetch(`/dynamic_dashboards/${{dashboard.dashboard_id}}/data`, {{ cache: "no-store" }});
     if (!res.ok) throw new Error(await res.text());
     dashboard = await res.json();
-    renderFilters();
+    runtimeState = {{...((dashboard.config || {{}}).runtime_state || runtimeState)}};
     renderWidgets();
+    await initializeRuntime();
   }} catch (error) {{
     const badge = document.getElementById("refreshBadge");
     badge.className = "badge error";
@@ -673,8 +1012,8 @@ async function loadDashboard(showFeedback=false) {{
     setRefreshLoading(false);
   }}
 }}
-renderFilters();
 renderWidgets();
+initializeRuntime();
 </script>
 </body>
 </html>"""
