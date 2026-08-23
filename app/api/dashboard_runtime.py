@@ -21,6 +21,29 @@ from app.core.oauth_store import get_app_token_data
 router = APIRouter(prefix="/api/dashboard-runtime/v2", tags=["universal-dashboard-runtime"])
 
 
+def _validate_published_section(body: DashboardSectionPublishRequest) -> None:
+    section_type = str(body.presentation.get("type") or "table").strip().casefold()
+    if section_type == "filters":
+        return
+    if not body.query_plan.output:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "A data section cannot be published without an explicit query output.",
+                "section_type": section_type,
+                "required": "Map the validated live-data result into query_plan.output before publishing.",
+            },
+        )
+    if section_type in {"funnel", "conversion_path"} and not body.presentation.get("stages"):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "A funnel cannot be published without an ordered stage presentation contract.",
+                "required": "Provide presentation.stages with ids, labels, source, count, cost, transition, and drop-off fields.",
+            },
+        )
+
+
 @router.post("/workflow", operation_id="universal_dashboard_runtime_workflow_v2")
 async def universal_dashboard_runtime_workflow(body: DashboardRuntimeWorkflowRequest, request: Request):
     """Single ChatGPT dispatcher: inspect, validate, preview, execute, or publish any dashboard section."""
@@ -120,6 +143,7 @@ async def execute_dashboard_query_plan(body: DashboardPlanPreviewRequest, reques
 @router.post("/sections/publish", operation_id="publish_confirmed_dashboard_section_v2")
 async def publish_confirmed_dashboard_section(body: DashboardSectionPublishRequest, request: Request):
     """Attach a confirmed query plan and presentation contract to a persistent dashboard."""
+    _validate_published_section(body)
     verify_confirmation_token(body.confirmation_token, body.query_plan)
     definition = journey_dashboard_v7._get_dashboard_definition(body.dashboard_id)
     if not definition:
