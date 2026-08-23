@@ -484,11 +484,9 @@ const charts = {{}};
 function api(url, options={{}}) {{ return fetch(url, options).then(async r => {{ if(!r.ok) throw new Error(await r.text()); return r.json(); }}); }}
 function filterValue(key) {{ const el = document.getElementById("filter_" + key); return el ? el.value : "all"; }}
 function effectiveFilters() {{
-  const configured = definition.filters || [];
-  if(configured.length) return configured;
-  const hasRuntimeFilters = (definition.widgets || []).some(widget => widget.type === "filters" || widget.id === "global_filters" || widget.data_query === "global_filters");
-  if(!hasRuntimeFilters) return [];
-  return [
+  const byKey = new Map((definition.filters || []).filter(item => item && item.key).map(item => [item.key, item]));
+  byKey.delete("date_range");
+  const required = [
     {{key:"date_from", label:"Start date", type:"date"}},
     {{key:"date_to", label:"End date", type:"date"}},
     {{key:"account_id", label:"Ad account", type:"select"}},
@@ -496,6 +494,9 @@ function effectiveFilters() {{
     {{key:"adset_id", label:"Ad Set", type:"select"}},
     {{key:"ad_id", label:"Ad", type:"select"}}
   ];
+  const ordered = required.map(item => byKey.get(item.key) || item);
+  const standard = new Set(required.map(item => item.key));
+  return [...ordered, ...[...byKey.values()].filter(item => !standard.has(item.key))];
 }}
 function filters() {{
   const out = {{}};
