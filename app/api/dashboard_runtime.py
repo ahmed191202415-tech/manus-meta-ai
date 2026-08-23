@@ -127,6 +127,17 @@ async def publish_confirmed_dashboard_section(body: DashboardSectionPublishReque
     tenant_id = _require_dashboard_owner(request, body.dashboard_id, definition)
     updated = dict(definition)
     updated["tenant_id"] = tenant_id
+    published_filters = body.presentation.get("filters")
+    if isinstance(published_filters, list):
+        existing_filters = {
+            str(item.get("key") or ""): item
+            for item in (updated.get("filters") or [])
+            if isinstance(item, dict) and item.get("key")
+        }
+        for item in published_filters:
+            if isinstance(item, dict) and item.get("key"):
+                existing_filters[str(item["key"])] = item
+        updated["filters"] = list(existing_filters.values())
     runtime_queries = dict(updated.get("runtime_queries") or {})
     runtime_queries[body.section_id] = body.query_plan.model_dump()
     updated["runtime_queries"] = runtime_queries
