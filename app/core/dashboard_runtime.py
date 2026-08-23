@@ -15,7 +15,7 @@ from app.config import SESSION_SECRET
 from app.core.auth import resolve_access_token
 from app.core.clarity_client import run_clarity_live_insights_with_fallbacks
 from app.core.dashboard_plan import connector_catalog, lookup, resolve_templates, validate_plan
-from app.core.dashboard_transforms import build_options, flatten_numeric_results, safe_formula, select_value
+from app.core.dashboard_transforms import build_funnel, build_options, flatten_numeric_results, safe_formula, select_value
 from app.core.ga4_client import list_ga4_properties, run_ga4_funnel_report, run_ga4_report
 from app.core.meta_client import meta_call, normalize_account_id
 from app.schemas.dashboard_runtime_requests import DashboardQueryNode, DashboardQueryPlan
@@ -256,13 +256,34 @@ def _execute_transform(operation: str, params: dict, results: dict) -> Any:
         return select_value(params, results)
     if operation == "options":
         return build_options(params, results)
+    if operation == "funnel":
+        return build_funnel(params, results)
     return safe_formula(str(params.get("expression") or ""), flatten_numeric_results(results))
+
+
+def preview_evidence(preview: dict) -> dict:
+    data = preview.get("data")
+    stages = data.get("stages") if isinstance(data, dict) else None
+    failed_nodes = [
+        item.get("node_id")
+        for item in (preview.get("node_status") or [])
+        if item.get("status") in {"failed", "blocked_by_dependency", "waiting_for_input"}
+    ]
+    return {
+        "execution_status": preview.get("status"),
+        "has_data": data not in (None, {}, []),
+        "data_keys": sorted(data) if isinstance(data, dict) else [],
+        "stage_count": len(stages) if isinstance(stages, list) else 0,
+        "complete": data.get("complete") if isinstance(data, dict) else None,
+        "failed_nodes": failed_nodes,
+    }
 
 
 def create_confirmation_token(plan: DashboardQueryPlan, preview: dict, ttl_seconds: int = 1800) -> str:
     payload = {
         "plan_hash": _plan_hash(plan),
         "preview_hash": hashlib.sha256(json.dumps(preview.get("data"), sort_keys=True, default=str).encode()).hexdigest(),
+        "preview_evidence": preview_evidence(preview),
         "exp": int(time.time()) + ttl_seconds,
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()

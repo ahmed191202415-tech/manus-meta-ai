@@ -450,6 +450,21 @@ button.secondary {{ background:#475467; }}
 button:disabled {{ opacity:.65; cursor:wait; }}
 .value {{ font-size:28px; font-weight:800; margin-top:8px; }}
 .chart {{ width:100%; height:330px; }}
+.funnel-flow {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; align-items:stretch; }}
+.funnel-stage {{ position:relative; min-height:210px; border:1px solid #dbe4f0; border-top:4px solid var(--blue); border-radius:12px; padding:15px; background:linear-gradient(180deg,#fff,#f8fafc); }}
+.funnel-stage.missing {{ border-top-color:var(--amber); background:#fffbeb; }}
+.funnel-stage::after {{ content:"→"; position:absolute; right:-13px; top:45%; width:24px; height:24px; display:grid; place-items:center; border-radius:50%; background:#e8eef8; color:#475467; font-weight:800; z-index:2; }}
+.funnel-stage:last-child::after {{ display:none; }}
+.stage-head {{ display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }}
+.stage-name {{ font-weight:800; line-height:1.25; }}
+.source-badge {{ border-radius:999px; padding:4px 8px; font-size:11px; background:#eef4ff; color:#1d4ed8; white-space:nowrap; }}
+.stage-number {{ font-size:30px; font-weight:900; margin:18px 0 12px; letter-spacing:-.02em; }}
+.stage-metrics {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; font-size:12px; }}
+.stage-metric {{ background:#f1f5f9; border-radius:8px; padding:8px; }}
+.stage-metric b {{ display:block; color:#344054; margin-top:3px; font-size:13px; }}
+.stage-details {{ margin-top:10px; padding-top:9px; border-top:1px dashed #cbd5e1; font-size:12px; color:#475467; }}
+.section-state {{ margin:0 0 14px; padding:10px 12px; border-radius:9px; background:#f8fafc; color:#475467; border:1px solid #e2e8f0; }}
+.section-state.error {{ background:#fff1f2; color:#b42318; border-color:#fecdd3; }}
 .table-wrap {{ overflow-x:auto; border:1px solid #edf0f5; border-radius:10px; }}
 table {{ width:100%; min-width:720px; border-collapse:collapse; font-size:14px; }}
 th,td {{ border-bottom:1px solid #edf0f5; padding:10px; text-align:left; vertical-align:top; overflow-wrap:anywhere; }}
@@ -597,7 +612,10 @@ function stageRows(result=latestData) {{
 function widgetRows(widget) {{
   const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
   const payload = resultPayload(result);
-  if(widget.stages) return stageRows(result).filter(s => widget.stages.includes(s.id));
+  if(widget.stages) {{
+    const stageIds = widget.stages.map(stage => typeof stage === "string" ? stage : stage?.id).filter(Boolean);
+    return stageRows(result).filter(s => stageIds.includes(s.id));
+  }}
   if(widget.source && Array.isArray(payload?.[widget.source])) return payload[widget.source];
   if(widget.source === "stages" || widget.data_query === "journey_funnel" || widget.type === "funnel") return stageRows(result);
   if(Array.isArray(payload)) return payload;
@@ -618,6 +636,52 @@ function tableHtml(rows, widget={{}}) {{
   const cols = Object.keys(rows[0] || {{}}).filter(c => !["metric_source","warnings"].includes(c));
   return `<div class="table-wrap"><table><thead><tr>${{cols.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{cols.map(c=>`<td>${{typeof r[c] === "object" ? JSON.stringify(r[c]) : (r[c] ?? "")}}</td>`).join("")}}</tr>`).join("")}}</tbody></table></div>`;
 }}
+function formatNumber(value) {{
+  if(value === null || value === undefined || value === "") return "—";
+  const number = Number(value); return Number.isFinite(number) ? number.toLocaleString(undefined,{{maximumFractionDigits:2}}) : String(value);
+}}
+function formatMoney(value) {{ return value === null || value === undefined ? "—" : formatNumber(value); }}
+function formatRate(value) {{
+  if(value === null || value === undefined || value === "") return "—";
+  const number = Number(value); return Number.isFinite(number) ? `${{(number * 100).toFixed(1)}}%` : String(value);
+}}
+function funnelContract(widget) {{
+  const configured = Array.isArray(widget.stages) ? widget.stages : [];
+  return configured.map(stage => {{
+    if(typeof stage === "object") return stage;
+    return (definition.stages || []).find(item => item.id === stage) || {{id:stage,label:stage,source:""}};
+  }});
+}}
+function funnelHtml(widget, rows) {{
+  const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
+  const contract = funnelContract(widget);
+  const ordered = contract.length
+    ? contract.map(stage => ({{...stage,...(rows.find(row => row.id === stage.id) || {{}})}}))
+    : rows;
+  const queryError = result?.error;
+  const waiting = (result?.node_status || []).find(item => item.status === "waiting_for_input");
+  let state = "";
+  if(queryError) state = `<div class="section-state error">Live data error: ${{queryError}}</div>`;
+  else if(waiting) state = `<div class="section-state">Select: ${{(waiting.missing_inputs || []).join(", ")}}. The funnel structure will remain visible until live data is ready.</div>`;
+  else if(!rows.length) state = `<div class="section-state">${{emptyStateMessage(widget)}}</div>`;
+  const cards = ordered.map(stage => {{
+    const missing = stage.source_status === "missing" || stage.numeric_value === null || stage.numeric_value === undefined;
+    const details = (stage.details || []).map(item => `${{item.label || item.id}}: <b>${{formatNumber(item.value)}}</b>`).join(" · ");
+    return `<article class="funnel-stage ${{missing ? "missing" : ""}}">
+      <div class="stage-head"><div class="stage-name">${{stage.label || stage.id}}</div><span class="source-badge">${{stage.source || "source pending"}}</span></div>
+      <div class="stage-number">${{formatNumber(stage.numeric_value ?? stage.value)}}</div>
+      <div class="stage-metrics">
+        <div class="stage-metric">Cost / stage<b>${{formatMoney(stage.cost)}}</b></div>
+        <div class="stage-metric">Conversion<b>${{formatRate(stage.transition_rate)}}</b></div>
+        <div class="stage-metric">Drop-off<b>${{formatRate(stage.drop_rate)}}</b></div>
+        ${{stage.revenue !== null && stage.revenue !== undefined ? `<div class="stage-metric">Revenue<b>${{formatMoney(stage.revenue)}}</b></div>` : ""}}
+        ${{stage.roas !== null && stage.roas !== undefined ? `<div class="stage-metric">ROAS<b>${{formatNumber(stage.roas)}}x</b></div>` : ""}}
+      </div>
+      ${{details ? `<div class="stage-details">${{details}}</div>` : ""}}
+    </article>`;
+  }}).join("");
+  return `${{state}}<div class="funnel-flow">${{cards}}</div>`;
+}}
 function renderWidget(widget) {{
   const rows = widgetRows(widget);
   const type = widget.type || "table";
@@ -627,7 +691,10 @@ function renderWidget(widget) {{
     const stage = rows.find(s => s.id === widget.stage || s.id === widget.metric || s.id === widget.metric_id) || rows[0] || {{}};
     return `<div class="panel ${{spanClass(widget)}}"><div class="muted">${{title}}</div><div class="value">${{stage.value ?? stage.numeric_value ?? "-"}}</div><div class="src">${{stage.source || ""}}</div></div>`;
   }}
-  if(["conversion_path","funnel","bar","line"].includes(type)) {{
+  if(["conversion_path","funnel"].includes(type)) {{
+    return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3>${{funnelHtml(widget, rows)}}</div>`;
+  }}
+  if(["bar","line"].includes(type)) {{
     if(!rows.length) return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div class="empty">${{emptyStateMessage(widget)}}</div></div>`;
     return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div id="chart_${{widget.id}}" class="chart"></div></div>`;
   }}
@@ -636,7 +703,7 @@ function renderWidget(widget) {{
 }}
 function drawCharts() {{
   (definition.widgets || []).forEach(widget => {{
-    if(!["conversion_path","funnel","bar","line"].includes(widget.type)) return;
+    if(!["bar","line"].includes(widget.type)) return;
     const el = document.getElementById("chart_" + widget.id); if(!el) return;
     const chart = charts[widget.id] || echarts.init(el); charts[widget.id] = chart;
     const rows = widgetRows(widget);
@@ -899,7 +966,7 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
         "connector_errors": [],
         "connector_status": {"meta": "not_attempted", "ga4": "not_attempted", "clarity": "not_attempted"},
         "filters_sent": filters,
-        "mode": "fallback_data",
+        "mode": "live_data_required",
     }
     token = None
     try:
@@ -912,7 +979,7 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
         if optional_payload:
             debug["mode"] = "mixed_live_data"
             return build_mixed_funnel(optional_payload, filters, debug=debug, definition=definition)
-        return build_mixed_funnel(None, filters, debug=debug, definition=definition)
+        return _unavailable_live_funnel(filters, definition, debug)
 
     try:
         meta_payload, meta_debug = _fetch_live_meta_funnel(filters, definition, token)
@@ -931,7 +998,28 @@ async def _live_or_fallback_funnel(request: Request, filters: dict, definition: 
     if optional_payload:
         debug["mode"] = "mixed_live_data"
         return build_mixed_funnel(optional_payload, filters, debug=debug, definition=definition)
-    return build_mixed_funnel(None, filters, debug=debug, definition=definition)
+    return _unavailable_live_funnel(filters, definition, debug)
+
+
+def _unavailable_live_funnel(filters: dict, definition: dict, debug: dict) -> dict:
+    """Return an explicit source error; never substitute demonstration metrics."""
+    return {
+        "dashboard_id": definition.get("dashboard_id"),
+        "query_id": "journey_funnel",
+        "status": "source_error",
+        "complete": False,
+        "filters": filters,
+        "stages": [],
+        "data": {"stages": [], "complete": False},
+        "warnings": [],
+        "errors": debug.get("connector_errors") or [],
+        "connector_status": debug.get("connector_status") or {},
+        "debug": {
+            **debug,
+            "mode": "live_data_unavailable",
+            "message": "No demonstration or fallback metrics were used. Connect and validate the required live sources.",
+        },
+    }
 
 
 def _optional_sources_payload(filters: dict, definition: dict, request: Request, debug: dict) -> dict | None:

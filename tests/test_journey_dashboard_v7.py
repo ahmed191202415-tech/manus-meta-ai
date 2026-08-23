@@ -176,14 +176,15 @@ def test_code_dashboard_schema_exposes_full_code_fields():
         assert key in properties
 
 
-def test_journey_funnel_returns_business_rule_stages():
+def test_journey_funnel_never_returns_demonstration_metrics_without_live_sources():
     response = client.get("/api/journey/funnel?campaign_id=all")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["stages"][0]["id"] == "unique_ctr"
-    assert any(stage["id"] == "register_page" and stage["source"] == "meta_event" for stage in data["stages"])
-    assert data["debug"]["query_plan"]["calls"]
+    assert data["status"] == "source_error"
+    assert data["complete"] is False
+    assert data["stages"] == []
+    assert data["debug"]["mode"] == "live_data_unavailable"
 
 
 def test_stage_detail_register_page_uses_meta_event_not_lead():
@@ -194,14 +195,15 @@ def test_stage_detail_register_page_uses_meta_event_not_lead():
     assert detail["metrics"][0]["source"] == "meta"
 
 
-def test_dashboard_runtime_query_supports_journey_funnel():
+def test_dashboard_runtime_query_requires_live_journey_sources():
     response = client.post(
         "/api/dashboard-runtime/query",
         json={"dashboard_id": "customer_journey", "query_id": "journey_funnel", "filters": {"campaign_id": "all"}},
     )
 
     assert response.status_code == 200
-    assert response.json()["stages"]
+    assert response.json()["status"] == "source_error"
+    assert response.json()["stages"] == []
 
 
 def test_dashboard_runtime_query_uses_live_meta_when_available(monkeypatch):

@@ -21,6 +21,18 @@ from app.core.oauth_store import get_app_token_data
 router = APIRouter(prefix="/api/dashboard-runtime/v2", tags=["universal-dashboard-runtime"])
 
 
+def _contains_invalid_event_binding(value) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).casefold() == "event_name" and str(item or "").strip().casefold() == "sign_up_ref":
+                return True
+            if _contains_invalid_event_binding(item):
+                return True
+    if isinstance(value, list):
+        return any(_contains_invalid_event_binding(item) for item in value)
+    return False
+
+
 def _validate_published_section(body: DashboardSectionPublishRequest) -> None:
     section_type = str(body.presentation.get("type") or "table").strip().casefold()
     if section_type == "filters":
@@ -34,13 +46,64 @@ def _validate_published_section(body: DashboardSectionPublishRequest) -> None:
                 "required": "Map the validated live-data result into query_plan.output before publishing.",
             },
         )
-    if section_type in {"funnel", "conversion_path"} and not body.presentation.get("stages"):
+    if section_type in {"funnel", "conversion_path"}:
+        output = body.query_plan.output
+        if "stages" not in output or "complete" not in output:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "A funnel output must expose both stages and completion status.",
+                    "required": "Map live output to query_plan.output.stages and query_plan.output.complete.",
+                },
+            )
+        stages = body.presentation.get("stages")
+        if not isinstance(stages, list) or len(stages) < 2:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "A funnel cannot be published without at least two ordered stage definitions.",
+                    "required": "Each presentation stage requires id, label, and source.",
+                },
+            )
+        stage_ids = []
+        for position, stage in enumerate(stages, start=1):
+            if not isinstance(stage, dict):
+                raise HTTPException(status_code=422, detail=f"Funnel presentation stage {position} must be an object.")
+            missing = [key for key in ("id", "label", "source") if not stage.get(key)]
+            if missing:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"message": f"Funnel presentation stage {position} is incomplete.", "missing": missing},
+                )
+            stage_ids.append(stage["id"])
+        if len(stage_ids) != len(set(stage_ids)):
+            raise HTTPException(status_code=422, detail="Funnel presentation stage IDs must be unique.")
+        if _contains_invalid_event_binding(body.query_plan.model_dump()):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "sign_up_ref is an attribution dimension, not a funnel event.",
+                    "required": "Use sign_up_ref only as a GA4 dimension or attribution breakdown.",
+                },
+            )
+
+
+def _validate_preview_evidence(section_type: str, token_payload: dict) -> None:
+    evidence = token_payload.get("preview_evidence") or {}
+    if section_type in {"funnel", "conversion_path"}:
+        if evidence.get("stage_count", 0) < 2 or evidence.get("complete") is not True:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "The confirmed live preview did not contain a complete funnel.",
+                    "preview_evidence": evidence,
+                    "required": "Resolve missing source mappings, preview again, then ask for confirmation.",
+                },
+            )
+    elif section_type != "filters" and not evidence.get("has_data"):
         raise HTTPException(
-            status_code=422,
-            detail={
-                "message": "A funnel cannot be published without an ordered stage presentation contract.",
-                "required": "Provide presentation.stages with ids, labels, source, count, cost, transition, and drop-off fields.",
-            },
+            status_code=409,
+            detail={"message": "The confirmed preview contained no publishable data.", "preview_evidence": evidence},
         )
 
 
@@ -144,7 +207,8 @@ async def execute_dashboard_query_plan(body: DashboardPlanPreviewRequest, reques
 async def publish_confirmed_dashboard_section(body: DashboardSectionPublishRequest, request: Request):
     """Attach a confirmed query plan and presentation contract to a persistent dashboard."""
     _validate_published_section(body)
-    verify_confirmation_token(body.confirmation_token, body.query_plan)
+    token_payload = verify_confirmation_token(body.confirmation_token, body.query_plan)
+    _validate_preview_evidence(str(body.presentation.get("type") or "table").strip().casefold(), token_payload)
     definition = journey_dashboard_v7._get_dashboard_definition(body.dashboard_id)
     if not definition:
         raise HTTPException(status_code=404, detail="Dashboard definition was not found.")

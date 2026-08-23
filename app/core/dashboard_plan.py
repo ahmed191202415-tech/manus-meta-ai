@@ -28,6 +28,10 @@ CONNECTOR_OPERATIONS = {
         "select": {"required": ["from", "path"], "description": "Select a nested value from a previous node."},
         "formula": {"required": ["expression"], "description": "Calculate a numeric expression from prior results."},
         "options": {"required": ["from"], "description": "Convert rows into label/value dropdown options."},
+        "funnel": {
+            "required": ["stages"],
+            "description": "Build an ordered live-data funnel with source, cost, transition, drop-off, revenue, and ROAS fields.",
+        },
     },
 }
 
@@ -48,6 +52,23 @@ def connector_catalog() -> dict:
         ],
         "template_syntax": "{{inputs.key}} or {{nodes.node_id.path}}",
         "workflow": ["validate", "preview", "user_confirmation", "publish"],
+        "output_contracts": {
+            "funnel": {
+                "required_plan_output": ["stages", "complete", "status"],
+                "required_presentation_stage_fields": ["id", "label", "source"],
+                "runtime_stage_fields": [
+                    "numeric_value",
+                    "cost",
+                    "transition_rate",
+                    "drop_rate",
+                    "revenue",
+                    "roas",
+                    "source_status",
+                    "details",
+                ],
+                "publish_rule": "A signed live preview must contain at least two stages and complete=true.",
+            }
+        },
     }
 
 
@@ -104,6 +125,26 @@ def validate_plan(plan: DashboardQueryPlan) -> dict:
             path = str(node.params.get("path") or "")
             if path.startswith(("http://", "https://")):
                 errors.append({"node_id": node.id, "message": "Meta graph_read accepts Graph paths only."})
+        if node.connector == "transform" and node.operation == "funnel":
+            stages = node.params.get("stages") or []
+            if not isinstance(stages, list) or len(stages) < 2:
+                errors.append({"node_id": node.id, "message": "A funnel transform requires at least two ordered stages."})
+                continue
+            stage_ids = []
+            for position, stage in enumerate(stages, start=1):
+                if not isinstance(stage, dict):
+                    errors.append({"node_id": node.id, "message": f"Funnel stage {position} must be an object."})
+                    continue
+                missing_stage_fields = [key for key in ("id", "label", "source", "value") if not stage.get(key)]
+                if missing_stage_fields:
+                    errors.append({
+                        "node_id": node.id,
+                        "message": f"Funnel stage {position} is incomplete.",
+                        "missing": missing_stage_fields,
+                    })
+                stage_ids.append(stage.get("id"))
+            if len(stage_ids) != len(set(stage_ids)):
+                errors.append({"node_id": node.id, "message": "Funnel stage IDs must be unique."})
     output_references = _referenced_nodes(plan.output)
     unknown_output_references = sorted(output_references - node_ids)
     if unknown_output_references:
@@ -154,4 +195,3 @@ def resolve_templates(value: Any, context: dict) -> Any:
         replacement = "" if resolved is None else str(resolved)
         rendered = rendered[:start] + replacement + rendered[end + 2:]
     return rendered
-

@@ -54,6 +54,27 @@ The same model supports filters, KPIs, funnels, charts, tables, comparisons, and
 
 The runtime never executes generated Python, JavaScript, shell commands, or arbitrary network URLs. ChatGPT composes only registered operations.
 
+## Funnel data contract
+
+Funnels use the generic `transform.funnel` operation; they do not require a new HTTP endpoint for each dashboard request. Each stage declares a live metric reference and its real source. The transform returns a standard contract containing:
+
+- `numeric_value` and `source_status` for the stage count.
+- `cost`, `transition_rate`, and `drop_rate` calculated from the live preview.
+- Optional `revenue` and `roas` for revenue stages.
+- Optional `details` for supporting engagement signals such as time and scroll.
+- `complete=false` plus `missing_sources` when an event or metric has not been mapped.
+
+A funnel publication is rejected unless all of the following are true:
+
+1. The plan output explicitly maps `stages`, `complete`, and `status`.
+2. The presentation contains at least two ordered stage definitions with `id`, `label`, and `source`.
+3. The signed live preview contains the stage rows and reports `complete=true`.
+4. The confirmed plan is identical to the previewed plan.
+
+`sign_up_ref` is an attribution dimension, not an event or a funnel stage. It may be requested as a GA4 dimension or breakdown, but the publication validator rejects it when bound to `event_name`.
+
+The Customer Journey section should be mapped only after event discovery and live preview. Its intended business sequence is external link clicks, landing arrival, landing engagement (with time/scroll as details), Register Page, OTP, Complete Profile, and Purchase. Purchase may expose revenue and ROAS when the connected source returns them. No demonstration metrics are allowed in a published section.
+
 ## Live execution
 
 Published plans are stored under the dashboard's `runtime_queries`. Existing dashboard pages can execute them through either:

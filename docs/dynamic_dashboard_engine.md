@@ -6,7 +6,7 @@ This project now supports two dashboard modes:
    Tenant-owned saved dashboard links with a flexible manifest, widgets, snapshots, and refresh planning.
 
 2. `journey-dashboard/v7`
-   A standalone Customer Journey dashboard runtime with dedicated APIs, chart rendering, stage inspector, trend studio, comparison lab, and fallback data.
+   A standalone Customer Journey dashboard runtime with dedicated APIs, chart rendering, stage inspector, trend studio, and comparison lab. Runtime responses use connected live sources only.
 
 ## Add a Dashboard Definition
 
@@ -76,4 +76,4 @@ Important business rules:
 - `POST /api/journey/comparison`
 - `GET /api/dashboard-runtime/connectors`
 
-The current runtime includes fallback data so dashboards never render as blank while live connectors are being configured.
+The runtime never substitutes demonstration values for missing connector data. If a required live source or event mapping is unavailable, it returns an explicit source error and an incomplete contract; the renderer keeps the section structure visible with the error state.

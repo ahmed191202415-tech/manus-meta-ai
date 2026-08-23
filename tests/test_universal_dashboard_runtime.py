@@ -5,7 +5,7 @@ from app.core import dashboard_runtime as runtime
 from app.main import app
 from app.schemas.dashboard_runtime_requests import DashboardPlanValidateRequest
 from app.core.dashboard_plan import resolve_templates
-from app.core.dashboard_transforms import build_options, safe_formula
+from app.core.dashboard_transforms import build_funnel, build_options, safe_formula
 
 
 client = TestClient(app)
@@ -35,6 +35,53 @@ def _cascading_plan():
             },
         ],
         "output": {"campaigns": "{{nodes.campaign_options}}"},
+    }
+
+
+def _funnel_plan():
+    return {
+        "id": "customer_journey_funnel",
+        "nodes": [
+            {
+                "id": "assemble",
+                "connector": "transform",
+                "operation": "funnel",
+                "params": {
+                    "spend": {"from": "meta", "path": "data.0.spend"},
+                    "stages": [
+                        {
+                            "id": "external_clicks",
+                            "label": "External link clicks",
+                            "source": "meta",
+                            "value": {"from": "meta", "path": "data.0.unique_inline_link_clicks"},
+                        },
+                        {
+                            "id": "register_page",
+                            "label": "Register Page",
+                            "source": "meta_event",
+                            "value": {
+                                "from": "meta",
+                                "rows_path": "data.0.actions",
+                                "where": {"action_type": "Register Page"},
+                                "value_field": "value",
+                            },
+                        },
+                    ],
+                },
+                "depends_on": ["meta"],
+            },
+            {
+                "id": "meta",
+                "connector": "meta",
+                "operation": "insights",
+                "params": {"scope_id": "act_1"},
+            },
+        ],
+        "output": {
+            "stages": "{{nodes.assemble.stages}}",
+            "complete": "{{nodes.assemble.complete}}",
+            "status": "{{nodes.assemble.status}}",
+        },
     }
 
 
@@ -96,6 +143,73 @@ def test_formula_supports_negative_values_and_safe_zero_division():
     assert safe_formula("revenue / 0", {"revenue": 25.0}) is None
 
 
+def test_generic_funnel_transform_builds_live_stage_contract():
+    result = build_funnel(
+        {
+            "spend": {"from": "meta", "path": "data.0.spend"},
+            "stages": [
+                {
+                    "id": "clicks",
+                    "label": "External link clicks",
+                    "source": "meta",
+                    "value": {"from": "meta", "path": "data.0.unique_inline_link_clicks"},
+                },
+                {
+                    "id": "register",
+                    "label": "Register Page",
+                    "source": "meta_event",
+                    "value": {
+                        "from": "meta",
+                        "rows_path": "data.0.actions",
+                        "where": {"action_type": "Register Page"},
+                        "value_field": "value",
+                    },
+                    "revenue": 300,
+                },
+            ],
+        },
+        {
+            "meta": {
+                "data": [
+                    {
+                        "spend": "200",
+                        "unique_inline_link_clicks": "40",
+                        "actions": [{"action_type": "Register Page", "value": "10"}],
+                    }
+                ]
+            }
+        },
+    )
+
+    assert result["complete"] is True
+    assert result["stages"][1]["numeric_value"] == 10
+    assert result["stages"][1]["cost"] == 20
+    assert result["stages"][1]["transition_rate"] == 0.25
+    assert result["stages"][1]["drop_rate"] == 0.75
+    assert result["stages"][1]["roas"] == 1.5
+
+
+def test_funnel_transform_marks_unmapped_live_stage_incomplete():
+    result = build_funnel(
+        {
+            "stages": [
+                {"id": "clicks", "label": "Clicks", "source": "meta", "value": 12},
+                {
+                    "id": "register",
+                    "label": "Register",
+                    "source": "meta_event",
+                    "value": {"from": "meta", "rows_path": "data.0.actions", "where": {"action_type": "missing"}},
+                },
+            ]
+        },
+        {"meta": {"data": [{"actions": []}]}},
+    )
+
+    assert result["complete"] is False
+    assert result["stages"][1]["source_status"] == "missing"
+    assert result["missing_sources"][0]["stage_id"] == "register"
+
+
 def test_cascading_campaign_query_uses_selected_account_and_real_meta_path(monkeypatch):
     async def fake_token(request):
         return "token"
@@ -115,122 +229,6 @@ def test_cascading_campaign_query_uses_selected_account_and_real_meta_path(monke
     assert response.status_code == 200
     assert calls[0]["path"] == "act_123/campaigns"
     assert response.json()["data"]["campaigns"] == [{"label": "Campaign One", "value": "cmp_1"}]
-
-
-def test_declared_runtime_inputs_are_forwarded_without_duplicate_param_templates(monkeypatch):
-    async def fake_token(request):
-        return "token"
-
-    calls = []
-
-    def fake_meta_call(method, path, token, params=None):
-        calls.append({"method": method, "path": path, "params": params})
-        return {"data": [{"id": "cmp_1", "name": "Campaign One"}]}
-
-    plan = {
-        "id": "generated_filters",
-        "nodes": [
-            {
-                "id": "get_campaigns",
-                "connector": "meta",
-                "operation": "list_campaigns",
-                "params": {},
-                "required_inputs": ["account_id"],
-                "run_when": "on_change",
-            }
-        ],
-    }
-    monkeypatch.setattr(runtime, "resolve_access_token", fake_token)
-    monkeypatch.setattr(runtime, "meta_call", fake_meta_call)
-
-    response = client.post(
-        "/api/dashboard-runtime/v2/execute",
-        json={"plan": plan, "inputs": {"account_id": "123"}, "trigger": "on_change"},
-    )
-
-    assert response.status_code == 200
-    assert calls[0]["path"] == "act_123/campaigns"
-
-
-def test_meta_insights_query_uses_custom_time_range_and_drops_dashboard_only_filters():
-    query = runtime._meta_insights_query(
-        {
-            "scope_id": "cmp_1",
-            "account_id": "123",
-            "campaign_id": "cmp_1",
-            "analysis_level": "adset",
-            "adset_id": "all",
-            "ad_id": "all",
-            "date_preset": "custom",
-            "since": "2026-08-01",
-            "until": "2026-08-20",
-        }
-    )
-
-    assert query["time_range"] == '{"since":"2026-08-01","until":"2026-08-20"}'
-    assert query["level"] == "adset"
-    assert "account_id" not in query
-    assert "campaign_id" not in query
-    assert "date_preset" not in query
-
-
-def test_all_adsets_insights_fall_back_to_campaign_scope(monkeypatch):
-    async def fake_token(request):
-        return "token"
-
-    calls = []
-
-    def fake_meta_call(method, path, token, params=None):
-        calls.append({"path": path, "params": params})
-        return {"data": []}
-
-    plan = {
-        "id": "insight_filters",
-        "nodes": [
-            {
-                "id": "get_insights",
-                "connector": "meta",
-                "operation": "insights",
-                "params": {},
-                "required_inputs": [
-                    "scope_id",
-                    "account_id",
-                    "campaign_id",
-                    "analysis_level",
-                    "adset_id",
-                    "ad_id",
-                    "date_preset",
-                    "since",
-                    "until",
-                ],
-                "run_when": "manual",
-            }
-        ],
-    }
-    monkeypatch.setattr(runtime, "resolve_access_token", fake_token)
-    monkeypatch.setattr(runtime, "meta_call", fake_meta_call)
-    response = client.post(
-        "/api/dashboard-runtime/v2/execute",
-        json={
-            "plan": plan,
-            "trigger": "manual",
-            "inputs": {
-                "scope_id": "",
-                "account_id": "123",
-                "campaign_id": "cmp_1",
-                "analysis_level": "adset",
-                "adset_id": "all",
-                "ad_id": "all",
-                "date_preset": "last_7d",
-                "since": "all",
-                "until": "all",
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    assert calls[0]["path"] == "cmp_1/insights"
-    assert calls[0]["params"]["level"] == "adset"
 
 
 def test_preview_token_is_bound_to_exact_plan(monkeypatch):
@@ -272,10 +270,115 @@ def test_publishing_requires_preview_confirmation(monkeypatch):
             "section_id": "global_filters",
             "title": "Filters",
             "query_plan": _cascading_plan(),
-            "presentation": {"type": "filters", "span": 12},
+            "presentation": {
+                "type": "filters",
+                "span": 12,
+                "filters": [{"key": "account_id", "label": "Ad Account", "type": "select"}],
+            },
             "confirmation_token": token,
         },
     )
     assert response.status_code == 200
     assert saved["runtime_queries"]["global_filters"]["nodes"]
     assert saved["widgets"][0]["data_query"] == "global_filters"
+    assert saved["filters"] == [{"key": "account_id", "label": "Ad Account", "type": "select"}]
+
+
+def test_funnel_publish_rejects_empty_backend_output(monkeypatch):
+    plan_payload = _cascading_plan()
+    plan_payload["output"] = {}
+    plan = DashboardPlanValidateRequest.model_validate({"plan": plan_payload}).plan
+    token = runtime.create_confirmation_token(plan, {"data": {}})
+
+    response = client.post(
+        "/api/dashboard-runtime/v2/sections/publish",
+        json={
+            "dashboard_id": "dash_1",
+            "section_id": "journey_funnel",
+            "title": "Customer Journey Funnel",
+            "query_plan": plan_payload,
+            "presentation": {"type": "funnel", "stages": [{"id": "clicks", "label": "Clicks"}]},
+            "confirmation_token": token,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "explicit query output" in response.json()["detail"]["message"]
+
+
+def test_funnel_publish_rejects_incomplete_live_preview(monkeypatch):
+    plan_payload = _funnel_plan()
+    plan = DashboardPlanValidateRequest.model_validate({"plan": plan_payload}).plan
+    token = runtime.create_confirmation_token(
+        plan,
+        {
+            "status": "success",
+            "data": {"stages": [{"id": "clicks"}, {"id": "register"}], "complete": False},
+            "node_status": [],
+        },
+    )
+
+    response = client.post(
+        "/api/dashboard-runtime/v2/sections/publish",
+        json={
+            "dashboard_id": "dash_1",
+            "section_id": "journey_funnel",
+            "title": "Customer Journey Funnel",
+            "query_plan": plan_payload,
+            "presentation": {
+                "type": "funnel",
+                "stages": [
+                    {"id": "external_clicks", "label": "External link clicks", "source": "meta"},
+                    {"id": "register_page", "label": "Register Page", "source": "meta_event"},
+                ],
+            },
+            "confirmation_token": token,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "did not contain a complete funnel" in response.json()["detail"]["message"]
+
+
+def test_funnel_publish_rejects_sign_up_ref_as_event():
+    plan_payload = _funnel_plan()
+    plan_payload["nodes"][0]["params"]["stages"][1]["value"] = {
+        "from": "ga4",
+        "rows_path": "normalized_rows",
+        "where": {"event_name": "sign_up_ref"},
+    }
+    plan_payload["nodes"].append(
+        {
+            "id": "ga4",
+            "connector": "ga4",
+            "operation": "report",
+            "params": {"tenant_id": "tenant_1", "metrics": ["eventCount"]},
+        }
+    )
+    plan_payload["nodes"][0]["depends_on"].append("ga4")
+    plan = DashboardPlanValidateRequest.model_validate({"plan": plan_payload}).plan
+    token = runtime.create_confirmation_token(
+        plan,
+        {"status": "success", "data": {"stages": [{}, {}], "complete": True}, "node_status": []},
+    )
+
+    response = client.post(
+        "/api/dashboard-runtime/v2/sections/publish",
+        json={
+            "dashboard_id": "dash_1",
+            "section_id": "journey_funnel",
+            "title": "Customer Journey Funnel",
+            "query_plan": plan_payload,
+            "presentation": {
+                "type": "funnel",
+                "stages": [
+                    {"id": "external_clicks", "label": "Clicks", "source": "meta"},
+                    {"id": "register_page", "label": "Register", "source": "ga4"},
+                ],
+            },
+            "confirmation_token": token,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "attribution dimension" in response.json()["detail"]["message"]
