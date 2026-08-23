@@ -575,8 +575,14 @@ function widgetRows(widget) {{
   if(Array.isArray(payload)) return payload;
   return payload && Object.keys(payload).length ? [payload] : [];
 }}
-function tableHtml(rows) {{
-  if(!rows.length) return '<div class="empty">No data available.</div>';
+function emptyStateMessage(widget) {{
+  const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
+  const waiting = (result && result.node_status || []).find(item => item.status === "waiting_for_input");
+  if(waiting && waiting.missing_inputs?.length) return `Select the required filters first: ${{waiting.missing_inputs.join(", ")}}.`;
+  return "No data is available for the selected filters and date range.";
+}}
+function tableHtml(rows, widget={{}}) {{
+  if(!rows.length) return `<div class="empty">${{emptyStateMessage(widget)}}</div>`;
   const cols = Object.keys(rows[0] || {{}}).filter(c => !["metric_source","warnings"].includes(c));
   return `<div class="table-wrap"><table><thead><tr>${{cols.map(c=>`<th>${{c}}</th>`).join("")}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{cols.map(c=>`<td>${{typeof r[c] === "object" ? JSON.stringify(r[c]) : (r[c] ?? "")}}</td>`).join("")}}</tr>`).join("")}}</tbody></table></div>`;
 }}
@@ -590,10 +596,11 @@ function renderWidget(widget) {{
     return `<div class="panel ${{spanClass(widget)}}"><div class="muted">${{title}}</div><div class="value">${{stage.value ?? stage.numeric_value ?? "-"}}</div><div class="src">${{stage.source || ""}}</div></div>`;
   }}
   if(["conversion_path","funnel","bar","line"].includes(type)) {{
+    if(!rows.length) return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div class="empty">${{emptyStateMessage(widget)}}</div></div>`;
     return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div id="chart_${{widget.id}}" class="chart"></div></div>`;
   }}
   if(type === "text") return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><p>${{widget.text || widget.config?.text || ""}}</p></div>`;
-  return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3>${{tableHtml(rows)}}</div>`;
+  return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3>${{tableHtml(rows, widget)}}</div>`;
 }}
 function drawCharts() {{
   (definition.widgets || []).forEach(widget => {{
