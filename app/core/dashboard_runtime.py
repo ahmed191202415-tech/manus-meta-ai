@@ -34,7 +34,11 @@ _EMPTY_OPTION_VALUES = {"", "all", "none", "null", "undefined"}
 
 
 def _present_input(value: Any) -> bool:
-    return value is not None and value != ""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().casefold() not in _EMPTY_OPTION_VALUES
+    return value != ""
 
 
 def _resolved_node_params(node: DashboardQueryNode, inputs: dict, results: dict) -> dict:
@@ -82,7 +86,7 @@ async def execute_plan(plan: DashboardQueryPlan, request: Request, inputs: dict 
     nodes_by_id = {node.id: node for node in plan.nodes}
     for node_id in validation["execution_order"]:
         node = nodes_by_id[node_id]
-        missing_inputs = [key for key in node.required_inputs if lookup(inputs, key) in (None, "")]
+        missing_inputs = [key for key in node.required_inputs if not _present_input(lookup(inputs, key))]
         if missing_inputs:
             statuses.append({"node_id": node.id, "status": "waiting_for_input", "missing_inputs": missing_inputs})
             continue
