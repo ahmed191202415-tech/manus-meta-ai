@@ -536,10 +536,10 @@ function findNodeOptions(result, keys) {{
 function updateRuntimeFilterOptions(result) {{
   if(!result) return false;
   const mappings = {{
-    account_id:["account_options","accounts"],
-    campaign_id:["campaign_options","campaigns"],
-    adset_id:["adset_options","adsets"],
-    ad_id:["ad_options","ads"]
+    account_id:["account_options","accounts","get_accounts"],
+    campaign_id:["campaign_options","campaigns","get_campaigns"],
+    adset_id:["adset_options","adsets","get_adsets"],
+    ad_id:["ad_options","ads","get_ads"]
   }};
   let changed = false;
   Object.entries(mappings).forEach(([key, nodeKeys]) => {{
@@ -649,7 +649,10 @@ async function reloadDashboard() {{
     const queryIds = new Set(widgets.map(queryIdForWidget));
     if(definition.runtime_queries && definition.runtime_queries.global_filters) queryIds.add("global_filters");
     if(!queryIds.size) queryIds.add("journey_funnel");
-    const trigger = hasLoadedDashboard ? "on_change" : "on_open";
+    // A dashboard refresh must hydrate the parent options as well as child
+    // options. The runtime still waits for missing required inputs, so this
+    // does not issue campaign/ad set/ad calls until their parent is selected.
+    const trigger = "always";
     const currentFilters = filters();
     const responses = await Promise.all([...queryIds].map(async queryId => {{
       try {{
@@ -658,8 +661,10 @@ async function reloadDashboard() {{
     }}));
     latestDataByQuery = Object.fromEntries(responses);
     queryErrors = Object.fromEntries(responses.filter(([, value]) => value && value.error));
-    const filtersResult = latestDataByQuery.global_filters;
-    if(updateRuntimeFilterOptions(filtersResult)) renderFilters();
+    const filterResults = Object.entries(latestDataByQuery)
+      .filter(([, result]) => result && !result.error && Object.values(result.nodes || {{}}).some(node => Array.isArray(node?.data)))
+      .map(([, result]) => result);
+    if(filterResults.some(updateRuntimeFilterOptions)) renderFilters();
     latestData = latestDataByQuery.journey_funnel || Object.values(latestDataByQuery).find(value => value && !value.error) || null;
     hasLoadedDashboard = true;
     const errors = Object.entries(queryErrors);
