@@ -483,9 +483,23 @@ let hasLoadedDashboard = false;
 const charts = {{}};
 function api(url, options={{}}) {{ return fetch(url, options).then(async r => {{ if(!r.ok) throw new Error(await r.text()); return r.json(); }}); }}
 function filterValue(key) {{ const el = document.getElementById("filter_" + key); return el ? el.value : "all"; }}
+function effectiveFilters() {{
+  const configured = definition.filters || [];
+  if(configured.length) return configured;
+  const hasRuntimeFilters = (definition.widgets || []).some(widget => widget.type === "filters" || widget.id === "global_filters" || widget.data_query === "global_filters");
+  if(!hasRuntimeFilters) return [];
+  return [
+    {{key:"date_from", label:"Start date", type:"date"}},
+    {{key:"date_to", label:"End date", type:"date"}},
+    {{key:"account_id", label:"Ad account", type:"select"}},
+    {{key:"campaign_id", label:"Campaign", type:"select"}},
+    {{key:"adset_id", label:"Ad Set", type:"select"}},
+    {{key:"ad_id", label:"Ad", type:"select"}}
+  ];
+}}
 function filters() {{
   const out = {{}};
-  (definition.filters || []).forEach(f => out[f.key] = filterValue(f.key));
+  effectiveFilters().forEach(f => out[f.key] = filterValue(f.key));
   ["date_from","date_to","campaign_id","adset_id","ad_id","device","placement"].forEach(k => {{ if(out[k] === undefined) out[k] = k.includes("_id") || ["device","placement"].includes(k) ? "all" : ""; }});
   return out;
 }}
@@ -539,8 +553,9 @@ function cascadeKeys(key) {{
   return index < 0 ? [] : order.slice(index + 1);
 }}
 function renderFilters() {{
-  const selected = Object.fromEntries((definition.filters || []).map(f => [f.key, filterValue(f.key)]));
-  document.getElementById("filters").innerHTML = (definition.filters || []).map(f => {{
+  const configuredFilters = effectiveFilters();
+  const selected = Object.fromEntries(configuredFilters.map(f => [f.key, filterValue(f.key)]));
+  document.getElementById("filters").innerHTML = configuredFilters.map(f => {{
     const key = f.key; const label = f.label || key; const type = f.type || "text";
     const value = selected[key] || f.default || "";
     if(type === "date" || key === "date_from" || key === "date_to") return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" type="date" value="${{value}}"></div>`;
