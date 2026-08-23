@@ -35,7 +35,7 @@ _DEFINITIONS = {DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]: DEFAULT_DASHBOARD_
 _CODE_DASHBOARDS: dict[str, dict[str, Any]] = {}
 META_DASHBOARD_FIELDS = (
     "campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,"
-    "unique_inline_link_clicks,unique_ctr,actions,date_start,date_stop"
+    "unique_inline_link_clicks,unique_ctr,actions,action_values,purchase_roas,date_start,date_stop"
 )
 
 
@@ -609,6 +609,10 @@ function emptyStateMessage(widget) {{
   if(waiting && waiting.missing_inputs?.length) return `Select the required filters first: ${{waiting.missing_inputs.join(", ")}}.`;
   return "No data is available for the selected filters and date range.";
 }}
+function funnelFiltersReady(currentFilters) {{
+  const selected = key => String(currentFilters[key] || "").trim() && String(currentFilters[key]).toLowerCase() !== "all";
+  return selected("account_id") && selected("date_from") && selected("date_to");
+}}
 function tableHtml(rows, widget={{}}) {{
   if(!rows.length) return `<div class="empty">${{emptyStateMessage(widget)}}</div>`;
   const cols = Object.keys(rows[0] || {{}}).filter(c => !["metric_source","warnings"].includes(c));
@@ -667,6 +671,11 @@ async function reloadDashboard() {{
     const trigger = "always";
     const currentFilters = filters();
     const responses = await Promise.all([...queryIds].map(async queryId => {{
+      const plan = definition.runtime_queries && definition.runtime_queries[queryId];
+      const isControlQuery = Boolean(plan && (plan.nodes || []).some(node => node.connector === "meta" && node.operation === "list_accounts"));
+      if(!isControlQuery && !funnelFiltersReady(currentFilters)) {{
+        return [queryId, {{status:"waiting_for_filters", node_status:[{{status:"waiting_for_input", missing_inputs:["account_id","date_from","date_to"]}}]}}];
+      }}
       try {{
         return [queryId, await api("/api/dashboard-runtime/query", {{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{dashboard_id:definition.dashboard_id, query_id:queryId, filters:currentFilters, context:{{trigger}}}})}})];
       }} catch(error) {{ return [queryId, {{error:String(error.message || error)}}]; }}
@@ -1130,6 +1139,10 @@ def _meta_scope_id(filters: dict, definition: dict) -> tuple[str, dict]:
         value = str(filters.get(key) or "").strip()
         if value and value.lower() != "all":
             return value, {"type": key.replace("_id", ""), "id": value}
+    selected_account_id = str(filters.get("account_id") or "").strip()
+    if selected_account_id and selected_account_id.casefold() != "all":
+        clean_selected = selected_account_id if selected_account_id.startswith("act_") else f"act_{selected_account_id}"
+        return clean_selected, {"type": "account", "id": clean_selected}
     account_id = (
         (definition.get("data_sources") or {})
         .get("meta", {})
