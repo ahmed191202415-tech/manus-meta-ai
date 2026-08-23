@@ -476,6 +476,10 @@ th {{ background:#f8fafc; color:#475467; }}
 <script>
 let definition = {definition_json};
 let latestData = null;
+let latestDataByQuery = {{}};
+let queryErrors = {{}};
+let runtimeFilterOptions = {{}};
+let hasLoadedDashboard = false;
 const charts = {{}};
 function api(url, options={{}}) {{ return fetch(url, options).then(async r => {{ if(!r.ok) throw new Error(await r.text()); return r.json(); }}); }}
 function filterValue(key) {{ const el = document.getElementById("filter_" + key); return el ? el.value : "all"; }}
@@ -486,21 +490,90 @@ function filters() {{
   return out;
 }}
 function spanClass(widget) {{ const span = Number(widget.span || widget.width || (widget.type === "kpi" ? 3 : 6)); return "span-" + ([3,4,6,8,12].includes(span) ? span : 6); }}
+function optionRows(value) {{
+  if(Array.isArray(value)) return value;
+  if(value && Array.isArray(value.data)) return value.data;
+  if(value && Array.isArray(value.options)) return value.options;
+  return [];
+}}
+function optionFor(row) {{
+  if(!row || typeof row !== "object") return null;
+  const value = row.value ?? row.id ?? row.account_id;
+  if(value === undefined || value === null || value === "") return null;
+  return {{value:String(value), label:String(row.label ?? row.name ?? row.account_name ?? value)}};
+}}
+function queryIdForWidget(widget) {{
+  if(widget.data_query) return widget.data_query;
+  if(definition.runtime_queries && definition.runtime_queries[widget.id]) return widget.id;
+  return "journey_funnel";
+}}
+function findNodeOptions(result, keys) {{
+  const nodes = (result && result.nodes) || {{}};
+  const data = (result && result.data) || {{}};
+  for(const key of keys) {{
+    const rows = optionRows(data[key]);
+    if(rows.length) return rows.map(optionFor).filter(Boolean);
+    const nodeRows = optionRows(nodes[key]);
+    if(nodeRows.length) return nodeRows.map(optionFor).filter(Boolean);
+  }}
+  return [];
+}}
+function updateRuntimeFilterOptions(result) {{
+  if(!result) return false;
+  const mappings = {{
+    account_id:["account_options","accounts"],
+    campaign_id:["campaign_options","campaigns"],
+    adset_id:["adset_options","adsets"],
+    ad_id:["ad_options","ads"]
+  }};
+  let changed = false;
+  Object.entries(mappings).forEach(([key, nodeKeys]) => {{
+    const next = findNodeOptions(result, nodeKeys);
+    if(next.length) {{ runtimeFilterOptions[key] = next; changed = true; }}
+  }});
+  return changed;
+}}
+function cascadeKeys(key) {{
+  const order = ["account_id","campaign_id","adset_id","ad_id"];
+  const index = order.indexOf(key);
+  return index < 0 ? [] : order.slice(index + 1);
+}}
 function renderFilters() {{
+  const selected = Object.fromEntries((definition.filters || []).map(f => [f.key, filterValue(f.key)]));
   document.getElementById("filters").innerHTML = (definition.filters || []).map(f => {{
     const key = f.key; const label = f.label || key; const type = f.type || "text";
-    if(type === "date" || key === "date_from" || key === "date_to") return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" type="date" value="${{f.default || ""}}"></div>`;
-    const opts = (f.options || [{{id:"all",name:"All"}}]).map(o => `<option value="${{o.id ?? o.value}}">${{o.name ?? o.label ?? o.value}}</option>`).join("");
+    const value = selected[key] || f.default || "";
+    if(type === "date" || key === "date_from" || key === "date_to") return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" type="date" value="${{value}}"></div>`;
+    const options = runtimeFilterOptions[key] || f.options || [];
+    const opts = [{{value:"all",label:"All"}}, ...options.map(optionFor).filter(Boolean)].map(o => `<option value="${{o.value}}" ${{String(o.value) === String(value) ? "selected" : ""}}>${{o.label}}</option>`).join("");
     if(type === "select" || key.endsWith("_id") || key === "device" || key === "placement") return `<div class="panel"><label>${{label}}</label><select id="filter_${{key}}">${{opts}}</select></div>`;
-    return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" value="${{f.default || ""}}"></div>`;
+    return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" value="${{value}}"></div>`;
   }}).join("");
-  document.querySelectorAll("#filters input,#filters select").forEach(el => el.addEventListener("change", reloadDashboard));
+  document.querySelectorAll("#filters input,#filters select").forEach(el => el.addEventListener("change", event => {{
+    cascadeKeys(event.target.id.replace("filter_", "")).forEach(key => {{
+      const child = document.getElementById("filter_" + key);
+      if(child) child.value = "all";
+      delete runtimeFilterOptions[key];
+    }});
+    reloadDashboard();
+  }}));
 }}
-function stageRows() {{ return (latestData && latestData.stages) || []; }}
-function widgetRows(widget) {{
-  if(widget.stages) return stageRows().filter(s => widget.stages.includes(s.id));
-  if(widget.source === "stages" || widget.data_query === "journey_funnel") return stageRows();
+function resultPayload(result) {{ return result && result.data !== undefined ? result.data : (result || {{}}); }}
+function stageRows(result=latestData) {{
+  const payload = resultPayload(result);
+  if(Array.isArray(payload?.stages)) return payload.stages;
+  if(Array.isArray(payload)) return payload;
+  for(const value of Object.values(payload || {{}})) if(Array.isArray(value) && value.some(row => row && (row.id || row.stage || row.label))) return value;
   return [];
+}}
+function widgetRows(widget) {{
+  const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
+  const payload = resultPayload(result);
+  if(widget.stages) return stageRows(result).filter(s => widget.stages.includes(s.id));
+  if(widget.source && Array.isArray(payload?.[widget.source])) return payload[widget.source];
+  if(widget.source === "stages" || widget.data_query === "journey_funnel" || widget.type === "funnel") return stageRows(result);
+  if(Array.isArray(payload)) return payload;
+  return payload && Object.keys(payload).length ? [payload] : [];
 }}
 function tableHtml(rows) {{
   if(!rows.length) return '<div class="empty">No data available.</div>';
@@ -511,6 +584,7 @@ function renderWidget(widget) {{
   const rows = widgetRows(widget);
   const type = widget.type || "table";
   const title = widget.title || widget.id || type;
+  if(type === "filters") return "";
   if(type === "kpi") {{
     const stage = rows.find(s => s.id === widget.stage || s.id === widget.metric || s.id === widget.metric_id) || rows[0] || {{}};
     return `<div class="panel ${{spanClass(widget)}}"><div class="muted">${{title}}</div><div class="value">${{stage.value ?? stage.numeric_value ?? "-"}}</div><div class="src">${{stage.source || ""}}</div></div>`;
@@ -548,7 +622,25 @@ async function reloadDashboard() {{
   document.getElementById("refreshBtn").disabled = true;
   document.getElementById("errorBox").innerHTML = "";
   try {{
-    latestData = await api("/api/dashboard-runtime/query", {{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{dashboard_id:definition.dashboard_id, query_id:"journey_funnel", filters:filters()}})}});
+    const widgets = definition.widgets || [];
+    const queryIds = new Set(widgets.map(queryIdForWidget));
+    if(definition.runtime_queries && definition.runtime_queries.global_filters) queryIds.add("global_filters");
+    if(!queryIds.size) queryIds.add("journey_funnel");
+    const trigger = hasLoadedDashboard ? "on_change" : "on_open";
+    const currentFilters = filters();
+    const responses = await Promise.all([...queryIds].map(async queryId => {{
+      try {{
+        return [queryId, await api("/api/dashboard-runtime/query", {{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{dashboard_id:definition.dashboard_id, query_id:queryId, filters:currentFilters, context:{{trigger}}}})}})];
+      }} catch(error) {{ return [queryId, {{error:String(error.message || error)}}]; }}
+    }}));
+    latestDataByQuery = Object.fromEntries(responses);
+    queryErrors = Object.fromEntries(responses.filter(([, value]) => value && value.error));
+    const filtersResult = latestDataByQuery.global_filters;
+    if(updateRuntimeFilterOptions(filtersResult)) renderFilters();
+    latestData = latestDataByQuery.journey_funnel || Object.values(latestDataByQuery).find(value => value && !value.error) || null;
+    hasLoadedDashboard = true;
+    const errors = Object.entries(queryErrors);
+    if(errors.length) document.getElementById("errorBox").innerHTML = `<div class="panel error">${{errors.map(([id, value]) => `${{id}}: ${{value.error}}`).join("<br>")}}</div>`;
     render();
   }} catch(e) {{
     document.getElementById("errorBox").innerHTML = `<div class="panel error">${{e.message}}</div>`;
