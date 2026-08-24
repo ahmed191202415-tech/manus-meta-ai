@@ -43,3 +43,44 @@ def test_runtime_context_manifest_takes_priority_without_changing_cache():
     assert definition == {"title": "Preview", "dashboard_id": "preview"}
     assert store.definitions == {}
 
+
+def test_persisted_dynamic_manifest_is_normalized_without_definition_wrapper():
+    row = {
+        "dashboard_id": "dash_live",
+        "tenant_id": "tenant_1",
+        "title": "Live Funnel",
+        "status": "active",
+        "config": {
+            "render_mode": "manifest",
+            "filters": [{"key": "account_id", "type": "select"}],
+            "widgets": [{"id": "funnel", "type": "funnel", "data_query": "journey_funnel"}],
+            "data_sources": [{"source": "meta", "name": "meta"}],
+            "data_contract": {
+                "runtime_queries": {
+                    "accounts": {"connector": "meta", "resource": "accounts"},
+                },
+                "stages": [{"id": "landing", "label": "Landing"}],
+            },
+        },
+    }
+    store = _store(get_dashboard=lambda dashboard_id: row)
+
+    definition = store.runtime_definition("dash_live", {"dashboard_id": "customer_journey"})
+
+    assert definition["dashboard_id"] == "dash_live"
+    assert definition["tenant_id"] == "tenant_1"
+    assert definition["filters"][0]["key"] == "account_id"
+    assert definition["runtime_queries"]["accounts"]["resource"] == "accounts"
+    assert definition["data_sources"]["meta"]["source"] == "meta"
+
+
+def test_unknown_dashboard_never_inherits_another_dashboard_definition():
+    default = {"dashboard_id": "customer_journey", "runtime_queries": {"accounts": {"legacy": True}}}
+
+    definition = _store().runtime_definition("missing_dashboard", default)
+
+    assert definition == {
+        "dashboard_id": "missing_dashboard",
+        "runtime_queries": {},
+        "_runtime_resolution": "not_found",
+    }

@@ -26,8 +26,8 @@ from app.core.ga4_client import run_ga4_report
 from app.core.meta_client import meta_call
 from app.core.oauth_store import create_dynamic_dashboard, get_dynamic_dashboard, update_dynamic_dashboard_config
 from app.core.dashboard_runtime import execute_plan as execute_universal_dashboard_plan
+from app.core.dashboard_plan import compile_runtime_query
 from app.core.dashboard_store import DashboardStore
-from app.schemas.dashboard_runtime_requests import DashboardPlanValidateRequest
 
 router = APIRouter(tags=["journey-dashboard-v7"])
 
@@ -554,6 +554,23 @@ function queryIdForWidget(widget) {{
   if(definition.runtime_queries && definition.runtime_queries[widget.id]) return widget.id;
   return "journey_funnel";
 }}
+function filterDependencies(filter) {{
+  const raw = filter && filter.depends_on;
+  if(Array.isArray(raw)) return raw.filter(Boolean);
+  return raw ? [raw] : [];
+}}
+function queryIdForFilter(filter) {{
+  const source = (filter && filter.options_source) || {{}};
+  const defaults = {{account_id:"accounts",campaign_id:"campaigns",adset_id:"adsets",ad_id:"ads"}};
+  const candidates = [source.runtime_query, source.query_id, source.resource, defaults[filter && filter.key]].filter(Boolean);
+  return candidates.find(id => definition.runtime_queries && definition.runtime_queries[id]) || "";
+}}
+function filterSelectionReady(filter, selected) {{
+  return filterDependencies(filter).every(key => {{
+    const value = String(selected[key] || "").trim().toLowerCase();
+    return value && value !== "all";
+  }});
+}}
 function isControlWidget(widget) {{
   if(widget.type === "filters") return true;
   const plan = definition.runtime_queries && definition.runtime_queries[queryIdForWidget(widget)];
@@ -599,7 +616,7 @@ function renderFilters() {{
     if(type === "date" || key === "date_from" || key === "date_to") return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" type="date" value="${{value}}"></div>`;
     const options = runtimeFilterOptions[key] || f.options || [];
     const opts = [{{value:"all",label:"All"}}, ...options.map(optionFor).filter(Boolean)].map(o => `<option value="${{o.value}}" ${{String(o.value) === String(value) ? "selected" : ""}}>${{o.label}}</option>`).join("");
-    if(type === "select" || key.endsWith("_id") || key === "device" || key === "placement") return `<div class="panel"><label>${{label}}</label><select id="filter_${{key}}">${{opts}}</select></div>`;
+    if(type === "select" || key.endsWith("_id") || key === "device" || key === "placement") return `<div class="panel"><label>${{label}}</label><select id="filter_${{key}}" ${{filterSelectionReady(f, selected) ? "" : "disabled"}}>${{opts}}</select></div>`;
     return `<div class="panel"><label>${{label}}</label><input id="filter_${{key}}" value="${{value}}"></div>`;
   }}).join("");
   document.querySelectorAll("#filters input,#filters select").forEach(el => el.addEventListener("change", event => {{
@@ -740,6 +757,8 @@ async function reloadDashboard() {{
   try {{
     const widgets = definition.widgets || [];
     const queryIds = new Set(widgets.map(queryIdForWidget));
+    const filterQueryIds = new Set(effectiveFilters().map(queryIdForFilter).filter(Boolean));
+    filterQueryIds.forEach(queryId => queryIds.add(queryId));
     if(definition.runtime_queries && definition.runtime_queries.global_filters) queryIds.add("global_filters");
     if(!queryIds.size) queryIds.add("journey_funnel");
     // A dashboard refresh must hydrate the parent options as well as child
@@ -749,7 +768,7 @@ async function reloadDashboard() {{
     const currentFilters = filters();
     const responses = await Promise.all([...queryIds].map(async queryId => {{
       const plan = definition.runtime_queries && definition.runtime_queries[queryId];
-      const isControlQuery = Boolean(plan && (plan.nodes || []).some(node => node.connector === "meta" && node.operation === "list_accounts"));
+      const isControlQuery = filterQueryIds.has(queryId) || Boolean(plan && (plan.nodes || []).some(node => node.connector === "meta" && node.operation === "list_accounts"));
       if(!isControlQuery && !funnelFiltersReady(currentFilters)) {{
         return [queryId, {{status:"waiting_for_filters", node_status:[{{status:"waiting_for_input", missing_inputs:["account_id","date_from","date_to"]}}]}}];
       }}
@@ -830,7 +849,12 @@ async def create_dashboard_definition_v2(body: DashboardDefinitionRequest):
 
 @router.get("/api/dashboard-definitions/{dashboard_id}")
 async def get_dashboard_definition(dashboard_id: str):
-    return _get_dashboard_definition(dashboard_id) or DEFAULT_DASHBOARD_DEFINITION
+    definition = _get_dashboard_definition(dashboard_id)
+    if definition:
+        return definition
+    if dashboard_id == DEFAULT_DASHBOARD_DEFINITION["dashboard_id"]:
+        return DEFAULT_DASHBOARD_DEFINITION
+    raise HTTPException(status_code=404, detail="Dashboard definition was not found.")
 
 
 @router.put("/api/dashboard-definitions/{dashboard_id}", operation_id="update_dashboard_definition_manifest_v1")
@@ -871,17 +895,46 @@ async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: R
     query_id = str(body.query_id or "journey_funnel")
     filters = body.filters or {}
     definition = _runtime_definition(dashboard_id, body.context)
+    if definition.get("_runtime_resolution") == "not_found":
+        raise HTTPException(status_code=404, detail="Dashboard runtime definition was not found.")
     saved_query = (definition.get("runtime_queries") or {}).get(query_id)
-    if isinstance(saved_query, dict) and saved_query.get("nodes"):
-        plan = DashboardPlanValidateRequest.model_validate({"plan": saved_query}).plan
-        trigger = str(body.context.get("trigger") or "manual")
-        return await execute_universal_dashboard_plan(plan, request, filters, trigger)
+    if isinstance(saved_query, dict):
+        plan = compile_runtime_query(query_id, saved_query)
+        if plan:
+            trigger = str(body.context.get("trigger") or "manual")
+            return await execute_universal_dashboard_plan(plan, request, filters, trigger)
+        connector = str(saved_query.get("connector") or saved_query.get("source") or "").strip().casefold()
+        resource = str(saved_query.get("resource") or saved_query.get("operation") or query_id).strip().casefold()
+        if connector == "journey":
+            if resource in {"funnel", "journey_funnel", "blended_journey", "meta_insights"}:
+                return await _live_or_fallback_funnel(request, filters, definition)
+            if resource in {"trend", "funnel_trend", "journey_trend"}:
+                return trend(filters=filters)
+            if resource in {"comparison", "journey_comparison"}:
+                return comparison()
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Dashboard runtime query descriptor is not executable.",
+                "dashboard_id": dashboard_id,
+                "query_id": query_id,
+                "connector": connector,
+                "resource": resource,
+            },
+        )
+    if saved_query is not None:
+        raise HTTPException(status_code=422, detail="Dashboard runtime query must be an object.")
     if query_id in {"journey_funnel", "blended_journey", "dashboard_bootstrap", "meta_insights", "ga4_report", "clarity_behavior", "source_breakdown", "stage_detail"}:
         return await _live_or_fallback_funnel(request, filters, definition)
     if query_id == "journey_trend":
         return trend(filters=filters)
     if query_id == "journey_comparison":
         return comparison()
+    if definition.get("runtime_queries"):
+        raise HTTPException(
+            status_code=404,
+            detail={"message": "Dashboard runtime query was not found.", "dashboard_id": dashboard_id, "query_id": query_id},
+        )
     return {"definition": definition, "query_plan": build_query_plan(definition, query_id), "filters": filters}
 
 

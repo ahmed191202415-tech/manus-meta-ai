@@ -36,6 +36,132 @@ CONNECTOR_OPERATIONS = {
 }
 
 _NODE_REFERENCE = re.compile(r"\{\{\s*nodes\.([A-Za-z0-9_.-]+)")
+_LEGACY_INPUT_TEMPLATE = re.compile(r"^\{\s*([A-Za-z0-9_.-]+)\s*\}$")
+
+_LEGACY_RESOURCE_OPERATIONS = {
+    "meta": {
+        "accounts": "list_accounts",
+        "ad_accounts": "list_accounts",
+        "campaigns": "list_campaigns",
+        "adsets": "list_adsets",
+        "ad_sets": "list_adsets",
+        "ads": "list_ads",
+        "insights": "insights",
+        "meta_insights": "insights",
+    },
+    "ga4": {
+        "properties": "list_properties",
+        "report": "report",
+        "funnel": "funnel",
+    },
+    "clarity": {
+        "insights": "insights",
+        "clarity_insights": "insights",
+    },
+}
+
+_LEGACY_CONTROL_KEYS = {
+    "connector",
+    "source",
+    "resource",
+    "operation",
+    "node_id",
+    "depends_on",
+    "required_inputs",
+    "run_when",
+    "optional",
+    "cache_ttl_seconds",
+    "title",
+    "description",
+    "output",
+}
+
+
+def _legacy_template(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _legacy_template(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_legacy_template(item) for item in value]
+    if not isinstance(value, str):
+        return value
+    match = _LEGACY_INPUT_TEMPLATE.fullmatch(value.strip())
+    return f"{{{{inputs.{match.group(1)}}}}}" if match else value
+
+
+def _string_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    values = value if isinstance(value, list) else [value]
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def compile_runtime_query(query_id: str, descriptor: dict[str, Any]) -> DashboardQueryPlan | None:
+    """Compile a compact ChatGPT query descriptor into a safe runtime plan.
+
+    The dashboard creation API historically accepted concise descriptors such
+    as ``{connector: meta, resource: campaigns, account_id: {account_id}}``.
+    The universal runtime executes explicit node plans.  Compiling at the
+    boundary keeps existing dashboards live while preserving the connector
+    allow-list and plan validation.
+    """
+    if not isinstance(descriptor, dict):
+        return None
+    if descriptor.get("nodes"):
+        return DashboardQueryPlan.model_validate(descriptor)
+
+    connector = str(descriptor.get("connector") or descriptor.get("source") or "").strip().casefold()
+    resource = str(descriptor.get("resource") or descriptor.get("operation") or query_id).strip().casefold()
+    if connector not in _LEGACY_RESOURCE_OPERATIONS:
+        return None
+    operation = str(descriptor.get("operation") or _LEGACY_RESOURCE_OPERATIONS[connector].get(resource) or "").strip()
+    if operation not in CONNECTOR_OPERATIONS.get(connector, {}):
+        return None
+
+    params = {
+        key: _legacy_template(value)
+        for key, value in descriptor.items()
+        if key not in _LEGACY_CONTROL_KEYS
+    }
+    required_inputs = _string_list(descriptor.get("required_inputs"))
+    for key in _string_list(descriptor.get("depends_on")):
+        if key not in required_inputs:
+            required_inputs.append(key)
+    for key in CONNECTOR_OPERATIONS[connector][operation].get("required", []):
+        if key not in params and key not in required_inputs:
+            required_inputs.append(key)
+
+    # Cascading Meta children must never broaden themselves to the whole ad
+    # account when their selected parent is missing.
+    if connector == "meta" and operation == "list_adsets" and "campaign_id" not in required_inputs:
+        required_inputs.append("campaign_id")
+    if connector == "meta" and operation == "list_ads":
+        parent_key = "adset_id" if resource in {"ads", "ad"} else "campaign_id"
+        if parent_key not in required_inputs:
+            required_inputs.append(parent_key)
+
+    raw_node_id = str(descriptor.get("node_id") or resource or query_id)
+    node_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_node_id).strip("_") or "query"
+    raw_run_when = str(descriptor.get("run_when") or "always")
+    run_when = raw_run_when if raw_run_when in {"on_open", "on_change", "manual", "always"} else "always"
+    plan_payload = {
+        "id": re.sub(r"[^A-Za-z0-9_.-]+", "_", str(query_id)).strip("_") or "runtime_query",
+        "title": descriptor.get("title"),
+        "description": descriptor.get("description"),
+        "nodes": [
+            {
+                "id": node_id,
+                "connector": connector,
+                "operation": operation,
+                "params": params,
+                "required_inputs": required_inputs,
+                "run_when": run_when,
+                "optional": bool(descriptor.get("optional", False)),
+                "cache_ttl_seconds": int(descriptor.get("cache_ttl_seconds") or 60),
+            }
+        ],
+        "output": descriptor.get("output") or {},
+    }
+    return DashboardQueryPlan.model_validate(plan_payload)
 
 
 def connector_catalog() -> dict:

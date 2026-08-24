@@ -49,6 +49,75 @@ class DashboardStore:
                     definition["metrics"][metric_id] = {"source": "formula", "expression": expression}
         return definition
 
+    @staticmethod
+    def definition_from_manifest(dashboard: dict[str, Any]) -> dict:
+        """Normalize a persisted dynamic-dashboard manifest for the runtime.
+
+        Dynamic dashboards are stored with their manifest fields directly under
+        ``config``.  Older definition dashboards wrap the same fields in
+        ``config.definition``.  Treating only the wrapped form as executable
+        made valid dashboards silently fall back to the global journey
+        dashboard.  This adapter keeps both formats runtime-compatible.
+        """
+        config = dashboard.get("config") or {}
+        embedded = config.get("definition")
+        if isinstance(embedded, dict):
+            definition = dict(embedded)
+            definition["dashboard_id"] = dashboard.get("dashboard_id") or definition.get("dashboard_id")
+            definition.setdefault("title", dashboard.get("title"))
+            definition.setdefault("description", dashboard.get("description"))
+            return definition
+
+        data_contract = config.get("data_contract") or {}
+        if not isinstance(data_contract, dict):
+            data_contract = {}
+
+        data_sources = config.get("data_sources") or data_contract.get("data_sources") or {}
+        if isinstance(data_sources, list):
+            normalized_sources = {}
+            for position, source in enumerate(data_sources, start=1):
+                if not isinstance(source, dict):
+                    continue
+                source_id = str(source.get("name") or source.get("source") or f"source_{position}")
+                normalized_sources[source_id] = source
+            data_sources = normalized_sources
+
+        def contract_value(key: str, default):
+            value = config.get(key)
+            if value not in (None, {}, []):
+                return value
+            return data_contract.get(key, default)
+
+        definition = {
+            "dashboard_id": dashboard.get("dashboard_id"),
+            "tenant_id": dashboard.get("tenant_id"),
+            "title": dashboard.get("title"),
+            "description": dashboard.get("description"),
+            "data_sources": data_sources,
+            "metrics": contract_value("metrics", {}),
+            "charts": contract_value("charts", []),
+            "stages": contract_value("stages", []),
+            "widgets": contract_value("widgets", []),
+            "runtime_queries": (
+                config.get("runtime_queries")
+                or data_contract.get("runtime_queries")
+                or data_contract.get("queries")
+                or {}
+            ),
+            "formulas": contract_value("formulas", {}),
+            "filters": contract_value("filters", []),
+            "interactions": contract_value("interactions", []),
+            "layout": contract_value("layout", {}),
+        }
+        formulas = definition["formulas"]
+        metrics = definition["metrics"]
+        if isinstance(formulas, dict) and isinstance(metrics, dict):
+            for metric_id, formula in formulas.items():
+                if metric_id not in metrics:
+                    expression = formula.get("expression") if isinstance(formula, dict) else str(formula)
+                    metrics[metric_id] = {"source": "formula", "expression": expression}
+        return definition
+
     def save_definition(self, definition: dict, dashboard_id: str | None = None) -> dict:
         resolved_id = str(dashboard_id or definition.get("dashboard_id") or "custom_dashboard")
         saved_definition = {**definition, "dashboard_id": resolved_id}
@@ -138,8 +207,8 @@ class DashboardStore:
     def stored_definition(self, dashboard_id: str) -> dict | None:
         row = self.stored_row(dashboard_id)
         config = (row or {}).get("config") or {}
-        if config.get("render_mode") == "manifest" and isinstance(config.get("definition"), dict):
-            return config["definition"]
+        if row and str(config.get("render_mode") or "manifest") == "manifest":
+            return self.definition_from_manifest(row)
         if config.get("render_mode") == "code":
             return self.definition_from_code({
                 "dashboard_id": dashboard_id,
@@ -183,5 +252,11 @@ class DashboardStore:
         code_dashboard = self.get_code(dashboard_id)
         if code_dashboard:
             return self.definition_from_code(code_dashboard)
-        return {**default_definition, "dashboard_id": dashboard_id or default_definition["dashboard_id"]}
-
+        default_id = str(default_definition.get("dashboard_id") or "")
+        if not dashboard_id or str(dashboard_id) == default_id:
+            return default_definition
+        return {
+            "dashboard_id": dashboard_id,
+            "runtime_queries": {},
+            "_runtime_resolution": "not_found",
+        }

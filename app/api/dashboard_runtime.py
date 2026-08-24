@@ -16,6 +16,7 @@ from app.schemas.dashboard_runtime_requests import (
     DashboardRuntimeWorkflowRequest,
 )
 from app.core.oauth_store import get_app_token_data
+from app.core.dashboard_plan import compile_runtime_query
 
 
 router = APIRouter(prefix="/api/dashboard-runtime/v2", tags=["universal-dashboard-runtime"])
@@ -260,5 +261,7 @@ async def execute_saved_dashboard_query(
     raw_plan = (definition.get("runtime_queries") or {}).get(query_id)
     if not raw_plan:
         raise HTTPException(status_code=404, detail="Dashboard query was not found.")
-    validated_plan = DashboardPlanValidateRequest.model_validate({"plan": raw_plan}).plan
+    validated_plan = compile_runtime_query(query_id, raw_plan)
+    if not validated_plan:
+        raise HTTPException(status_code=422, detail="Dashboard query descriptor is not executable by the universal runtime.")
     return await execute_plan(validated_plan, request, body.inputs, body.trigger)

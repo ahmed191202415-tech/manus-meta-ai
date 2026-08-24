@@ -4,11 +4,40 @@ from app.api import dashboard_runtime
 from app.core import dashboard_runtime as runtime
 from app.main import app
 from app.schemas.dashboard_runtime_requests import DashboardPlanValidateRequest
-from app.core.dashboard_plan import resolve_templates
+from app.core.dashboard_plan import compile_runtime_query, resolve_templates
 from app.core.dashboard_transforms import build_funnel, build_options, safe_formula
 
 
 client = TestClient(app)
+
+
+def test_compact_meta_descriptor_compiles_to_safe_cascading_plan():
+    plan = compile_runtime_query(
+        "campaigns",
+        {
+            "connector": "meta",
+            "resource": "campaigns",
+            "account_id": "{account_id}",
+            "depends_on": "account_id",
+        },
+    )
+
+    assert plan is not None
+    assert plan.nodes[0].operation == "list_campaigns"
+    assert plan.nodes[0].params["account_id"] == "{{inputs.account_id}}"
+    assert plan.nodes[0].required_inputs == ["account_id"]
+
+
+def test_compact_adset_descriptor_enforces_selected_campaign_parent():
+    plan = compile_runtime_query(
+        "adsets",
+        {"connector": "meta", "resource": "adsets", "depends_on": ["campaign_id"]},
+    )
+
+    assert plan is not None
+    assert plan.nodes[0].operation == "list_adsets"
+    assert "account_id" in plan.nodes[0].required_inputs
+    assert "campaign_id" in plan.nodes[0].required_inputs
 
 
 def _cascading_plan():

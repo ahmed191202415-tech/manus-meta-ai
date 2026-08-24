@@ -211,6 +211,61 @@ def test_dashboard_runtime_query_requires_live_journey_sources():
     assert response.json()["stages"] == []
 
 
+def test_runtime_executes_compact_query_from_persisted_dynamic_manifest(monkeypatch):
+    dashboard_id = "persisted_runtime_manifest"
+    journey_dashboard_v7._DEFINITIONS.pop(dashboard_id, None)
+    monkeypatch.setattr(
+        journey_dashboard_v7,
+        "get_dynamic_dashboard",
+        lambda requested_id: {
+            "dashboard_id": requested_id,
+            "tenant_id": "tenant_1",
+            "title": "Live Runtime",
+            "status": "active",
+            "config": {
+                "render_mode": "manifest",
+                "filters": [{"key": "account_id", "type": "select"}],
+                "data_contract": {
+                    "runtime_queries": {
+                        "accounts": {"connector": "meta", "resource": "accounts"},
+                    }
+                },
+            },
+        },
+    )
+
+    async def fake_token(request):
+        return "live-token"
+
+    def fake_meta_call(method, path, token, params=None):
+        assert method == "GET"
+        assert path == "me/adaccounts"
+        assert token == "live-token"
+        return {"data": [{"id": "act_1", "name": "BeOn"}]}
+
+    monkeypatch.setattr("app.core.dashboard_runtime.resolve_access_token", fake_token)
+    monkeypatch.setattr("app.core.dashboard_runtime.meta_call", fake_meta_call)
+
+    response = client.post(
+        "/api/dashboard-runtime/query",
+        json={"dashboard_id": dashboard_id, "query_id": "accounts", "filters": {}, "context": {"trigger": "always"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["nodes"]["accounts"]["data"][0]["name"] == "BeOn"
+    assert response.json()["plan_id"] == "accounts"
+
+
+def test_runtime_missing_dashboard_returns_404_instead_of_default_definition():
+    response = client.post(
+        "/api/dashboard-runtime/query",
+        json={"dashboard_id": "definitely_missing_dashboard", "query_id": "accounts", "filters": {}},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Dashboard runtime definition was not found."
+
+
 def test_dashboard_runtime_query_uses_live_meta_when_available(monkeypatch):
     async def fake_resolve_access_token(request):
         return "live-token"
