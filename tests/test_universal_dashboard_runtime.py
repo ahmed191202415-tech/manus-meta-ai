@@ -266,6 +266,57 @@ def test_declared_runtime_inputs_are_forwarded_without_duplicate_param_templates
     assert calls[0]["path"] == "act_123/campaigns"
 
 
+def test_entity_dropdowns_wait_for_their_direct_parent(monkeypatch):
+    async def fake_token(request):
+        return "token"
+
+    calls = []
+
+    def fake_meta_call(method, path, token, params=None):
+        calls.append(path)
+        return {"data": []}
+
+    plan = {
+        "id": "strict_cascading_filters",
+        "nodes": [
+            {
+                "id": "campaigns",
+                "connector": "meta",
+                "operation": "list_campaigns",
+                "required_inputs": ["account_id"],
+                "run_when": "always",
+            },
+            {
+                "id": "adsets",
+                "connector": "meta",
+                "operation": "list_adsets",
+                "required_inputs": ["account_id", "campaign_id"],
+                "run_when": "always",
+            },
+            {
+                "id": "ads",
+                "connector": "meta",
+                "operation": "list_ads",
+                "required_inputs": ["account_id", "adset_id"],
+                "run_when": "always",
+            },
+        ],
+    }
+    monkeypatch.setattr(runtime, "resolve_access_token", fake_token)
+    monkeypatch.setattr(runtime, "meta_call", fake_meta_call)
+
+    response = client.post(
+        "/api/dashboard-runtime/v2/execute",
+        json={"plan": plan, "inputs": {"account_id": "123", "campaign_id": "all", "adset_id": "all"}, "trigger": "always"},
+    )
+
+    assert response.status_code == 200
+    assert calls == ["act_123/campaigns"]
+    statuses = {item["node_id"]: item for item in response.json()["node_status"]}
+    assert statuses["adsets"]["missing_inputs"] == ["campaign_id"]
+    assert statuses["ads"]["missing_inputs"] == ["adset_id"]
+
+
 def test_meta_insights_query_uses_custom_time_range_and_drops_dashboard_only_filters():
     query = runtime._meta_insights_query(
         {
