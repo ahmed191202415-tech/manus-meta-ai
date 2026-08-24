@@ -122,6 +122,8 @@ def compile_runtime_query(query_id: str, descriptor: dict[str, Any]) -> Dashboar
         for key, value in descriptor.items()
         if key not in _LEGACY_CONTROL_KEYS
     }
+    if connector == "meta" and operation == "insights" and "level" in params and "analysis_level" not in params:
+        params["analysis_level"] = params["level"]
     required_inputs = _string_list(descriptor.get("required_inputs"))
     for key in _string_list(descriptor.get("depends_on")):
         if key not in required_inputs:

@@ -40,6 +40,16 @@ def test_compact_adset_descriptor_enforces_selected_campaign_parent():
     assert "campaign_id" in plan.nodes[0].required_inputs
 
 
+def test_compact_meta_insights_descriptor_normalizes_analysis_level_alias():
+    plan = compile_runtime_query(
+        "meta_insights",
+        {"connector": "meta", "resource": "insights", "level": "{analysis_level}"},
+    )
+
+    assert plan is not None
+    assert plan.nodes[0].params["analysis_level"] == "{{inputs.analysis_level}}"
+
+
 def _cascading_plan():
     return {
         "id": "global_filters",

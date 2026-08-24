@@ -497,7 +497,7 @@ let runtimeFilterOptions = {{}};
 let hasLoadedDashboard = false;
 const charts = {{}};
 function api(url, options={{}}) {{ return fetch(url, options).then(async r => {{ if(!r.ok) throw new Error(await r.text()); return r.json(); }}); }}
-function filterValue(key) {{ const el = document.getElementById("filter_" + key); return el ? el.value : "all"; }}
+function filterValue(key) {{ const el = document.getElementById("filter_" + key); return el ? el.value : ""; }}
 function effectiveFilters() {{
   const byKey = new Map((definition.filters || []).filter(item => item && item.key).map(item => [item.key, item]));
   byKey.delete("date_range");
@@ -533,7 +533,10 @@ function filters() {{
   out.ad_ga4_values = ga4ScopeValues("ad_id");
   out.since = out.date_from || "";
   out.until = out.date_to || "";
-  out.date_preset = out.since && out.until ? "custom" : "last_30d";
+  out.date_range = {{start_date:out.since,end_date:out.until}};
+  const configuredPreset = (definition.filters || []).find(item => item.key === "date_preset")?.default;
+  const selectedPreset = selected("date_preset") || configuredPreset || "last_30d";
+  out.date_preset = out.since && out.until ? "custom" : selectedPreset;
   return out;
 }}
 function spanClass(widget) {{ const span = Number(widget.span || widget.width || (widget.type === "kpi" ? 3 : 6)); return "span-" + ([3,4,6,8,12].includes(span) ? span : 6); }}
@@ -552,6 +555,9 @@ function optionFor(row) {{
 function queryIdForWidget(widget) {{
   if(widget.data_query) return widget.data_query;
   if(definition.runtime_queries && definition.runtime_queries[widget.id]) return widget.id;
+  if(widget.source && definition.runtime_queries && definition.runtime_queries[widget.source]) return widget.source;
+  if(widget.config?.query && definition.runtime_queries && definition.runtime_queries[widget.config.query]) return widget.config.query;
+  if(widget.config?.metrics?.length && definition.runtime_queries?.meta_insights && ["table","kpi","bar","line"].includes(widget.type)) return "meta_insights";
   return "journey_funnel";
 }}
 function filterDependencies(filter) {{
@@ -572,7 +578,7 @@ function filterSelectionReady(filter, selected) {{
   }});
 }}
 function isControlWidget(widget) {{
-  if(widget.type === "filters") return true;
+  if(["filters","filter_control"].includes(widget.type)) return true;
   const plan = definition.runtime_queries && definition.runtime_queries[queryIdForWidget(widget)];
   return Boolean(plan && (plan.nodes || []).some(node => node.connector === "meta" && node.operation === "list_accounts"));
 }}
@@ -656,7 +662,9 @@ function emptyStateMessage(widget) {{
 }}
 function funnelFiltersReady(currentFilters) {{
   const selected = key => String(currentFilters[key] || "").trim() && String(currentFilters[key]).toLowerCase() !== "all";
-  return selected("account_id") && selected("date_from") && selected("date_to");
+  const preset = String(currentFilters.date_preset || "").trim().toLowerCase();
+  const hasDate = (preset && preset !== "all" && preset !== "custom") || (selected("date_from") && selected("date_to"));
+  return selected("account_id") && hasDate;
 }}
 function tableHtml(rows, widget={{}}) {{
   if(!rows.length) return `<div class="empty">${{emptyStateMessage(widget)}}</div>`;
@@ -673,7 +681,7 @@ function formatRate(value) {{
   const number = Number(value); return Number.isFinite(number) ? `${{(number * 100).toFixed(1)}}%` : String(value);
 }}
 function funnelContract(widget) {{
-  const configured = Array.isArray(widget.stages) ? widget.stages : [];
+  const configured = Array.isArray(widget.stages) ? widget.stages : (Array.isArray(widget.config?.stages) ? widget.config.stages : []);
   return configured.map(stage => {{
     if(typeof stage === "object") return stage;
     return (definition.stages || []).find(item => item.id === stage) || {{id:stage,label:stage,source:""}};
@@ -721,7 +729,7 @@ function renderWidget(widget) {{
   if(["conversion_path","funnel"].includes(type)) {{
     return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3>${{funnelHtml(widget, rows)}}</div>`;
   }}
-  if(["bar","line"].includes(type)) {{
+  if(["bar","line","trend"].includes(type)) {{
     if(!rows.length) return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div class="empty">${{emptyStateMessage(widget)}}</div></div>`;
     return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div id="chart_${{widget.id}}" class="chart"></div></div>`;
   }}
@@ -730,7 +738,7 @@ function renderWidget(widget) {{
 }}
 function drawCharts() {{
   (definition.widgets || []).forEach(widget => {{
-    if(!["bar","line"].includes(widget.type)) return;
+    if(!["bar","line","trend"].includes(widget.type)) return;
     const el = document.getElementById("chart_" + widget.id); if(!el) return;
     const chart = charts[widget.id] || echarts.init(el); charts[widget.id] = chart;
     const rows = widgetRows(widget);
@@ -738,7 +746,7 @@ function drawCharts() {{
       tooltip:{{trigger:"axis"}},
       xAxis:{{type:"category",data:rows.map(r=>r.label || r.id), axisLabel:{{rotate:25}}}},
       yAxis:{{type:"value"}},
-      series:[{{type: widget.type === "line" ? "line" : "bar", smooth:true, data:rows.map(r=>r.numeric_value || 0), itemStyle:{{color:"#2563eb"}}}}]
+      series:[{{type: ["line","trend"].includes(widget.type) ? "line" : "bar", smooth:true, data:rows.map(r=>r.numeric_value || r.value || 0), itemStyle:{{color:"#2563eb"}}}}]
     }});
   }});
 }}
@@ -781,7 +789,9 @@ async function reloadDashboard() {{
     const filterResults = Object.entries(latestDataByQuery)
       .filter(([, result]) => result && !result.error && Object.values(result.nodes || {{}}).some(node => Array.isArray(node?.data)))
       .map(([, result]) => result);
-    if(filterResults.some(updateRuntimeFilterOptions)) renderFilters();
+    let filterOptionsChanged = false;
+    filterResults.forEach(result => {{ if(updateRuntimeFilterOptions(result)) filterOptionsChanged = true; }});
+    if(filterOptionsChanged) renderFilters();
     latestData = latestDataByQuery.journey_funnel || Object.values(latestDataByQuery).find(value => value && !value.error) || null;
     hasLoadedDashboard = true;
     const errors = Object.entries(queryErrors);
@@ -904,7 +914,7 @@ async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: R
             trigger = str(body.context.get("trigger") or "manual")
             return await execute_universal_dashboard_plan(plan, request, filters, trigger)
         connector = str(saved_query.get("connector") or saved_query.get("source") or "").strip().casefold()
-        resource = str(saved_query.get("resource") or saved_query.get("operation") or query_id).strip().casefold()
+        resource = str(saved_query.get("resource") or saved_query.get("operation") or saved_query.get("query") or query_id).strip().casefold()
         if connector == "journey":
             if resource in {"funnel", "journey_funnel", "blended_journey", "meta_insights"}:
                 return await _live_or_fallback_funnel(request, filters, definition)
@@ -912,6 +922,8 @@ async def dashboard_runtime_query(body: DashboardRuntimeQueryRequest, request: R
                 return trend(filters=filters)
             if resource in {"comparison", "journey_comparison"}:
                 return comparison()
+            if resource in {"tracking_gap", "tracking_integrity"}:
+                return await _live_or_fallback_funnel(request, filters, definition)
         raise HTTPException(
             status_code=422,
             detail={

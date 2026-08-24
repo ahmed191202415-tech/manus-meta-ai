@@ -111,6 +111,9 @@ def test_runtime_manifest_uses_live_renderer_instead_of_static_snapshot(monkeypa
     assert "queryIdForFilter" in html
     assert "filterDependencies" in html
     assert 'filterQueryIds.forEach(queryId => queryIds.add(queryId))' in html
+    assert "filterResults.forEach" in html
+    assert "widget.config?.stages" in html
+    assert "selectedPreset" in html
     assert "window.ALLINGPT_DASHBOARD" not in html
 
 
