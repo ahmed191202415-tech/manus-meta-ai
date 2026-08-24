@@ -116,6 +116,7 @@ def test_runtime_manifest_uses_live_renderer_instead_of_static_snapshot(monkeypa
     assert "selectedPreset" in html
     assert "configuredMetricRows" in html
     assert "Live data connected" in html
+    assert "matchingStageRow" in html
     assert "window.ALLINGPT_DASHBOARD" not in html
 
 

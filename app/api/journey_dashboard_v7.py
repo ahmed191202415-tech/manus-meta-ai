@@ -710,11 +710,22 @@ function funnelContract(widget) {{
     return (definition.stages || []).find(item => item.id === stage) || {{id:stage,label:stage,source:""}};
   }});
 }}
+function matchingStageRow(stage, rows) {{
+  const exact = rows.find(row => row.id === stage.id);
+  if(exact) return exact;
+  const normalized = value => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const expected = normalized(stage.id);
+  if(!expected) return null;
+  return rows.find(row => {{
+    const actual = normalized(row.id);
+    return actual.startsWith(expected + "_") || expected.startsWith(actual + "_");
+  }}) || null;
+}}
 function funnelHtml(widget, rows) {{
   const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
   const contract = funnelContract(widget);
   const ordered = contract.length
-    ? contract.map(stage => ({{...stage,...(rows.find(row => row.id === stage.id) || {{}})}}))
+    ? contract.map(stage => ({{...(matchingStageRow(stage, rows) || {{}}),...stage}}))
     : rows;
   const queryError = result?.error;
   const waiting = (result?.node_status || []).find(item => item.status === "waiting_for_input");
