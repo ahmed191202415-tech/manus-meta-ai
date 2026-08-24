@@ -642,6 +642,23 @@ function stageRows(result=latestData) {{
   for(const value of Object.values(payload || {{}})) if(Array.isArray(value) && value.some(row => row && (row.id || row.stage || row.label))) return value;
   return [];
 }}
+function metricFromRow(row, metric) {{
+  if(row && row[metric] !== undefined) return row[metric];
+  const aliases = {{landing_page_views:"landing_page_view"}};
+  const actionType = aliases[metric] || metric;
+  const collection = metric.startsWith("cost_per_") ? row?.cost_per_action_type : row?.actions;
+  const target = metric.startsWith("cost_per_") ? metric.slice("cost_per_".length) : actionType;
+  const match = (collection || []).find(item => item && item.action_type === target);
+  return match?.value ?? null;
+}}
+function configuredMetricRows(widget, rows) {{
+  const dimensions = widget.dimensions?.length ? widget.dimensions : (widget.config?.dimensions || []);
+  const metrics = widget.config?.metrics || [];
+  if(!metrics.length) return rows;
+  return rows.map(row => Object.fromEntries(
+    [...dimensions, ...metrics].map(key => [key, dimensions.includes(key) ? (row[key] ?? row.name ?? row.ad_name ?? row.adset_name ?? row.campaign_name ?? "") : metricFromRow(row, key)])
+  ));
+}}
 function widgetRows(widget) {{
   const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
   const payload = resultPayload(result);
@@ -651,7 +668,13 @@ function widgetRows(widget) {{
   }}
   if(widget.source && Array.isArray(payload?.[widget.source])) return payload[widget.source];
   if(widget.source === "stages" || widget.data_query === "journey_funnel" || widget.type === "funnel") return stageRows(result);
+  if(["comparison","tracking_gap"].includes(widget.type) && Array.isArray(payload?.stages)) return payload.stages;
   if(Array.isArray(payload)) return payload;
+  const containers = [payload, ...Object.values(payload || {{}}), ...Object.values(result?.nodes || {{}})];
+  for(const value of containers) {{
+    const rows = optionRows(value);
+    if(rows.length) return configuredMetricRows(widget, rows);
+  }}
   return payload && Object.keys(payload).length ? [payload] : [];
 }}
 function emptyStateMessage(widget) {{
@@ -722,6 +745,14 @@ function renderWidget(widget) {{
   const type = widget.type || "table";
   const title = widget.title || widget.id || type;
   if(isControlWidget(widget)) return "";
+  if(type === "status") {{
+    const result = latestDataByQuery[queryIdForWidget(widget)] || latestData;
+    const failed = result?.error || (result?.node_status || []).some(item => item.status === "failed");
+    const waiting = (result?.node_status || []).some(item => item.status === "waiting_for_input") || result?.status === "waiting_for_filters";
+    const state = failed ? "Connection error" : (waiting ? "Waiting for filters" : "Live data connected");
+    const color = failed ? "#b42318" : (waiting ? "#b54708" : "#067647");
+    return `<div class="panel ${{spanClass(widget)}}"><h3>${{title}}</h3><div style="font-size:18px;font-weight:800;color:${{color}}">● ${{state}}</div><div class="src">${{(widget.config?.sources || []).join(" · ")}}</div></div>`;
+  }}
   if(type === "kpi") {{
     const stage = rows.find(s => s.id === widget.stage || s.id === widget.metric || s.id === widget.metric_id) || rows[0] || {{}};
     return `<div class="panel ${{spanClass(widget)}}"><div class="muted">${{title}}</div><div class="value">${{stage.value ?? stage.numeric_value ?? "-"}}</div><div class="src">${{stage.source || ""}}</div></div>`;

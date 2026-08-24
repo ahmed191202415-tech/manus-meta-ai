@@ -114,6 +114,8 @@ def test_runtime_manifest_uses_live_renderer_instead_of_static_snapshot(monkeypa
     assert "filterResults.forEach" in html
     assert "widget.config?.stages" in html
     assert "selectedPreset" in html
+    assert "configuredMetricRows" in html
+    assert "Live data connected" in html
     assert "window.ALLINGPT_DASHBOARD" not in html
 
 
