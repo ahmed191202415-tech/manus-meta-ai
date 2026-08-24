@@ -518,9 +518,19 @@ function filters() {{
   effectiveFilters().forEach(f => out[f.key] = filterValue(f.key));
   ["date_from","date_to","campaign_id","adset_id","ad_id","device","placement"].forEach(k => {{ if(out[k] === undefined) out[k] = k.includes("_id") || ["device","placement"].includes(k) ? "all" : ""; }});
   const selected = key => String(out[key] || "").trim() && String(out[key]).toLowerCase() !== "all" ? out[key] : "";
+  const ga4ScopeValues = key => {{
+    const value = selected(key);
+    const element = document.getElementById("filter_" + key);
+    const label = value && element && element.selectedIndex >= 0 ? String(element.options[element.selectedIndex].text || "").trim() : "";
+    const plusEncoded = label ? encodeURIComponent(label).replace(/%20/g, "+") : "";
+    return [...new Set([value, label, plusEncoded].filter(Boolean))];
+  }};
   const adId = selected("ad_id"), adsetId = selected("adset_id"), campaignId = selected("campaign_id"), accountId = selected("account_id");
   out.scope_id = adId || adsetId || campaignId || accountId || "";
   out.analysis_level = adId ? "ad" : adsetId ? "adset" : "campaign";
+  out.campaign_ga4_values = ga4ScopeValues("campaign_id");
+  out.adset_ga4_values = ga4ScopeValues("adset_id");
+  out.ad_ga4_values = ga4ScopeValues("ad_id");
   out.since = out.date_from || "";
   out.until = out.date_to || "";
   out.date_preset = out.since && out.until ? "custom" : "last_30d";

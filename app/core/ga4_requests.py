@@ -135,12 +135,17 @@ def normalize_ga4_filters(filters: dict | None) -> dict:
     if clean_filters.get("page_path_contains"):
         dimension_expressions.append(_string_filter_expression("pagePathPlusQueryString", clean_filters["page_path_contains"]))
     for item in clean_filters.get("dimension_string_filters") or []:
+        if item.get("optional") and not str(item.get("value") or "").strip():
+            continue
         dimension_expressions.append(_maybe_exclude(_string_filter_expression(
             item.get("dimension"), item.get("value"), item.get("operator", "contains"), item.get("case_sensitive", False)
         ), item.get("exclude", False)))
     for item in clean_filters.get("dimension_in_list_filters") or []:
+        values = [str(value).strip() for value in (item.get("values") or []) if str(value).strip()]
+        if item.get("optional") and not values:
+            continue
         dimension_expressions.append(_maybe_exclude(_in_list_filter_expression(
-            item.get("dimension"), item.get("values"), item.get("case_sensitive", False)
+            item.get("dimension"), values, item.get("case_sensitive", False)
         ), item.get("exclude", False)))
     for item in clean_filters.get("dimension_empty_filters") or []:
         dimension_expressions.append(_maybe_exclude(_empty_filter_expression(item.get("dimension")), item.get("exclude", False)))
@@ -224,4 +229,3 @@ def build_funnel_request(steps: list[dict], start_date: str, end_date: str) -> d
             "filterExpression": {"funnelEventFilter": {"eventName": event_name}},
         })
     return {"dateRanges": [date_range(start_date, end_date)], "funnel": {"steps": normalized_steps}}
-

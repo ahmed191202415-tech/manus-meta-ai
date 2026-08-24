@@ -71,6 +71,27 @@ def test_custom_filters_support_in_list_empty_numeric_and_between():
     assert result["metricFilter"]["andGroup"]["expressions"][0]["filter"]["numericFilter"]["operation"] == "GREATER_THAN"
 
 
+def test_optional_dynamic_dimension_filters_are_skipped_when_scope_is_empty():
+    result = normalize_ga4_filters(
+        {
+            "dimension_string_filters": [
+                {"dimension": "sessionManualCampaignName", "value": "", "optional": True},
+            ],
+            "dimension_in_list_filters": [
+                {"dimension": "sessionManualTerm", "values": [], "optional": True},
+                {
+                    "dimension": "sessionManualAdContent",
+                    "values": ["ad_1", "Ad One"],
+                    "optional": True,
+                },
+            ],
+        }
+    )
+
+    assert result["dimensionFilter"]["filter"]["fieldName"] == "sessionManualAdContent"
+    assert result["dimensionFilter"]["filter"]["inListFilter"]["values"] == ["ad_1", "Ad One"]
+
+
 def test_order_by_supports_simple_metric_and_dimension_forms():
     result = normalize_ga4_order_bys(
         [

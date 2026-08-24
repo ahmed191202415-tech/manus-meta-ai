@@ -48,6 +48,11 @@ def test_custom_dashboard_definition_returns_renderable_link():
     assert "Sales Probe" in page.text
     assert "purchase_kpi" in page.text
     assert "/api/dashboard-runtime/query" in page.text
+    assert "queryIdForWidget" in page.text
+    assert 'context:{trigger}' in page.text
+    assert "runtimeFilterOptions" in page.text
+    assert "effectiveFilters" in page.text
+    assert 'key:"account_id"' in page.text
 
 
 def test_dashboard_definition_schema_exposes_manifest_fields():
@@ -502,6 +507,16 @@ def test_runtime_filters_prioritize_ad_then_adset_then_campaign(monkeypatch):
     assert data["debug"]["meta_path"] == "ad_123/insights"
     assert data["debug"]["entity_scope"] == {"type": "ad", "id": "ad_123"}
     assert data["debug"]["filters_sent"]["campaign_id"] == "campaign_123"
+
+
+def test_dynamic_dashboard_forwards_selected_entity_labels_for_ga4_utm_scope():
+    response = client.get("/dashboards/custom/customer_journey")
+
+    assert response.status_code == 200
+    html = response.text
+    assert 'out.campaign_ga4_values = ga4ScopeValues("campaign_id")' in html
+    assert 'out.adset_ga4_values = ga4ScopeValues("adset_id")' in html
+    assert 'out.ad_ga4_values = ga4ScopeValues("ad_id")' in html
 
 
 def test_connector_registry_exposes_metric_dictionary():
