@@ -17,6 +17,7 @@ from app.api.comment_automations import router as comment_automations_router
 from app.api.creatives import router as creatives_router
 from app.api.dashboard import router as dashboard_router
 from app.api.dashboard_builder import router as dashboard_builder_router
+from app.api.dashboard_console import router as dashboard_console_router
 from app.api.dashboard_runtime import router as universal_dashboard_runtime_router
 from app.api.dynamic_dashboards import router as dynamic_dashboards_router
 from app.api.ga4 import router as ga4_router
@@ -57,6 +58,7 @@ API_ROUTERS = (
     webhooks_router,
     dashboard_router,
     dashboard_builder_router,
+    dashboard_console_router,
     dynamic_dashboards_router,
     journey_dashboard_v7_router,
     analysis_dashboard_router,
@@ -79,4 +81,3 @@ API_ROUTERS = (
 def include_api_routers(app: FastAPI) -> None:
     for router in API_ROUTERS:
         app.include_router(router)
-
