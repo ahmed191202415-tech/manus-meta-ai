@@ -1,5 +1,6 @@
 """MCP tool adapters for existing application workflows."""
 from app.schemas.meta_requests import ReadOnlyMetaQueryRequest
+from app.schemas.analysis_requests import AnalysisRunRequest
 from app.mcp_actions import require_write
 from app.schemas.gpt_tool_requests import (
     GA4ToolRequest, MetaTrackingToolRequest, WebsiteToolRequest,
@@ -17,6 +18,12 @@ def register_tools(mcp, post):
             "meta_ads", "facebook_pages", "comments", "automation",
             "tracking", "ga4", "clarity", "customer_journey", "reports", "dashboards"
         ]}
+
+    @mcp.tool()
+    async def run_advanced_analysis(values: dict) -> dict:
+        """Run any existing analysis mode with all optional inputs, including\n        custom date comparisons, filters, break-even revenue and gross margin.\n        """
+        body = AnalysisRunRequest.model_validate(values)
+        return await post("/analysis/run", body.model_dump(exclude_none=True))
 
     @mcp.tool()
     async def meta_graph_read(path: str, params: dict | None = None, page_id: str = "") -> dict:
