@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.server import get_http_request
+from mcp.server.lowlevel.server import request_ctx
 from mcp.server.transport_security import TransportSecuritySettings
 
 from app.config import PUBLIC_BASE_URL
@@ -41,7 +41,9 @@ mcp = FastMCP("Super Ad Analysis", streamable_http_path="/", stateless_http=True
 
 
 async def _post(path: str, payload: dict) -> dict:
-    request = get_http_request()
+    request = request_ctx.get().request
+    if request is None:
+        raise ValueError('MCP requires an HTTP request context')
     authorization = request.headers.get("authorization", "")
     if not authorization.lower().startswith("bearer ") or not authorization[7:].strip():
         raise ValueError("Authorization: Bearer <existing API token> is required")
