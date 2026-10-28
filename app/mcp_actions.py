@@ -104,3 +104,34 @@ def register_action_tools(mcp, post):
             **(values or {}), "action": action,
         })
         return await post("/comment_automations/manage", body.model_dump(exclude_none=True))
+
+    @mcp.tool()
+    async def delete_page_post(page_id: str, post_id: str, confirmed: bool = False) -> dict:
+        """Delete a Facebook Page post. This is destructive and needs approval."""
+        require_write(confirmed)
+        body = RawMetaRequest.model_validate({
+            "method": "DELETE", "path": post_id, "page_id": page_id,
+        })
+        return await post("/meta/request", body.model_dump(exclude_none=True))
+
+    @mcp.tool()
+    async def delete_page_comment(page_id: str, comment_id: str,
+                                  confirmed: bool = False) -> dict:
+        """Delete a Facebook Page comment after explicit approval."""
+        require_write(confirmed)
+        body = RawMetaRequest.model_validate({
+            "method": "DELETE", "path": comment_id, "page_id": page_id,
+        })
+        return await post("/meta/request", body.model_dump(exclude_none=True))
+
+    @mcp.tool()
+    async def set_page_comment_visibility(
+        page_id: str, comment_id: str, hidden: bool, confirmed: bool = False,
+    ) -> dict:
+        """Hide or restore the visibility of a Page comment with approval."""
+        require_write(confirmed)
+        return await post(
+            "/page_comments/" + quote(comment_id, safe="") +
+            "/hide?page_id=" + quote(page_id, safe=""),
+            {"is_hidden": hidden},
+        )
