@@ -47,3 +47,32 @@ def test_mcp_redacts_nested_credentials():
     assert clean["data"][0]["nested"]["client_secret"] == "[REDACTED]"
     assert clean["confirmation_token"] == "preview-confirmation"
     assert original["data"][0]["access_token"] == "private-value"
+
+
+def test_mcp_tenant_binding_rejects_cross_tenant_data():
+    from app.mcp_server import _bind_tenant_payload
+    import pytest
+
+    with pytest.raises(ValueError, match="different tenant"):
+        _bind_tenant_payload("/tools/ga4",
+                             {"action": "list_properties", "payload": {"tenant_id": "other"}},
+                             "tenant-1")
+    with pytest.raises(ValueError, match="different tenant"):
+        _bind_tenant_payload("/tools/dashboards", {"tenant_id": "other", "payload": {}},
+                             "tenant-1")
+
+    valid = _bind_tenant_payload("/tools/journey",
+                                 {"action": "analyze", "payload": {"meta_account_id": "123"}},
+                                 "tenant-1")
+    assert valid["tenant_id"] == "tenant-1"
+    assert valid["payload"]["tenant_id"] == "tenant-1"
+
+
+def test_mcp_report_payload_tenant_is_enforced():
+    from app.mcp_server import _bind_tenant_payload
+
+    result = _bind_tenant_payload("/tools/reports",
+                                  {"action": "pdf", "payload": {"title": "Sales"}},
+                                  "tenant-1")
+    assert result["payload"]["tenant_id"] == "tenant-1"
+    assert "tenant_id" not in result
