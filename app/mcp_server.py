@@ -32,7 +32,7 @@ def _transport_security():
     )
 
 
-mcp = FastMCP("Super Ad Analysis", instructions=(
+mcp = FastMCP("Super Ad Analysis", streamable_http_path="/", stateless_http=True, json_response=True, transport_security=_transport_security(), instructions=(
     "Read-only advertising analytics. Use discover_accounts to discover Meta accounts; "
     "use meta_insights for campaign, ad set, or ad reporting; use run_analysis "
     "for diagnostics and recommendations. Never claim data was fetched if a tool "
@@ -134,9 +134,4 @@ async def route_analysis_request(request: str, meta_account_id: str = "") -> dic
     return await _post("/tools/intent", body.model_dump(exclude_none=True))
 
 
-mcp_asgi_app = mcp.streamable_http_app(
-    streamable_http_path="/",
-    stateless_http=True,
-    json_response=True,
-    transport_security=_transport_security(),
-)
+mcp_asgi_app = mcp.streamable_http_app()
