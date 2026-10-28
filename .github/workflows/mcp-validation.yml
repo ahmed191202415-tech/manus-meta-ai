@@ -1,0 +1,28 @@
+name: MCP validation
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/mcp-validation.yml'
+  push:
+    branches:
+      - feature/mcp-streamable-http
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python requirements
+        run: python -m pip install -r requirements.txt pytest httpx
+      - name: Compile application and tests
+        run: python -m compileall -q app tests
+      - name: Run MCP smoke tests
+        run: python -m pytest -q tests/test_mcp_adapter.py tests/test_mcp_comprehensive.py tests/test_app_factory.py
