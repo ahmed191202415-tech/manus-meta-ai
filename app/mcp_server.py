@@ -141,4 +141,6 @@ from app.mcp_actions import register_action_tools
 register_action_tools(mcp, _post)
 from app.mcp_reporting import register_reporting_tools
 register_reporting_tools(mcp, _post)
+from app.mcp_discovery import register_discovery_tools
+register_discovery_tools(mcp, _post)
 mcp_asgi_app = mcp.streamable_http_app()
