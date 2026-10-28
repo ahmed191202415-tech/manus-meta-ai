@@ -1,5 +1,6 @@
 """MCP tool adapters for existing application workflows."""
 from app.schemas.meta_requests import ReadOnlyMetaQueryRequest
+from app.mcp_actions import require_write
 from app.schemas.gpt_tool_requests import (
     GA4ToolRequest, MetaTrackingToolRequest, WebsiteToolRequest,
     JourneyToolRequest, ClarityToolRequest,
@@ -44,12 +45,13 @@ def register_tools(mcp, post):
         return await post("/tools/meta_tracking", body.model_dump(exclude_none=True))
 
     @mcp.tool()
-    async def google_analytics(action: str, payload: dict | None = None) -> dict:
+    async def google_analytics(action: str, payload: dict | None = None,
+                               confirmed: bool = False) -> dict:
         """GA4 properties, standard/custom reports, events, realtime, funnels,
         sources and devices. select_property changes the saved selection.
         """
         if action == "select_property":
-            raise ValueError("Property selection must be changed in the connected tenant portal.")
+            require_write(confirmed)
         body = GA4ToolRequest.model_validate({"action": action, "payload": payload or {}})
         return await post("/tools/ga4", body.model_dump(exclude_none=True))
 
