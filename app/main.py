@@ -1,4 +1,7 @@
 from copy import deepcopy
+from contextlib import asynccontextmanager
+
+from app.mcp_server import mcp, mcp_asgi_app
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -123,11 +126,18 @@ def _gpt_openapi_schema(app: FastAPI) -> dict:
     return schema
 
 
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    async with mcp.session_manager.run():
+        yield
+
+
 def create_app() -> FastAPI:
     application = FastAPI(
         title="Super Ad Analysis",
         version="6.1.0",
         servers=openapi_servers,
+        lifespan=_lifespan,
     )
 
     @application.get("/openapi-gpt.json", include_in_schema=False)
@@ -153,6 +163,7 @@ def create_app() -> FastAPI:
         guarded_paths=GPT_DATA_PATHS,
     )
     include_api_routers(application)
+    application.mount("/mcp", mcp_asgi_app)
     return application
 
 
