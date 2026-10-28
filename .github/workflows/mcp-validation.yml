@@ -25,4 +25,4 @@ jobs:
       - name: Compile application and tests
         run: python -m compileall -q app tests
       - name: Run MCP smoke tests
-        run: python -m pytest -q tests/test_mcp_adapter.py tests/test_mcp_comprehensive.py tests/test_mcp_protocol.py tests/test_app_factory.py
+        run: python -m pytest -q tests/test_mcp_adapter.py tests/test_mcp_comprehensive.py tests/test_mcp_protocol.py tests/test_mcp_tool_dispatch.py tests/test_app_factory.py
