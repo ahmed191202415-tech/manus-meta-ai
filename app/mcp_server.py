@@ -134,4 +134,7 @@ async def route_analysis_request(request: str, meta_account_id: str = "") -> dic
     return await _post("/tools/intent", body.model_dump(exclude_none=True))
 
 
+from app.mcp_capabilities import register_tools
+
+register_tools(mcp, _post)
 mcp_asgi_app = mcp.streamable_http_app()
