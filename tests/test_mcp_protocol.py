@@ -42,3 +42,13 @@ def test_mcp_initialize_tools_and_access_control():
         ))
         assert denied.status_code == 200, denied.text
         assert denied.json()["result"]["isError"] is True
+
+        # The intent dispatcher does not access external accounts, so this
+        # verifies the MCP-to-FastAPI bridge without real Meta credentials.
+        authorized = client.post("/mcp/", headers={**HEADERS,
+            "authorization": "Bearer test-bridge-only"}, json=_jsonrpc(
+            "tools/call", 4, {"name": "route_analysis_request",
+                               "arguments": {"request": "give a report of my campaigns"}},
+        ))
+        assert authorized.status_code == 200, authorized.text
+        assert not authorized.json()["result"].get("isError", False), authorized.text
