@@ -137,4 +137,6 @@ async def route_analysis_request(request: str, meta_account_id: str = "") -> dic
 from app.mcp_capabilities import register_tools
 
 register_tools(mcp, _post)
+from app.mcp_actions import register_action_tools
+register_action_tools(mcp, _post)
 mcp_asgi_app = mcp.streamable_http_app()
