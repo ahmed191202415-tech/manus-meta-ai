@@ -33,9 +33,9 @@ def _transport_security():
 
 
 mcp = FastMCP("Super Ad Analysis", streamable_http_path="/", stateless_http=True, json_response=True, transport_security=_transport_security(), instructions=(
-    "Read-only advertising analytics. Use discover_accounts to discover Meta accounts; "
+    "Advertising analytics and management. Use discover_accounts to discover Meta accounts; "
     "use meta_insights for campaign, ad set, or ad reporting; use run_analysis "
-    "for diagnostics and recommendations. Never claim data was fetched if a tool "
+    "for diagnostics and recommendations. Write tools require explicit user approval and MCP_WRITES_ENABLED. Never claim data was fetched if a tool "
     "returned an error. Auth uses the caller's existing API bearer token."
 ))
 
