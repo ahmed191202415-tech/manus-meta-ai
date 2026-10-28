@@ -51,6 +51,24 @@ def _redact_secrets(data):
     return data
 
 
+
+def _bind_tenant_payload(path: str, payload: dict, tenant: str) -> dict:
+    """Bind tenant-aware tool parameters to the validated app-token tenant."""
+    values = dict(payload)
+    supplied_top = values.get("tenant_id")
+    if supplied_top and str(supplied_top) != tenant:
+        raise ValueError("Cannot access a different tenant")
+    nested = values.get("payload")
+    if isinstance(nested, dict):
+        supplied_nested = nested.get("tenant_id")
+        if supplied_nested and str(supplied_nested) != tenant:
+            raise ValueError("Cannot access a different tenant")
+        values["payload"] = {**nested, "tenant_id": tenant}
+    if path != "/tools/reports":
+        values["tenant_id"] = tenant
+    return values
+
+
 async def _post(path: str, payload: dict) -> dict:
     request = request_ctx.get().request
     if request is None:
@@ -71,20 +89,7 @@ async def _post(path: str, payload: dict) -> dict:
             identity = None
         if not identity or not identity.get('tenant_id'):
             raise ValueError("This operation requires an active tenant app credential")
-        tenant = str(identity["tenant_id"])
-        nested = payload.get('payload')
-        if isinstance(nested, dict):
-            supplied = nested.get('tenant_id')
-            if supplied and str(supplied) != tenant:
-                raise ValueError("Cannot access a different tenant")
-            nested['tenant_id'] = tenant
-        elif path not in {'/tools/reports', '/api/dashboard-runtime/v2/workflow'}:
-            payload['tenant_id'] = tenant
-        supplied_top = payload.get('tenant_id')
-        if supplied_top and str(supplied_top) != tenant:
-            raise ValueError("Cannot access a different tenant")
-        if path != '/tools/reports':
-            payload['tenant_id'] = tenant
+        payload = _bind_tenant_payload(path, payload, str(identity["tenant_id"]))
     if path == '/analysis/run':
         payload.pop('access_token', None)
     # Local ASGI calls reuse authorization and validation without exposing an
