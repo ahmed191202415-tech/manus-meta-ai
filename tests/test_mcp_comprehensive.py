@@ -35,3 +35,15 @@ def test_mcp_write_requires_confirmation(monkeypatch):
     with pytest.raises(ValueError, match="approval"):
         require_write(False)
     require_write(True)
+
+
+def test_mcp_redacts_nested_credentials():
+    from app.mcp_server import _redact_secrets
+    original = {"data": [{"id": "42", "access_token": "private-value",
+                           "nested": {"client_secret": "private-secret"}}],
+                "confirmation_token": "preview-confirmation"}
+    clean = _redact_secrets(original)
+    assert clean["data"][0]["access_token"] == "[REDACTED]"
+    assert clean["data"][0]["nested"]["client_secret"] == "[REDACTED]"
+    assert clean["confirmation_token"] == "preview-confirmation"
+    assert original["data"][0]["access_token"] == "private-value"
