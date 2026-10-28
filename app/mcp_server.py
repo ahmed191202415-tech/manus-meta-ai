@@ -58,7 +58,7 @@ async def _post(path: str, payload: dict) -> dict:
     authorization = request.headers.get("authorization", "")
     if not authorization.lower().startswith("bearer ") or not authorization[7:].strip():
         raise ValueError("Authorization: Bearer <existing API token> is required")
-    # Local ASGI calls reuse authorization and validation without exposing an
+    # Report/storage endpoints do not all perform their own authentication.\n    # Only active tenant app credentials may invoke them over MCP.\n    if path in {"/tools/reports", "/tools/dashboards", "/api/dashboard-runtime/v2/workflow"}:\n        from app.core.oauth_store import get_app_token_data\n        try:\n            identity = get_app_token_data(authorization[7:].strip())\n        except Exception:\n            identity = None\n        if not identity:\n            raise ValueError("This operation requires an active tenant app credential")\n    # Local ASGI calls reuse authorization and validation without exposing an
     # internal HTTP service or duplicating analytics logic.
     from app.main import app
     async with httpx.AsyncClient(
