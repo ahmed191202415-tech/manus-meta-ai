@@ -58,7 +58,36 @@ async def _post(path: str, payload: dict) -> dict:
     authorization = request.headers.get("authorization", "")
     if not authorization.lower().startswith("bearer ") or not authorization[7:].strip():
         raise ValueError("Authorization: Bearer <existing API token> is required")
-    # Report/storage endpoints do not all perform their own authentication.\n    # Only active tenant app credentials may invoke them over MCP.\n    if path in {"/tools/reports", "/tools/dashboards", "/api/dashboard-runtime/v2/workflow"}:\n        from app.core.oauth_store import get_app_token_data\n        try:\n            identity = get_app_token_data(authorization[7:].strip())\n        except Exception:\n            identity = None\n        if not identity:\n            raise ValueError("This operation requires an active tenant app credential")\n    # Local ASGI calls reuse authorization and validation without exposing an
+    # Tenant-aware services must never use an arbitrary tenant ID from the caller.
+    tenant_services = {
+        "/tools/ga4", "/tools/website", "/tools/journey", "/tools/clarity",
+        "/tools/reports", "/tools/dashboards", "/api/dashboard-runtime/v2/workflow",
+    }
+    if path in tenant_services:
+        from app.core.oauth_store import get_app_token_data
+        try:
+            identity = get_app_token_data(authorization[7:].strip())
+        except Exception:
+            identity = None
+        if not identity or not identity.get('tenant_id'):
+            raise ValueError("This operation requires an active tenant app credential")
+        tenant = str(identity["tenant_id"])
+        nested = payload.get('payload')
+        if isinstance(nested, dict):
+            supplied = nested.get('tenant_id')
+            if supplied and str(supplied) != tenant:
+                raise ValueError("Cannot access a different tenant")
+            nested['tenant_id'] = tenant
+        elif path not in {'/tools/reports', '/api/dashboard-runtime/v2/workflow'}:
+            payload['tenant_id'] = tenant
+        supplied_top = payload.get('tenant_id')
+        if supplied_top and str(supplied_top) != tenant:
+            raise ValueError("Cannot access a different tenant")
+        if path != '/tools/reports':
+            payload['tenant_id'] = tenant
+    if path == '/analysis/run':
+        payload.pop('access_token', None)
+    # Local ASGI calls reuse authorization and validation without exposing an
     # internal HTTP service or duplicating analytics logic.
     from app.main import app
     async with httpx.AsyncClient(
