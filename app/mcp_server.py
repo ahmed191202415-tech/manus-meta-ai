@@ -40,6 +40,17 @@ mcp = FastMCP("Super Ad Analysis", streamable_http_path="/", stateless_http=True
 ))
 
 
+_REDACTED_KEYS = {"access_token", "page_access_token", "meta_access_token", "refresh_token", "client_secret", "app_secret", "api_key", "authorization", "password"}
+
+
+def _redact_secrets(data):
+    if isinstance(data, dict):
+        return {key: ("[REDACTED]" if str(key).casefold() in _REDACTED_KEYS else _redact_secrets(value)) for key, value in data.items()}
+    if isinstance(data, list):
+        return [_redact_secrets(item) for item in data]
+    return data
+
+
 async def _post(path: str, payload: dict) -> dict:
     request = request_ctx.get().request
     if request is None:
@@ -62,7 +73,7 @@ async def _post(path: str, payload: dict) -> dict:
         )
     if response.status_code >= 400:
         raise ValueError(f"API {response.status_code}: {response.text[:1500]}")
-    return response.json()
+    return _redact_secrets(response.json())
 
 
 @mcp.tool()
