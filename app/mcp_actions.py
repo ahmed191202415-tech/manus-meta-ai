@@ -5,6 +5,7 @@ operation happens until the connecting client submits a confirmed action
 and the operator explicitly enables MCP writes in the server environment.
 """
 import os
+from urllib.parse import quote
 
 from app.schemas.meta_requests import (
     RawMetaRequest, CampaignCreateRequest, AdSetCreateRequest,
@@ -75,7 +76,7 @@ def register_action_tools(mcp, post):
         """Reply publicly to a Facebook Page comment after approving the text."""
         require_write(confirmed)
         CommentReplyRequest.model_validate({"message": message})
-        return await post("/page_comments/" + comment_id + "/reply?page_id=" + page_id,
+        return await post("/page_comments/" + quote(comment_id, safe="") + "/reply?page_id=" + quote(page_id, safe=""),
                           {"message": message})
 
     @mcp.tool()
@@ -83,7 +84,7 @@ def register_action_tools(mcp, post):
                                     hidden: bool = True, confirmed: bool = False) -> dict:
         """Hide or unhide a Facebook Page comment after approval."""
         require_write(confirmed)
-        return await post("/page_comments/" + comment_id + "/hide?page_id=" + page_id,
+        return await post("/page_comments/" + quote(comment_id, safe="") + "/hide?page_id=" + quote(page_id, safe=""),
                           {"is_hidden": hidden})
 
     @mcp.tool()
