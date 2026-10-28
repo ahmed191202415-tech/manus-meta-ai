@@ -54,3 +54,34 @@ def register_discovery_tools(mcp, post):
                 "fields": "id,from,message,created_time,like_count,comment_count,is_hidden",
                 "limit": min(max(limit, 1), 100),
             }})
+
+    @mcp.tool()
+    async def facebook_page_insights(page_id: str, metrics: str, period: str = "day") -> dict:
+        """Read permitted Facebook Page insight metrics for the selected Page.
+        Metrics availability depends on Meta's API version and Page permissions.
+        """
+        return await post("/meta/query", {"page_id": page_id,
+            "path": page_id + "/insights",
+            "params": {"metric": metrics, "period": period}})
+
+    @mcp.tool()
+    async def instagram_business_profile(page_id: str) -> dict:
+        """Find connected Instagram Business account and available profile metrics."""
+        return await post("/meta/query", {"page_id": page_id, "path": page_id,
+            "params": {"fields": "id,name,instagram_business_account{id,username,followers_count,media_count}"}})
+
+    @mcp.tool()
+    async def list_audiences(account_id: str, limit: int = 50) -> dict:
+        """List saved Custom Audiences with status and approximate size."""
+        account = account_id if account_id.startswith("act_") else "act_" + account_id
+        return await post("/meta/query", {"path": account + "/customaudiences",
+            "params": {"fields": "id,name,description,subtype,approximate_count,delivery_status",
+                       "limit": min(max(limit, 1), 100)}})
+
+    @mcp.tool()
+    async def list_creatives(account_id: str, limit: int = 50) -> dict:
+        """List Meta Ad Creative objects for the advertising account."""
+        account = account_id if account_id.startswith("act_") else "act_" + account_id
+        return await post("/meta/query", {"path": account + "/adcreatives",
+            "params": {"fields": "id,name,object_story_spec,thumbnail_url",
+                       "limit": min(max(limit, 1), 100)}})
