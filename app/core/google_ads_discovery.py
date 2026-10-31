@@ -20,6 +20,18 @@ def _client_id_from_resource(resource: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _safe_google_ads_error(exc: HTTPException) -> dict:
+    """Return only the safe structured error enums from the Google Ads gateway."""
+    raw = exc.detail if isinstance(exc.detail, dict) else {}
+    return {
+        "http_status": exc.status_code,
+        "origin": raw.get("origin") if raw.get("origin") == "google_ads_api" else "unknown",
+        "api_status": raw.get("api_status") or "UNKNOWN",
+        "google_ads_error_code": raw.get("google_ads_error_code") or "UNSPECIFIED",
+        "next_step": raw.get("next_step") or "Check Google Ads API access and account status.",
+    }
+
+
 def list_accounts_live(tenant: str, manager_id=None, expand_clients: bool = True) -> dict:
     from app.core.google_ads_gateway import _api, _read, _customer_id
 
@@ -70,8 +82,15 @@ def list_accounts_live(tenant: str, manager_id=None, expand_clients: bool = True
                 if children.get("truncated"):
                     warnings.append("Manager account client listing was truncated.")
         except HTTPException as exc:
-            warnings.append(f"Account {cid} inspection returned HTTP {exc.status_code}.")
-            accounts.append({"customer_id": cid, "name": None, "access": "direct", "details_unavailable": True})
+            details_error = _safe_google_ads_error(exc)
+            warnings.append(
+                f"Account {cid} detail read failed: HTTP {exc.status_code} "
+                f"{details_error['google_ads_error_code']}."
+            )
+            accounts.append({
+                "customer_id": cid, "name": None, "access": "direct",
+                "details_unavailable": True, "details_error": details_error,
+            })
     if len(direct_ids)>MAX_DIRECT_ACCOUNTS:
         warnings.append(f"Limited direct-account detail discovery to {MAX_DIRECT_ACCOUNTS}; request a specific customer ID for other accounts.")
     if len(accounts)>MAX_CLIENT_ACCOUNTS:
@@ -80,10 +99,19 @@ def list_accounts_live(tenant: str, manager_id=None, expand_clients: bool = True
     return {
         "provider": "google_ads", "action": "list_accounts",
         "verified_by_google_api": True,
+        "account_list_verified": True,
+        "account_details_verified": sum(
+            1 for account in accounts
+            if account.get("access") == "direct" and not account.get("details_unavailable")
+        ),
         "direct_count": len(direct_ids),
         "accounts": accounts,
         "warnings": warnings,
-        "next_step": "Use inspect_campaign with campaign_name for server-side campaign and ad group discovery, or report/query with a customer_id.",
+        "next_step": (
+            "Resolve each details_error.google_ads_error_code before inspecting campaigns."
+            if any(a.get("details_unavailable") for a in accounts)
+            else "Use inspect_campaign with campaign_name for server-side campaign and ad group discovery."
+        ),
     }
 
 
@@ -107,6 +135,14 @@ def inspect_campaign_live(
     found=[]
     checked=0
     warnings=list(accounts.get("warnings") or [])
+    account_errors = []
+    for candidate in candidates:
+        if candidate.get("details_unavailable") and candidate.get("details_error"):
+            account_errors.append({
+                "customer_id": candidate["customer_id"],
+                "stage": "account_details",
+                **candidate["details_error"],
+            })
     for candidate in candidates[:MAX_CLIENT_ACCOUNTS]:
         cid=candidate["customer_id"]
         mid=candidate.get("manager_id") or (manager_id if manager_id else None)
@@ -120,7 +156,12 @@ def inspect_campaign_live(
             res=_read(query, tenant, cid, mid, limit=10)
             checked+=1
         except HTTPException as exc:
-            warnings.append(f"Campaign lookup in account {cid} failed with HTTP {exc.status_code}.")
+            safe = _safe_google_ads_error(exc)
+            account_errors.append({"customer_id": cid, "stage": "campaign_lookup", **safe})
+            warnings.append(
+                f"Campaign lookup in account {cid} failed: HTTP {exc.status_code} "
+                f"{safe['google_ads_error_code']}."
+            )
             continue
         for row in res.get("rows") or []:
             campaign=row.get("campaign") or {}
@@ -153,7 +194,15 @@ def inspect_campaign_live(
                 ]
             except HTTPException as exc:
                 ad_groups=[]
-                warnings.append(f"Ad group lookup for campaign {camp_id} returned HTTP {exc.status_code}.")
+                safe = _safe_google_ads_error(exc)
+                account_errors.append({
+                    "customer_id": cid, "stage": "ad_group_lookup",
+                    "campaign_id": camp_id, **safe,
+                })
+                warnings.append(
+                    f"Ad group lookup for campaign {camp_id} failed: HTTP {exc.status_code} "
+                    f"{safe['google_ads_error_code']}."
+                )
             found.append({
                 "customer_id": cid,
                 "account_name": candidate.get("name"),
@@ -174,12 +223,19 @@ def inspect_campaign_live(
             break
     return {
         "provider":"google_ads", "action":"inspect_campaign",
-        "verified_by_google_api": True, "campaign_name":name,
-        "campaigns":found, "accounts_checked":checked, "warnings":warnings,
+        "verified_by_google_api": True,
+        "campaign_data_verified": bool(found),
+        "campaign_name":name,
+        "campaigns":found, "accounts_checked":checked,
+        "account_errors": account_errors, "warnings":warnings,
         "note": (
             "Budgets are at campaign level, not ad-group level. If crm is an ad group,"
             " assigning it its own EGP 800/day budget requires a separate campaign and"
             " a reviewed migration plan. This endpoint does not change any campaign."
         ),
-        "next_step": "Review exact customer, campaign and group IDs. No mutations have been applied.",
+        "next_step": (
+            "Resolve account_errors first. Google Ads has not provided any verified campaign data."
+            if not found and account_errors
+            else "Review exact customer, campaign and group IDs. No mutations have been applied."
+        ),
     }
