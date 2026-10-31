@@ -37,7 +37,11 @@ def test_vercel_output_path_is_temporary_in_fresh_process():
 
 def test_excel_report_uses_ephemeral_vercel_filesystem():
     """Do not imply persistence: test output only for this request's process."""
+    import os
+    import pytest
     from fastapi.testclient import TestClient
+    if not os.environ.get("VERCEL"):
+        pytest.skip("Only asserts Vercel environment export behavior")
     from index import app
 
     with TestClient(app) as client:
