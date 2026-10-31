@@ -33,3 +33,22 @@ def test_vercel_output_path_is_temporary_in_fresh_process():
     )
     assert result.stdout.strip().endswith("/tmp/manus-meta/exports")
     assert Path(result.stdout.strip()).is_dir()
+
+
+def test_excel_report_uses_ephemeral_vercel_filesystem():
+    """Do not imply persistence: test output only for this request's process."""
+    from fastapi.testclient import TestClient
+    from index import app
+
+    with TestClient(app) as client:
+        response = client.post("/reports/save_excel", json={
+            "file_name": "vercel-smoke.xlsx",
+            "title": "Vercel smoke",
+            "sheets": [{"name": "Results", "headers": ["Campaign", "Spend"],
+                         "rows": [["Test", 10]]}],
+        })
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["file_path"].startswith("/tmp/manus-meta/exports/")
+        assert Path(payload["file_path"]).is_file()
