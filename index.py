@@ -7,6 +7,6 @@ existing application imports its configuration.
 import os
 
 if os.environ.get("VERCEL"):
-    os.environ.setdefault("EXPORT_DIR", "/tmp/manus-meta/exports")
+    # Vercel has a read-only app filesystem. Keep the configured EXPORT_DIR\n    # unchanged in Vercel settings while mapping relative paths to /tmp.\n    if not os.path.isabs(os.environ.get("EXPORT_DIR", "exports")):\n        os.environ["EXPORT_DIR"] = "/tmp/manus-meta/exports"
 
 from app.main import app  # noqa: E402,F401
