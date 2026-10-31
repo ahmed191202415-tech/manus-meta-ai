@@ -285,13 +285,38 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
     if action == "status":
         existing = get_active_google_connection_for_tenant(tenant)
         connected = bool(existing and existing.get("connection_mode") == "oauth" and ADS_SCOPE in str(existing.get("scopes") or "").split())
-        return {"ok": True, "provider": "google_ads", "connected": connected,
-                "connect_url": None if connected else _connect_url(tenant),
-                "available_actions": ["list_accounts", "report", "query", "prepare_mutation", "commit_mutation"],
-                "reports": list(REPORTS)}
+        # OAuth consent by itself does NOT prove Google Ads API access.
+        # Run an actual read request so GPT doesn't stop at a capability list.
+        answer = {"ok": True, "provider": "google_ads", "connected": connected,
+                  "oauth_scope_connected": connected,
+                  "google_ads_api_ok": False,
+                  "connect_url": None if connected else _connect_url(tenant),
+                  "available_actions": ["list_accounts", "inspect_campaign", "report", "query", "prepare_mutation", "commit_mutation"],
+                  "reports": list(REPORTS),
+                  "next_step": "If Google Ads API access is valid, use list_accounts or inspect_campaign in this same /tools/intent action; these commands execute live reads."}
+        if connected:
+            try:
+                live = _api(tenant, "GET", "/customers:listAccessibleCustomers")
+                answer["google_ads_api_ok"] = True
+                answer["accounts"] = live.get("resourceNames") or []
+                answer["verified_account_ids"] = [r.split("/")[-1] for r in answer["accounts"] if re.fullmatch(r"customers/[0-9]{10}", r)]
+            except HTTPException as exc:
+                answer["read_error_http_status"] = exc.status_code
+                answer["read_error"] = exc.detail
+                answer["next_step"] = "Fix the Google Ads API read error shown above. OAuth scope by itself does not prove working Ads access."
+        return answer
     if action == "list_accounts":
-        result = _api(tenant, "GET", "/customers:listAccessibleCustomers", manager_id=command.get("manager_id"))
-        return {"ok": True, "provider": "google_ads", "accounts": result.get("resourceNames") or []}
+        from app.core.google_ads_discovery import list_accounts_live
+        return {"ok": True, **list_accounts_live(tenant, expand_clients=True)}
+    if action in {"inspect_campaign", "discover_campaign"}:
+        from app.core.google_ads_discovery import inspect_campaign_live
+        return {"ok": True, **inspect_campaign_live(
+            tenant,
+            command.get("campaign_name"),
+            customer_id=command.get("customer_id"),
+            manager_id=command.get("manager_id"),
+            date_range=str(command.get("date_range") or "LAST_7_DAYS").upper(),
+        )}
     if action in {"report", "analysis"}:
         result = _report(tenant, command)
         return {"ok": True, "provider": "google_ads", **result}
@@ -368,6 +393,21 @@ def parse_google_ads_request(body) -> dict:
     lower = message.lower()
     if any(x in lower for x in ("ربط", "connect", "حاله الاتصال", "الحالة", "status")):
         return {"action": "status"}
+    # Natural user requests can inspect named campaigns in ONE authorized
+    # server call, including all available account IDs and ad groups.
+    campaign_name = str(getattr(body, "campaign_name", "") or "").strip()
+    if not campaign_name:
+        match_name = re.search(r"(?<![a-zA-Z0-9])(?:[a-zA-Z][a-zA-Z0-9]*-){1,}[a-zA-Z0-9]+(?![a-zA-Z0-9])", message)
+        if match_name:
+            campaign_name = match_name.group(0)
+    if campaign_name:
+        match_id = re.search(r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message)
+        return {
+            "action": "inspect_campaign",
+            "campaign_name": campaign_name,
+            "customer_id": match_id.group(0) if match_id else None,
+            "date_range": "TODAY" if any(x in lower for x in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS",
+        }
     if any(x in lower for x in ("حساب", "account", "account list")):
         return {"action": "list_accounts"}
     report = "campaigns"
