@@ -53,7 +53,8 @@ def test_mutation_is_two_stage_and_single_use(monkeypatch):
         "action": "prepare_mutation", "customer_id": "1234567890", "operations": operations,
     }, ident)
     assert preview["status"] == "AWAITING_USER_CONFIRMATION"
-    assert len(effects) == 1 and effects[0][1]["body"]["validateOnly"] if "body" in effects[0][1] else len(effects) == 1
+    assert len(effects) == 1
+    assert effects[0][0][3]["validateOnly"] is True
     with pytest.raises(HTTPException):
         ads.execute_google_ads_command({
             "action": "commit_mutation", "approval_token": preview["approval_token"],
