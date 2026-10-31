@@ -21,3 +21,4 @@ google-analytics-data
 google-auth
 google-auth-oauthlib
 google-api-python-client
+google-ads==35.0.0
