@@ -138,8 +138,10 @@ def inspect_campaign_live(
             if date_range != "ALL_TIME":
                 groups_query+=f" AND segments.date DURING {date_range}"
             groups_query+=" LIMIT 100"
+            groups_truncated = False
             try:
                 groups=_read(groups_query, tenant, cid, mid, limit=100)
+                groups_truncated = bool(groups.get("truncated"))
                 ad_groups=[
                     {
                         "id": (g.get("adGroup") or {}).get("id"),
@@ -164,7 +166,7 @@ def inspect_campaign_live(
                 "budget_micros": budget.get("amountMicros"),
                 "budget_shared": budget.get("explicitlyShared"),
                 "ad_groups": ad_groups,
-                "ad_groups_truncated": bool(groups.get("truncated")) if "groups" in locals() else False,
+                "ad_groups_truncated": groups_truncated,
             })
             if len(found) >= MAX_CAMPAIGNS_TO_INSPECT:
                 break
