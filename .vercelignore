@@ -1,0 +1,13 @@
+# Keep tests and deployment-only collateral out of the function bundle.
+.git
+.github
+.venv
+__pycache__
+.pytest_cache
+tests
+test_*.py
+docs
+knowledge_base
+supabase
+exports
+*.pyc

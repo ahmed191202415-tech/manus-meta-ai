@@ -29,6 +29,7 @@ from app.api.journey_dashboard_v7 import router as journey_dashboard_v7_router
 from app.api.leadgen import router as leadgen_router
 from app.api.legal import router as legal_router
 from app.api.media import router as media_router
+from app.api.mcp_bridge import router as mcp_router
 from app.api.meta_raw import router as meta_router
 from app.api.oauth_gpt import router as oauth_gpt_router
 from app.api.pages import router as pages_router
@@ -65,6 +66,7 @@ API_ROUTERS = (
     analysis_docx_router,
     auth_meta_router,
     oauth_gpt_router,
+    mcp_router,
     tenant_portal_router,
     auth_google_router,
     ga4_router,

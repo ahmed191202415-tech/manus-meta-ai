@@ -1,0 +1,43 @@
+name: Vercel FastAPI compatibility
+
+on:
+  push:
+    branches:
+      - experiment/vercel-fastapi-preview
+  pull_request:
+    paths:
+      - index.py
+      - vercel.json
+      - .vercelignore
+      - .python-version
+      - requirements.txt
+      - app/**
+      - tests/**
+      - .github/workflows/vercel-preview-compatibility.yml
+
+jobs:
+  python312:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project runtime and tests
+        run: python -m pip install -r requirements.txt pytest httpx
+      - name: Check entrypoint boot and core API
+        env:
+          VERCEL: '1'
+        run: python -m pytest -q tests/test_vercel_entrypoint.py tests/test_app_factory.py
+      - name: Full repository regression suite
+        run: python -m pytest -q
+      - name: Report approximate Python dependency size
+        run: |
+          python - <<'PY'
+          import site
+          import subprocess
+          for directory in site.getsitepackages():
+              subprocess.run(["du", "-sm", directory], check=True)
+          PY

@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
+from base64 import b64decode
+import secrets
 from urllib.parse import urlencode
 
 from app.config import GPT_OAUTH_CLIENT_ID, GPT_OAUTH_CLIENT_SECRET, PORTAL_PATH, PUBLIC_BASE_URL
@@ -27,7 +29,7 @@ async def oauth_config():
         "authorization_url": f"{base_url}/oauth/authorize",
         "token_url": f"{base_url}/oauth/token",
         "scope": "",
-        "client_secret": "Use the GPT_OAUTH_CLIENT_SECRET value from Railway. It is intentionally not exposed here.",
+        "client_secret": "Use the GPT_OAUTH_CLIENT_SECRET value from the hosting environment. It is intentionally not exposed here.",
     }
 
 
@@ -103,20 +105,38 @@ async def oauth_authorize(
 
 @router.post("/token")
 async def oauth_token(
+    request: Request,
     grant_type: str = Form(...),
     code: str = Form(...),
-    client_id: str = Form(...),
-    client_secret: str = Form(...),
-    redirect_uri: str = Form(...)
+    client_id: str = Form(""),
+    client_secret: str = Form(""),
+    redirect_uri: str = Form(""),
 ):
+    """Support both OAuth client_secret_post and client_secret_basic.
+
+    ChatGPT Actions can use either exchange method. This remains a protected
+    endpoint and never issues tokens without verifying the configured secret.
+    """
     del redirect_uri
+    basic = str(request.headers.get("authorization") or "")
+    if basic.lower().startswith("basic "):
+        try:
+            raw = b64decode(basic.split(" ", 1)[1].strip(), validate=True).decode("utf-8")
+            basic_id, basic_secret = raw.split(":", 1)
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(status_code=401, detail="Invalid OAuth client authentication")
+        # If both formats are supplied, require them to agree.
+        if (client_id and not secrets.compare_digest(client_id, basic_id)) or (
+            client_secret and not secrets.compare_digest(client_secret, basic_secret)
+        ):
+            raise HTTPException(status_code=401, detail="Conflicting OAuth client credentials")
+        client_id, client_secret = basic_id, basic_secret
 
-    if client_id != GPT_OAUTH_CLIENT_ID:
-        raise HTTPException(status_code=400, detail="Invalid client_id")
-
-    if client_secret != GPT_OAUTH_CLIENT_SECRET:
-        raise HTTPException(status_code=400, detail="Invalid client_secret")
-
+    if not (GPT_OAUTH_CLIENT_ID and GPT_OAUTH_CLIENT_SECRET):
+        raise HTTPException(status_code=503, detail="OAuth client is not configured")
+    if not (secrets.compare_digest(client_id, GPT_OAUTH_CLIENT_ID) and
+            secrets.compare_digest(client_secret, GPT_OAUTH_CLIENT_SECRET)):
+        raise HTTPException(status_code=401, detail="Invalid OAuth client authentication")
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail="Unsupported grant_type")
 
@@ -125,12 +145,10 @@ async def oauth_token(
         raise HTTPException(status_code=400, detail="Invalid or expired code")
 
     app_token = create_app_token(tenant_id=auth_data["tenant_id"], meta_user_id=auth_data["meta_user_id"])
-
-    return {
-        "access_token": app_token,
-        "token_type": "bearer",
-        "expires_in": 86400
-    }
+    return JSONResponse(
+        {"access_token": app_token, "token_type": "bearer", "expires_in": 86400},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/continue")
