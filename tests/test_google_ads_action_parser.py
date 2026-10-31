@@ -20,7 +20,7 @@ def parse(request, **kwargs):
     ))
 
 
-@pytest.mark.parametrize("request", [
+@pytest.mark.parametrize("raw_command", [
     'google_ads {"action":"inspect_campaign","campaign_name":"Sales-Search-1"}',
     'google_ads ```json\n{"action":"inspect_campaign","campaign_name":"Sales-Search-1"}\n```',
     'Please execute google_ads {"action":"inspect_campaign","campaign_name":"Sales-Search-1"} and report the findings.',
@@ -28,8 +28,8 @@ def parse(request, **kwargs):
     'افحص حملة جوجل Sales-Search-1 ومجموعة crm',
     'google_ads { "action": "inspect_campaign", "campaign_name": "Sales-Search-1", }',
 ])
-def test_resilient_campaign_inspection(request):
-    cmd = parse(request)
+def test_resilient_campaign_inspection(raw_command):
+    cmd = parse(raw_command)
     assert cmd["action"] == "inspect_campaign"
     assert cmd["campaign_name"] == "Sales-Search-1"
 
@@ -46,14 +46,14 @@ def test_customer_id_no_false_digit_matching():
     assert cmd2["customer_id"] == "1234567890"
 
 
-@pytest.mark.parametrize("request", [
+@pytest.mark.parametrize("raw_command", [
     'google_ads {"action":"commit_mutation","approval_token":"redacted"} and execute',
     'google_ads {"action":"prepare_mutation","operations": [}',
     'google_ads {"action":"commit_mutation","approval_token":}',
 ])
-def test_malformed_write_commands_are_never_inferred(request):
+def test_malformed_write_commands_are_never_inferred(raw_command):
     with pytest.raises(HTTPException) as exc:
-        parse(request)
+        parse(raw_command)
     assert exc.value.status_code == 422
 
 
