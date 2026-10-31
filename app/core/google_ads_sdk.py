@@ -65,7 +65,7 @@ def sdk_search(tenant_id: str, customer_id: str, query: str, *, manager_id=None,
     """Read from official client library; never run mutations."""
     cid = _safe_customer_id(customer_id)
     text = str(query or "").strip()
-    if not re.match(r"(?is)^SELECT\\s+", text) or len(text) > 6500 or any(bad in text for bad in (";", "--", "/*")):
+    if not re.match(r"(?is)^SELECT\s+", text) or len(text) > 6500 or any(bad in text for bad in (";", "--", "/*")):
         raise HTTPException(422, "Only a single read-only GAQL SELECT statement is allowed.")
     max_rows = min(max(1, int(limit)), _MAX_ROWS)
     from google.protobuf.json_format import MessageToDict
