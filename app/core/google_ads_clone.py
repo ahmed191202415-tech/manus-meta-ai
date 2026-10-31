@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from fastapi import HTTPException
 
-from app.core.google_ads_sdk import _safe_customer_id
+from app.core.google_ads_sdk import _safe_customer_id, sdk_search
 
 _PREVIEW_QUERIES = {
     "account": ("SELECT customer.id, customer.currency_code FROM customer LIMIT 1", 2),
@@ -62,8 +62,6 @@ _PREVIEW_QUERIES = {
 
 
 def preview_clone_campaign(tenant: str, request: dict) -> dict:
-    from app.core.google_ads_sdk import sdk_search
-
     cid = _safe_customer_id(request.get("customer_id"))
     src = str(request.get("source_campaign_id") or "").strip()
     groups = request.get("keep_ad_group_ids")
