@@ -168,12 +168,58 @@ def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, ma
     except ValueError:
         raise HTTPException(502, "Google Ads returned a non-JSON response.")
     if response.status_code >= 400:
+        # Return provider error ENUMS only. Never expose OAuth tokens, raw
+        # upstream messages, arbitrary IDs or request headers.
         err = (result.get("error") or {}) if isinstance(result, dict) else {}
-        # Do not expose account credentials, request headers, or Google raw traces.
+        if not isinstance(err, dict):
+            err = {}
+        code = ""
+        for detail in err.get("details") or []:
+            if not isinstance(detail, dict):
+                continue
+            if isinstance(detail.get("reason"), str):
+                candidate = detail["reason"]
+                if re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", candidate):
+                    code = candidate
+                    break
+            for item in detail.get("errors") or []:
+                value = item.get("errorCode") if isinstance(item, dict) else None
+                if isinstance(value, dict):
+                    for candidate in value.values():
+                        if isinstance(candidate, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", candidate):
+                            code = candidate
+                            break
+                if code:
+                    break
+            if code:
+                break
+        status = str(err.get("status") or "")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", status):
+            status = "UNKNOWN"
+        if code in {"SERVICE_DISABLED", "API_DISABLED"}:
+            next_step = "Enable Google Ads API in the same Google Cloud project that owns the OAuth client ID."
+        elif code == "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION":
+            next_step = "Apply for Explorer or higher Google Ads API access in that Google Cloud project's Google Ads API Overview."
+        elif code in {"USER_PERMISSION_DENIED", "CUSTOMER_NOT_ENABLED", "CUSTOMER_NOT_FOUND"}:
+            next_step = "Check the signed-in Google user's Ads account permissions and the customer/manager ID."
+        else:
+            next_step = "Inspect Google Ads API access in Google Cloud and the Google user's Ads permissions; if still blocked, share the Google Ads error code below."
+        import logging
+        logging.getLogger("ads.google_action").warning(
+            "google_ads_api_error http_status=%d api_status=%s error_code=%s",
+            response.status_code, status, code or "UNSPECIFIED",
+        )
+        request_id = str(response.headers.get("request-id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{4,100}", request_id):
+            request_id = ""
         raise HTTPException(response.status_code, {
-            "message": str(err.get("message") or "Google Ads API request failed.")[:450],
-            "status": str(err.get("status") or "")[:100],
-            "hint": "Check Google Cloud Ads API access, OAuth permissions, customer ID, and manager account." ,
+            "origin": "google_ads_api",
+            "http_status": response.status_code,
+            "api_status": status,
+            "google_ads_error_code": code or "UNSPECIFIED",
+            "google_request_id": request_id or None,
+            "message": "Google Ads API rejected the request. The OAuth Action may still be connected.",
+            "next_step": next_step,
         })
     if not isinstance(result, dict):
         raise HTTPException(502, "Google Ads returned an unexpected data format.")
@@ -497,4 +543,34 @@ async def google_ads_intent(body, request: Request) -> dict:
     if supplied_tenant and supplied_tenant != identity["tenant_id"]:
         raise HTTPException(403, "Tenant identity does not match the connected GPT.")
     command = parse_google_ads_request(body)
-    return execute_google_ads_command(command, identity)
+    try:
+        return execute_google_ads_command(command, identity)
+    except HTTPException as exc:
+        # ChatGPT Actions may swallow tool-level HTTP failures and never print
+        # their details. For READS only, return a small 200 JSON diagnostic.
+        # Auth failure above and all write actions retain their error codes.
+        read_actions = {"status", "list_accounts", "inspect_campaign", "discover_campaign", "report", "analysis", "query"}
+        action = str(command.get("action") or "").lower()
+        if action not in read_actions:
+            raise
+        detail = exc.detail
+        if isinstance(detail, dict):
+            safe = {
+                key: detail.get(key)
+                for key in ("origin", "http_status", "api_status", "google_ads_error_code", "google_request_id",
+                            "message", "next_step", "connect_url", "required_scope")
+                if key in detail
+            }
+        else:
+            safe = {"message": str(detail)[:180]}
+        return {
+            "ok": False,
+            "provider": "google_ads",
+            "action": action,
+            "status": "READ_FAILED",
+            "http_status": exc.status_code,
+            "google_api_called": safe.get("origin") == "google_ads_api",
+            "error": safe,
+            "message": "Google Ads read was rejected; no advertising changes were made.",
+            "next_step": safe.get("next_step") or "Review the structured error and resolve the Google OAuth or API access issue.",
+        }
