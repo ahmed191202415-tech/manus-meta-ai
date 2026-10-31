@@ -98,6 +98,8 @@ async def oauth_authorize(
         return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
 
     code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
+    from app.api.mcp_bridge import wrap_mcp_authorization_code
+    code = wrap_mcp_authorization_code(request, code)
     return RedirectResponse(url=_oauth_redirect_url(redirect_uri, code, state), status_code=302)
 
 
@@ -169,6 +171,8 @@ async def oauth_continue(request: Request):
         return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
 
     code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
+    from app.api.mcp_bridge import wrap_mcp_authorization_code
+    code = wrap_mcp_authorization_code(request, code)
     final_url = _oauth_redirect_url(redirect_uri, code, state)
     request.session.pop("gpt_oauth_redirect_uri", None)
     request.session.pop("gpt_oauth_state", None)
