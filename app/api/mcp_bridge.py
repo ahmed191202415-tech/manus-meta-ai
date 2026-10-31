@@ -29,6 +29,8 @@ router = APIRouter(tags=["mcp"])
 BASE = (PUBLIC_BASE_URL or "https://app.allingpt.online").rstrip("/")
 RESOURCE = BASE + "/mcp"
 READ_SCOPE = "ads.read"
+WRITE_SCOPE = "ads.write"
+SUPPORTED_SCOPES = {READ_SCOPE, WRITE_SCOPE}
 AUTH_CONTEXT_KEY = "mcp_oauth_context"
 
 
@@ -61,6 +63,7 @@ def wrap_mcp_authorization_code(request: Request, code: str) -> str:
         "client_id": context["client_id"],
         "redirect_uri": context["redirect_uri"],
         "resource": context["resource"],
+        "scopes": context["scopes"],
     })
 
 
@@ -69,7 +72,7 @@ async def protected_resource_metadata():
     return {
         "resource": RESOURCE,
         "authorization_servers": [BASE],
-        "scopes_supported": [READ_SCOPE],
+        "scopes_supported": [READ_SCOPE, WRITE_SCOPE],
         "bearer_methods_supported": ["header"],
     }
 
@@ -84,7 +87,7 @@ async def oauth_server_metadata():
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256"],
-        "scopes_supported": [READ_SCOPE],
+        "scopes_supported": [READ_SCOPE, WRITE_SCOPE],
     }
 
 
@@ -108,7 +111,8 @@ async def mcp_authorize(
         raise HTTPException(status_code=400, detail="PKCE S256 is required")
     if resource and resource.rstrip("/") != RESOURCE:
         raise HTTPException(status_code=400, detail="Incorrect OAuth resource")
-    if scope and any(s != READ_SCOPE for s in scope.split()):
+    selected_scopes = set(scope.split()) if scope else {READ_SCOPE}
+    if not selected_scopes.issubset(SUPPORTED_SCOPES):
         raise HTTPException(status_code=400, detail="Unsupported scope")
 
     request.session[AUTH_CONTEXT_KEY] = {
@@ -116,6 +120,7 @@ async def mcp_authorize(
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "resource": RESOURCE,
+        "scopes": sorted(selected_scopes),
     }
     query = urlencode({
         "client_id": client_id,
@@ -155,12 +160,17 @@ async def mcp_token(request: Request):
     record = consume_auth_code(str(signed.get("code") or ""))
     if not record:
         raise HTTPException(status_code=400, detail="Used or expired OAuth code")
-    token = create_app_token(tenant_id=record["tenant_id"], meta_user_id=record["meta_user_id"])
+    raw_token = create_app_token(tenant_id=record["tenant_id"], meta_user_id=record["meta_user_id"])
+    allowed_scopes = signed.get("scopes") or [READ_SCOPE]
+    token = URLSafeTimedSerializer(SESSION_SECRET, salt="mcp-scoped-access-v1").dumps({
+        "app_token": raw_token,
+        "scopes": allowed_scopes,
+    })
     return JSONResponse({
         "access_token": token,
         "token_type": "Bearer",
         "expires_in": 86400,
-        "scope": READ_SCOPE,
+        "scope": " ".join(allowed_scopes),
     }, headers={"Cache-Control": "no-store"})
 
 
@@ -190,6 +200,9 @@ TOOLS = [
 for _tool in TOOLS:
     _tool["annotations"] = {"readOnlyHint": True, "openWorldHint": True}
     _tool["securitySchemes"] = [{"type": "oauth2", "scopes": [READ_SCOPE]}]
+
+from app.api.mcp_expanded import EXTRA_TOOLS, SPECS, invoke_extra_tool  # noqa: E402
+TOOLS.extend(EXTRA_TOOLS)
 
 
 def _rpc_result(request_id, result):
@@ -228,9 +241,14 @@ async def mcp_endpoint(request: Request):
     auth = request.headers.get("Authorization", "")
     bearer = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
     token_data = None
+    allowed_scopes = set()
+    app_token = ""
     if bearer:
         try:
-            token_data = get_app_token_data(bearer)
+            signed_token = URLSafeTimedSerializer(SESSION_SECRET, salt="mcp-scoped-access-v1").loads(bearer, max_age=86400)
+            app_token = str(signed_token.get("app_token") or "")
+            allowed_scopes = set(signed_token.get("scopes") or [])
+            token_data = get_app_token_data(app_token) if app_token else None
         except Exception:
             token_data = None
     if not token_data:
@@ -242,8 +260,17 @@ async def mcp_endpoint(request: Request):
     params = body.get("params") or {}
     tool_name = params.get("name")
     args = params.get("arguments") or {}
+    if not isinstance(args, dict):
+        return JSONResponse(_rpc_error(rid, -32602, "Tool arguments must be an object"))
+    if tool_name not in {tool["name"] for tool in TOOLS}:
+        return JSONResponse(_rpc_error(rid, -32601, "Unknown tool"))
+    required_scope = WRITE_SCOPE if tool_name in SPECS and not SPECS[tool_name]["read"] else READ_SCOPE
+    if required_scope not in allowed_scopes:
+        return JSONResponse(_rpc_error(rid, -32003, "OAuth scope missing: " + required_scope), status_code=403)
     try:
-        if tool_name == "list_meta_ad_accounts":
+        if tool_name in SPECS:
+            result = await invoke_extra_tool(tool_name, args, app_token, str(token_data["tenant_id"]))
+        elif tool_name == "list_meta_ad_accounts":
             result = meta_call("GET", "me/adaccounts", token_data["meta_access_token"], params={
                 "fields": "id,account_id,name,currency,account_status,timezone_name",
                 "limit": 100,
@@ -267,14 +294,14 @@ async def mcp_endpoint(request: Request):
             return JSONResponse(_rpc_error(rid, -32601, "Unknown tool"))
         result_text = json.dumps(result, ensure_ascii=False, default=str)
         if len(result_text) > 48000:
-            result_text = result_text[:48000] + "\\n[Output truncated; request a smaller scope]"
+            result_text = json.dumps({"truncated": True, "sample": result_text[:45500], "hint": "Narrow the date range, filters, or rows."}, ensure_ascii=False)
         return JSONResponse(_rpc_result(rid, {
             "content": [{"type": "text", "text": result_text}],
             "isError": False,
         }))
     except HTTPException as exc:
         return JSONResponse(_rpc_result(rid, {
-            "content": [{"type": "text", "text": f"Meta Ads error: HTTP {exc.status_code}"}],
+            "content": [{"type": "text", "text": f"Tool failed with HTTP {exc.status_code}: {str(exc.detail)[:200]}"}],
             "isError": True,
         }))
     except Exception:
