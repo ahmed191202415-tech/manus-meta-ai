@@ -294,7 +294,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
     if action == "query":
         customer_id = _customer_id(command.get("customer_id"))
         query = str(command.get("query") or "").strip()
-        if not re.match(r"(?is)^SELECT\\s+", query) or len(query)>6000 or ";" in query or "--" in query or "/*" in query:
+        if not re.match(r"(?is)^SELECT\s+", query) or len(query)>6000 or ";" in query or "--" in query or "/*" in query:
             raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
         return {"ok": True, "provider": "google_ads", "customer_id": customer_id,
                 **_read(query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100)}
@@ -386,7 +386,7 @@ def parse_google_ads_request(body) -> dict:
     elif any(x in lower for x in ("last 30", "آخر 30", "شهر")):
         duration = "LAST_30_DAYS"
     cid = body.meta_account_id
-    match = re.search(r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message)
+    match = re.search(r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message)
     if match:
         cid = match.group(0)
     if not cid:
