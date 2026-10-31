@@ -48,7 +48,7 @@ def test_mutation_is_two_stage_and_single_use(monkeypatch):
     operations = [{"campaignOperation": {"update": {
         "resourceName": "customers/1234567890/campaigns/1",
         "status": "PAUSED",
-    }}}]
+    }, "updateMask": "status"}}]
     preview = ads.execute_google_ads_command({
         "action": "prepare_mutation", "customer_id": "1234567890", "operations": operations,
     }, ident)
