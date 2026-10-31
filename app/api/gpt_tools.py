@@ -190,7 +190,16 @@ def _campaign_insights_steps(body: IntentToolRequest) -> list[dict]:
     summary="Route natural request",
     description="Maps Arabic or English user requests to the best tool, action, payload, and next steps. Use first when unsure.",
 )
-async def intent_tool(body: IntentToolRequest):
+async def intent_tool(body: IntentToolRequest, request: Request = None):
+    # Google Ads uses the SAME previously published GPT Actions schema:
+    # /tools/intent with its existing request string and optional account ID.
+    # No new GPT Action or schema import is needed.
+    from app.core.google_ads_gateway import _detect, google_ads_intent
+    if _detect(body.request):
+        if request is None:
+            raise HTTPException(status_code=401, detail="Google Ads requires a verified GPT OAuth request.")
+        return await google_ads_intent(body, request)
+
     text = body.request.strip().lower()
     property_id = _ga4_property(body)
 

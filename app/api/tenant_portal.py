@@ -690,6 +690,11 @@ def _client_dashboard_html(
     meta_app = meta_status.get("meta_app") or {}
     meta_connected = bool(meta_connection.get("connected"))
     google_connected = bool(google_connection)
+    google_ads_connected = bool(
+        google_connection
+        and google_connection.get("connection_mode") == "oauth"
+        and "https://www.googleapis.com/auth/adwords" in str(google_connection.get("scopes") or "").split()
+    )
     clarity_connected = bool(clarity_connection)
     property_id = escape(str((google_connection or {}).get("selected_ga4_property_id") or ""))
     property_name = escape(str((google_connection or {}).get("selected_ga4_property_name") or ""))
@@ -716,7 +721,7 @@ def _client_dashboard_html(
     <header class="hero">
       <div>
         <h1>مركز ربط مصادر البيانات</h1>
-        <p class="muted">أدر ربط Meta وGoogle Analytics وMicrosoft Clarity من مكان واحد.</p>
+        <p class="muted">اربط Meta Ads وGoogle Ads وGoogle Analytics وMicrosoft Clarity من مكان واحد.</p>
         <p class="muted">{escape(user_email)}</p>
       </div>
       <div class="hero-actions">
@@ -727,6 +732,7 @@ def _client_dashboard_html(
     <section class="summary">
       <div class="mini"><strong>Meta Ads</strong><div class="status-line"><i class="status-dot {'ok' if meta_connected else ''}"></i><span>{'متصل' if meta_connected else 'غير متصل'}</span></div><div class="muted">{escape(str(meta_connection.get('connection_mode') or ''))}</div></div>
       <div class="mini"><strong>Google Analytics</strong><div class="status-line"><i class="status-dot {'ok' if google_connected else ''}"></i><span>{'متصل' if google_connected else 'غير متصل'}</span></div><div class="muted">{escape(str((google_connection or {}).get('connection_mode') or ''))}</div></div>
+      <div class="mini"><strong>Google Ads</strong><div class="status-line"><i class="status-dot {'ok' if google_ads_connected else ''}"></i><span>{'متصل' if google_ads_connected else 'غير متصل'}</span></div><div class="muted">صلاحية إدارة وقراءة الحملات</div></div>
       <div class="mini"><strong>Microsoft Clarity</strong><div class="status-line"><i class="status-dot {'ok' if clarity_connected else ''}"></i><span>{'متصل' if clarity_connected else 'غير متصل'}</span></div><div class="muted">{clarity_name}</div></div>
       <div class="mini"><strong>GA4 Property</strong><div class="status-line"><i class="status-dot {'ok' if property_id else ''}"></i><span>{property_name or property_id or 'لم يتم الاختيار'}</span></div></div>
     </section>
@@ -782,6 +788,17 @@ def _client_dashboard_html(
         <button onclick="selectProperty()">تحديث Property</button>
       </div>
       <div class="compact-actions"><a class="button" href="/ga4/properties?tenant_id={quote(tenant_id)}">عرض Properties المتاحة</a><button class="warn" onclick="disconnectGoogle()">حذف ربط Google</button></div>
+    </section>
+
+    <section class="card">
+      <div class="integration-head"><div><div class="step">Google Ads</div><h2>ربط حساب Google Ads</h2></div><span class="pill {'ok' if google_ads_connected else 'bad'}">{'متصل' if google_ads_connected else 'غير متصل'}</span></div>
+      <p class="muted">ربط Google Analytics وحده مش بيدي صلاحية Google Ads. اضغط الزر لطلب صلاحية الإعلانات من Google، وبعد الموافقة هترجع هنا وتظهر حالة الربط.</p>
+      <div class="compact-actions">
+        <form action="/auth/google/ads/start" method="post" style="display:inline-flex;margin:0">
+          <button type="submit">{'إعادة تفويض Google Ads' if google_ads_connected else 'ربط Google Ads عبر Google'}</button>
+        </form>
+      </div>
+      <p class="muted">{'اتصال Google Ads مُفعّل لهذا الحساب. تقدر ترجع لـGPT وتطلب عرض الحسابات الإعلانية.' if google_ads_connected else 'لو سجلت دخولك في Google Analytics قبل كده، محتاج توافق على صلاحية Google Ads بشكل منفصل.'}</p>
     </section>
 
     <section class="card">

@@ -1,0 +1,65 @@
+name: Verify private Meta Ads MCP bridge
+
+on:
+  push:
+    branches:
+      - experiment/vercel-fastapi-preview
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Verify public metadata and protected MCP tools (no credentials)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          import urllib.error
+
+          base = "https://app.allingpt.online"
+
+          def req(path, body=None):
+              headers = {"Accept": "application/json, text/event-stream"}
+              if body is not None:
+                  headers["Content-Type"] = "application/json"
+              data = json.dumps(body).encode() if body is not None else None
+              try:
+                  return urllib.request.urlopen(urllib.request.Request(
+                      base + path, data=data, headers=headers,
+                      method="POST" if body is not None else "GET"
+                  ), timeout=25)
+              except urllib.error.HTTPError as error:
+                  print("HTTP failure", path, error.code, "Server", error.headers.get("Server"), "Auth", error.headers.get("WWW-Authenticate"), "Body", error.read(250).decode("utf-8", "replace"))
+                  raise
+
+          with req("/.well-known/oauth-protected-resource") as response:
+              assert response.status == 200
+              assert json.load(response)["resource"] == base + "/mcp"
+          with req("/.well-known/oauth-authorization-server") as response:
+              assert "S256" in json.load(response)["code_challenge_methods_supported"]
+
+          with req("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                            "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}}}) as response:
+              assert response.status == 200
+              assert json.load(response)["result"]["serverInfo"]["name"] == "super-ad-analysis"
+
+          with req("/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}) as response:
+              tools = json.load(response)["result"]["tools"]
+              assert {"list_meta_ad_accounts", "get_meta_ad_insights"} <= {t["name"] for t in tools}
+              assert all(t["annotations"]["readOnlyHint"] for t in tools)
+
+          try:
+              req("/mcp", {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                           "params": {"name": "list_meta_ad_accounts", "arguments": {}}})
+              raise AssertionError("Unauthenticated MCP tool call unexpectedly succeeded")
+          except urllib.error.HTTPError as exc:
+              assert exc.code == 401, f"expected 401, got {exc.code}"
+              assert "Bearer" in exc.headers.get("WWW-Authenticate", "")
+          print("MCP initialization, tool discovery, OAuth metadata, and access control passed.")
+          PY
