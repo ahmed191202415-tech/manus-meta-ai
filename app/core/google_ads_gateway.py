@@ -389,7 +389,7 @@ def parse_google_ads_request(body) -> dict:
     message = str(body.request or "").strip()
     lower = message.lower()
     looks_like_ads_json = bool(re.search(
-        r"(?i)google[_ ]ads\\s*(?:[:\\-]\\s*)?(?:```(?:json)?\\s*)?\\{", message
+        r"(?i)google[_ ]ads\s*(?:[:\-]\s*)?(?:```(?:json)?\s*)?\{", message
     ))
     start = message.find("{")
     if start >= 0 and looks_like_ads_json:
@@ -400,7 +400,7 @@ def parse_google_ads_request(body) -> dict:
             end_offset = 0
         if isinstance(parsed, dict):
             trailing = message[start + end_offset:].strip()
-            trailing = re.sub(r"^```\\s*", "", trailing).strip()
+            trailing = re.sub(r"^```\s*", "", trailing).strip()
             action = str(parsed.get("action") or "").lower()
             if trailing and action in {"prepare_mutation", "commit_mutation"}:
                 raise HTTPException(422, "Write commands must contain exactly one valid JSON object.")
@@ -408,7 +408,7 @@ def parse_google_ads_request(body) -> dict:
                 return parsed
         # Malformed read-only snippets may still be resolved from a campaign
         # name. Never guess or reconstruct write operations.
-        if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\\bremove\\b", message):
+        if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\bremove\b", message):
             raise HTTPException(422, "Google Ads write request must be one valid JSON object. No changes were made.")
 
     # Prioritize explicit action/named campaign over incidental 'status',
@@ -429,7 +429,7 @@ def parse_google_ads_request(body) -> dict:
         if not campaign_name:
             raise HTTPException(422, "Specify campaign_name, for example Sales-Search-1.")
         id_match = re.search(
-            r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message
+            r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message
         )
         return {
             "action": "inspect_campaign",
@@ -462,7 +462,7 @@ def parse_google_ads_request(body) -> dict:
         duration = "LAST_30_DAYS"
     cid = body.meta_account_id
     match = re.search(
-        r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message
+        r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message
     )
     if match:
         cid = match.group(0)
