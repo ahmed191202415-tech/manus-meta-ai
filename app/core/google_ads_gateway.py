@@ -380,35 +380,66 @@ def _detect(command: str) -> bool:
 
 
 def parse_google_ads_request(body) -> dict:
+    """Parse the EXISTING GPT Action request string into an Ads command.
+
+    Accept JSON, a markdown fenced JSON object, or a natural-language read
+    request. Never infer a mutation from malformed or conversational text:
+    writes must be explicit valid JSON followed by the existing approval flow.
+    """
     message = str(body.request or "").strip()
-    start = message.find("{")
-    if start != -1 and _detect(message[:start]):
-        try:
-            data = json.loads(message[start:])
-        except json.JSONDecodeError:
-            raise HTTPException(422, "Send one valid JSON command after 'google_ads'.")
-        if not isinstance(data, dict):
-            raise HTTPException(422, "Google Ads command must be a JSON object.")
-        return data
     lower = message.lower()
-    if any(x in lower for x in ("ربط", "connect", "حاله الاتصال", "الحالة", "status")):
-        return {"action": "status"}
-    # Natural user requests can inspect named campaigns in ONE authorized
-    # server call, including all available account IDs and ad groups.
+    looks_like_ads_json = bool(re.search(
+        r"(?i)google[_ ]ads\\s*(?:[:\\-]\\s*)?(?:```(?:json)?\\s*)?\\{", message
+    ))
+    start = message.find("{")
+    if start >= 0 and looks_like_ads_json:
+        try:
+            parsed, end_offset = json.JSONDecoder().raw_decode(message[start:])
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+            end_offset = 0
+        if isinstance(parsed, dict):
+            trailing = message[start + end_offset:].strip()
+            trailing = re.sub(r"^```\\s*", "", trailing).strip()
+            action = str(parsed.get("action") or "").lower()
+            if trailing and action in {"prepare_mutation", "commit_mutation"}:
+                raise HTTPException(422, "Write commands must contain exactly one valid JSON object.")
+            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "report", "analysis", "query"}:
+                return parsed
+        # Malformed read-only snippets may still be resolved from a campaign
+        # name. Never guess or reconstruct write operations.
+        if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\\bremove\\b", message):
+            raise HTTPException(422, "Google Ads write request must be one valid JSON object. No changes were made.")
+
+    # Prioritize explicit action/named campaign over incidental 'status',
+    # 'connected', 'account', etc. mentioned in the user's explanation.
     campaign_name = str(getattr(body, "campaign_name", "") or "").strip()
     if not campaign_name:
-        match_name = re.search(r"(?<![a-zA-Z0-9])(?:[a-zA-Z][a-zA-Z0-9]*-){1,}[a-zA-Z0-9]+(?![a-zA-Z0-9])", message)
-        if match_name:
-            campaign_name = match_name.group(0)
-    if campaign_name:
-        match_id = re.search(r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message)
+        name_match = re.search(
+            r"(?<![a-zA-Z0-9])(?:[a-zA-Z][a-zA-Z0-9]*-){1,}[a-zA-Z0-9]+(?![a-zA-Z0-9])",
+            message,
+        )
+        if name_match:
+            campaign_name = name_match.group(0)
+    explicit_inspect = bool(re.search(
+        r"(?i)inspect_campaign|discover_campaign|inspect campaign|افحص الحملة|فحص حملة",
+        message,
+    ))
+    if explicit_inspect or campaign_name:
+        if not campaign_name:
+            raise HTTPException(422, "Specify campaign_name, for example Sales-Search-1.")
+        id_match = re.search(
+            r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message
+        )
         return {
             "action": "inspect_campaign",
             "campaign_name": campaign_name,
-            "customer_id": match_id.group(0) if match_id else None,
+            "customer_id": id_match.group(0) if id_match else None,
             "date_range": "TODAY" if any(x in lower for x in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS",
         }
-    if any(x in lower for x in ("حساب", "account", "account list")):
+    if any(x in lower for x in ("ربط", "connect", "حاله الاتصال", "حالة الاتصال", "status")):
+        return {"action": "status"}
+    if any(x in lower for x in ("حساب", "account", "list_accounts")):
         return {"action": "list_accounts"}
     report = "campaigns"
     for words, kind in [
@@ -430,11 +461,16 @@ def parse_google_ads_request(body) -> dict:
     elif any(x in lower for x in ("last 30", "آخر 30", "شهر")):
         duration = "LAST_30_DAYS"
     cid = body.meta_account_id
-    match = re.search(r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message)
+    match = re.search(
+        r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message
+    )
     if match:
         cid = match.group(0)
     if not cid:
-        return {"action": "list_accounts", "note": "Choose a Google Ads customer_id from these accounts, then request a report."}
+        return {
+            "action": "list_accounts",
+            "note": "Choose a Google Ads customer_id, or use inspect_campaign with its campaign name.",
+        }
     return {"action": "report", "customer_id": cid, "report": report, "date_range": duration}
 
 
