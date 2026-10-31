@@ -255,9 +255,13 @@ def _check_mutations(operations: object, customer_id: str) -> list[dict]:
         kind, payload = next(iter(operation.items()))
         if kind not in WRITABLE_OPERATIONS or not isinstance(payload, dict):
             raise HTTPException(422, "Unsupported Google Ads write operation.")
-        if len(payload) != 1 or next(iter(payload)) not in {"create", "update", "remove"}:
-            raise HTTPException(422, "Use one of create, update, or remove.")
-        obj = next(iter(payload.values()))
+        actions = {"create", "update", "remove"} & set(payload)
+        optional = {"updateMask"} if "update" in actions else set()
+        if len(actions) != 1 or set(payload) - actions - optional:
+            raise HTTPException(422, "Use exactly one of create, update, remove; updates may include updateMask.")
+        if "update" in actions and not isinstance(payload.get("updateMask"), str):
+            raise HTTPException(422, "Google Ads update operations require an explicit updateMask.")
+        obj = payload[next(iter(actions))]
         if not isinstance(obj, (dict, str)):
             raise HTTPException(422, "Invalid resource payload.")
         def check_resource(value):
