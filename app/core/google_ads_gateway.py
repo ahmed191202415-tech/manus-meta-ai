@@ -561,7 +561,7 @@ async def google_ads_intent(body, request: Request) -> dict:
         # ChatGPT Actions may swallow tool-level HTTP failures and never print
         # their details. For READS only, return a small 200 JSON diagnostic.
         # Auth failure above and all write actions retain their error codes.
-        read_actions = {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "report", "analysis", "query"}
+        read_actions = {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query"}
         action = str(command.get("action") or "").lower()
         if action not in read_actions:
             raise
