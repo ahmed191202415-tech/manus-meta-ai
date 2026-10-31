@@ -13,7 +13,7 @@ from app.core.google_oauth import (
     get_google_service_account_email,
     get_google_service_account_token,
 )
-from app.core.oauth_store import get_active_google_connection_for_tenant, purge_google_connection, save_google_connection
+from app.core.oauth_store import get_active_google_connection_for_tenant, get_tenant_account_by_id, is_account_expired, purge_google_connection, save_google_connection
 from app.schemas.tenant_requests import TenantGoogleServiceAccountRequest
 
 router = APIRouter(prefix="/auth/google", tags=["google-auth"])
@@ -34,6 +34,31 @@ async def google_login(request: Request, tenant_id: str | None = None):
     request.session["google_oauth_state"] = state
     request.session["pending_google_tenant_id"] = resolved_tenant_id
     return RedirectResponse(url=build_google_authorization_url(state), status_code=302)
+
+
+@router.post("/ads/start", include_in_schema=False)
+async def google_ads_portal_start(request: Request):
+    """Launch an Ads-specific Google consent flow from the existing portal.
+
+    Uses the current portal session rather than an arbitrary tenant_id from
+    a query string or browser form. This endpoint does not grant API access.
+    """
+    tenant_id = str(request.session.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Sign in to the data-source portal first.")
+    account = get_tenant_account_by_id(tenant_id)
+    if not account or account.get("deleted_at") or str(account.get("status") or "").lower() != "active" or is_account_expired(account):
+        raise HTTPException(status_code=403, detail="This portal account is not active.")
+    state = secrets.token_urlsafe(24)
+    request.session["google_oauth_state"] = state
+    request.session["pending_google_tenant_id"] = tenant_id
+    request.session["google_ads_connect"] = True
+    return RedirectResponse(
+        url=build_google_authorization_url(
+            state, additional_scopes="https://www.googleapis.com/auth/adwords"
+        ),
+        status_code=303,
+    )
 
 
 @router.get("/ads/connect", include_in_schema=False)
@@ -116,7 +141,7 @@ async def google_callback(
     request.session.pop("pending_google_tenant_id", None)
     was_ads_connect = bool(request.session.pop("google_ads_connect", False))
     return RedirectResponse(
-        url=f"{PORTAL_PATH}?google_connected=1" + ("&google_ads_connected=1" if was_ads_connect else ""),
+        url=f"{PORTAL_PATH}/client?google_connected=1" + ("&google_ads_connected=1" if was_ads_connect else ""),
         status_code=302,
     )
 
