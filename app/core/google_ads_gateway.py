@@ -347,7 +347,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
                   "oauth_scope_connected": connected,
                   "google_ads_api_ok": False,
                   "connect_url": None if connected else _connect_url(tenant),
-                  "available_actions": ["ping", "list_accounts", "inspect_campaign", "audit_crm_migration", "report", "query", "prepare_mutation", "commit_mutation"],
+                  "available_actions": ["ping", "list_accounts", "inspect_campaign", "audit_crm_migration", "clone_campaign", "report", "query", "prepare_mutation", "commit_mutation"],
                   "reports": list(REPORTS),
                   "next_step": "If Google Ads API access is valid, use list_accounts or inspect_campaign in this same /tools/intent action; these commands execute live reads."}
         if connected:
@@ -382,6 +382,9 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
             ad_group_id=command.get("ad_group_id"),
             manager_id=command.get("manager_id"),
         )
+    if action in {"clone_campaign", "duplicate_campaign"}:
+        from app.core.google_ads_clone import preview_clone_campaign
+        return preview_clone_campaign(tenant, command)
     if action in {"report", "analysis"}:
         result = _report(tenant, command)
         return {"ok": True, "provider": "google_ads", **result}
@@ -441,7 +444,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
 
 def _detect(command: str) -> bool:
     value = command.lower()
-    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads", "inspect_campaign", "discover_campaign", "list_accounts", "prepare_mutation", "commit_mutation")) or ("جوجل" in value and any(w in value for w in ("اعلان", "إعلان", "حمل", "ads", "كلمات البحث")))
+    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads", "clone_campaign", "duplicate_campaign", "inspect_campaign", "discover_campaign", "list_accounts", "prepare_mutation", "commit_mutation")) or ("جوجل" in value and any(w in value for w in ("اعلان", "إعلان", "حمل", "ads", "كلمات البحث")))
 
 
 def parse_google_ads_request(body) -> dict:
@@ -469,7 +472,7 @@ def parse_google_ads_request(body) -> dict:
             action = str(parsed.get("action") or "").lower()
             if trailing and action in {"prepare_mutation", "commit_mutation"}:
                 raise HTTPException(422, "Write commands must contain exactly one valid JSON object.")
-            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "report", "analysis", "query"}:
+            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query"}:
                 return parsed
         # Malformed read-only snippets may still be resolved from a campaign
         # name. Never guess or reconstruct write operations.
