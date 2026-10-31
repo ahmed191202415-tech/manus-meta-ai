@@ -29,10 +29,14 @@ jobs:
               if body is not None:
                   headers["Content-Type"] = "application/json"
               data = json.dumps(body).encode() if body is not None else None
-              return urllib.request.urlopen(urllib.request.Request(
-                  base + path, data=data, headers=headers,
-                  method="POST" if body is not None else "GET"
-              ), timeout=25)
+              try:
+                  return urllib.request.urlopen(urllib.request.Request(
+                      base + path, data=data, headers=headers,
+                      method="POST" if body is not None else "GET"
+                  ), timeout=25)
+              except urllib.error.HTTPError as error:
+                  print("HTTP failure", path, error.code, "Server", error.headers.get("Server"), "Auth", error.headers.get("WWW-Authenticate"), "Body", error.read(250).decode("utf-8", "replace"))
+                  raise
 
           with req("/.well-known/oauth-protected-resource") as response:
               assert response.status == 200
