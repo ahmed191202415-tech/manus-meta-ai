@@ -89,6 +89,11 @@ async def google_callback(
     except HTTPException:
         userinfo = {"email": tenant_id}
     previous = get_active_google_connection_for_tenant(tenant_id) or {}
+    # Never reuse a previous user's refresh token for a different Google identity.
+    previous_email = str(previous.get("google_user_email") or "").strip().lower()
+    connected_email = str(userinfo.get("email") or "").strip().lower()
+    if previous_email and connected_email and previous_email != connected_email and not token_data.get("refresh_token"):
+        raise HTTPException(status_code=409, detail="Google account changed. Reconnect with fresh offline consent before replacing the existing connection.")
     # Keep the previous refresh token and GA4 property if Google's incremental
     # authorization response does not return a new refresh token.
     connection = save_google_connection(
