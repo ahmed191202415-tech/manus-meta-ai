@@ -376,7 +376,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
 
 def _detect(command: str) -> bool:
     value = command.lower()
-    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads")) or ("جوجل" in value and any(w in value for w in ("اعلان", "إعلان", "حمل", "ads", "كلمات البحث")))
+    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads", "inspect_campaign", "discover_campaign", "list_accounts", "prepare_mutation", "commit_mutation")) or ("جوجل" in value and any(w in value for w in ("اعلان", "إعلان", "حمل", "ads", "كلمات البحث")))
 
 
 def parse_google_ads_request(body) -> dict:
@@ -439,7 +439,14 @@ def parse_google_ads_request(body) -> dict:
         }
     if any(x in lower for x in ("ربط", "connect", "حاله الاتصال", "حالة الاتصال", "status")):
         return {"action": "status"}
-    if any(x in lower for x in ("حساب", "account", "list_accounts")):
+    listed_accounts = any(x in lower for x in (
+        "list_accounts", "list accounts", "عرض الحسابات", "اعرض الحسابات",
+        "الحسابات الإعلانية", "الحسابات الاعلانية", "حساباتي",
+    ))
+    contains_customer_id = bool(re.search(
+        r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message
+    ))
+    if listed_accounts or (not contains_customer_id and any(x in lower for x in ("حساب", "account"))):
         return {"action": "list_accounts"}
     report = "campaigns"
     for words, kind in [
