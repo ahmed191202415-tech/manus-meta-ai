@@ -3,8 +3,9 @@ import secrets
 import requests
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from app.config import PORTAL_PATH
+from app.config import PORTAL_PATH, SESSION_SECRET
 from app.core.google_oauth import (
     build_google_authorization_url,
     exchange_google_code,
@@ -35,6 +36,32 @@ async def google_login(request: Request, tenant_id: str | None = None):
     return RedirectResponse(url=build_google_authorization_url(state), status_code=302)
 
 
+@router.get("/ads/connect", include_in_schema=False)
+async def google_ads_connect(ticket: str, request: Request):
+    """Only a verified GPT OAuth bearer may generate this short-lived link.
+
+    The link initiates Google's own consent flow. A user-supplied email or
+    tenant_id query parameter cannot select the account to connect.
+    """
+    signer = URLSafeTimedSerializer(SESSION_SECRET, salt="google-ads-connect-v1")
+    try:
+        claim = signer.loads(ticket, max_age=600)
+    except (BadSignature, SignatureExpired):
+        raise HTTPException(status_code=403, detail="Google Ads connection link expired. Request a new link from GPT.")
+    tenant_id = str((claim or {}).get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Google Ads link lacks a verified tenant.")
+    state = secrets.token_urlsafe(24)
+    request.session["tenant_id"] = tenant_id
+    request.session["google_oauth_state"] = state
+    request.session["pending_google_tenant_id"] = tenant_id
+    request.session["google_ads_connect"] = True
+    return RedirectResponse(
+        url=build_google_authorization_url(state, additional_scopes="https://www.googleapis.com/auth/adwords"),
+        status_code=302,
+    )
+
+
 @router.get("/callback")
 async def google_callback(
     request: Request,
@@ -62,7 +89,8 @@ async def google_callback(
     except HTTPException:
         userinfo = {"email": tenant_id}
     previous = get_active_google_connection_for_tenant(tenant_id) or {}
-    purge_google_connection(tenant_id)
+    # Keep the previous refresh token and GA4 property if Google's incremental
+    # authorization response does not return a new refresh token.
     connection = save_google_connection(
         tenant_id,
         {
@@ -81,7 +109,11 @@ async def google_callback(
     request.session["google_user_email"] = connection.get("google_user_email")
     request.session.pop("google_oauth_state", None)
     request.session.pop("pending_google_tenant_id", None)
-    return RedirectResponse(url=f"{PORTAL_PATH}?google_connected=1", status_code=302)
+    was_ads_connect = bool(request.session.pop("google_ads_connect", False))
+    return RedirectResponse(
+        url=f"{PORTAL_PATH}?google_connected=1" + ("&google_ads_connected=1" if was_ads_connect else ""),
+        status_code=302,
+    )
 
 
 @router.post("/disconnect")
