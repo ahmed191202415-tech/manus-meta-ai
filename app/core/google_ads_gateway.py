@@ -347,7 +347,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
 
 def _detect(command: str) -> bool:
     value = command.lower()
-    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads"))
+    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads")) or ("جوجل" in value and any(w in value for w in ("اعلان", "إعلان", "حمل", "ads", "كلمات البحث")))
 
 
 def parse_google_ads_request(body) -> dict:
