@@ -47,7 +47,7 @@ Production mode validates required session/OAuth/CORS settings at startup.
 
 ## Compatibility gates still to prove
 
-- Build dependency and uncompressed bundle size (Python function max 500 MB).
+- Build dependency and uncompressed bundle size (500 MB standard Python limit; Vercel Large Functions beta may allow bundles up to 5 GB on eligible Fluid Compute deployments; verify in the actual Preview build).
 - Full API/MCP compatibility with Vercel runtime lifecycle, if MCP branch
   is subsequently included. The MCP feature PR is separate from this preview.
 - Heavy analytics/reports under Vercel function CPU, memory, duration limits.
@@ -59,6 +59,8 @@ Production mode validates required session/OAuth/CORS settings at startup.
 - Persistent OAuth sessions and webhook integration under real traffic.
 - Hobby is for personal/noncommercial use. Business use requires an
   appropriately licensed deployment and possibly paid services.
+
+As of June 2026, Vercel has announced Large Functions (up to 5 GB) in public beta. New projects may be automatically enrolled; otherwise opt-in can use `VERCEL_SUPPORT_LARGE_FUNCTIONS=1` scoped to Preview. This is not a substitute for checking actual resource usage and plan terms. See https://vercel.com/changelog/vercel-functions-can-now-be-up-to-5-gb-in-package-size .
 
 **The existing application is not ready to replace Railway simply because a
 Python 3.12 unit test suite passes.** Do not merge or switch the production
