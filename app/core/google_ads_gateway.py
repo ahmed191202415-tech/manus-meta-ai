@@ -282,6 +282,16 @@ def _check_mutations(operations: object, customer_id: str) -> list[dict]:
 def execute_google_ads_command(command: dict, identity: dict) -> dict:
     tenant = identity["tenant_id"]
     action = str(command.get("action") or "list_accounts").lower()
+    if action == "ping":
+        return {
+            "ok": True,
+            "provider": "google_ads",
+            "action": "ping",
+            "intent_reached": True,
+            "google_api_called": False,
+            "message": "The existing GPT Action successfully called /tools/intent and executed the Google Ads handler.",
+            "next_step": "Now send google_ads list_accounts to verify the live Google Ads API.",
+        }
     if action == "status":
         existing = get_active_google_connection_for_tenant(tenant)
         connected = bool(existing and existing.get("connection_mode") == "oauth" and ADS_SCOPE in str(existing.get("scopes") or "").split())
@@ -291,7 +301,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
                   "oauth_scope_connected": connected,
                   "google_ads_api_ok": False,
                   "connect_url": None if connected else _connect_url(tenant),
-                  "available_actions": ["list_accounts", "inspect_campaign", "report", "query", "prepare_mutation", "commit_mutation"],
+                  "available_actions": ["ping", "list_accounts", "inspect_campaign", "report", "query", "prepare_mutation", "commit_mutation"],
                   "reports": list(REPORTS),
                   "next_step": "If Google Ads API access is valid, use list_accounts or inspect_campaign in this same /tools/intent action; these commands execute live reads."}
         if connected:
