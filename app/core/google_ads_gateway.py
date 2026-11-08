@@ -465,9 +465,9 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
             raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
         # Include IDs in scoped keyword results even if the user omitted them
         # from SELECT; this allows us to verify Google Ads responses safely.
-        is_keyword_query = bool(re.search(r"(?i)\\bFROM\\s+keyword_view\\b", query))
+        is_keyword_query = bool(re.search(r"(?i)\bFROM\s+keyword_view\b", query))
         if is_keyword_query:
-            parts = re.match(r"(?is)^(SELECT\\s+)(.+?)(\\s+FROM\\s+keyword_view\\b.*)$", query)
+            parts = re.match(r"(?is)^(SELECT\s+)(.+?)(\s+FROM\s+keyword_view\b.*)$", query)
             if parts:
                 selected = parts.group(2).lower()
                 extras = [field for field in ("campaign.id", "ad_group.id") if field not in selected]
