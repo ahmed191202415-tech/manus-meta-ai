@@ -347,7 +347,7 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
                   "oauth_scope_connected": connected,
                   "google_ads_api_ok": False,
                   "connect_url": None if connected else _connect_url(tenant),
-                  "available_actions": ["ping", "list_accounts", "inspect_campaign", "audit_crm_migration", "clone_campaign", "report", "query", "prepare_mutation", "commit_mutation"],
+                  "available_actions": ["ping", "list_accounts", "inspect_campaign", "audit_crm_migration", "clone_campaign", "report", "query", "keyword_inventory", "prepare_mutation", "commit_mutation"],
                   "reports": list(REPORTS),
                   "next_step": "If Google Ads API access is valid, use list_accounts or inspect_campaign in this same /tools/intent action; these commands execute live reads."}
         if connected:
@@ -385,6 +385,9 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
     if action in {"clone_campaign", "duplicate_campaign"}:
         from app.core.google_ads_clone import preview_clone_campaign
         return preview_clone_campaign(tenant, command)
+    if action == "keyword_inventory":
+        from app.core.google_ads_keyword_inventory import read_keyword_inventory
+        return read_keyword_inventory(tenant, command)
     if action in {"report", "analysis"}:
         result = _report(tenant, command)
         return {"ok": True, "provider": "google_ads", **result}
@@ -472,7 +475,7 @@ def parse_google_ads_request(body) -> dict:
             action = str(parsed.get("action") or "").lower()
             if trailing and action in {"prepare_mutation", "commit_mutation"}:
                 raise HTTPException(422, "Write commands must contain exactly one valid JSON object.")
-            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query"}:
+            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query", "keyword_inventory"}:
                 return parsed
         # Malformed read-only snippets may still be resolved from a campaign
         # name. Never guess or reconstruct write operations.
@@ -561,7 +564,7 @@ async def google_ads_intent(body, request: Request) -> dict:
         # ChatGPT Actions may swallow tool-level HTTP failures and never print
         # their details. For READS only, return a small 200 JSON diagnostic.
         # Auth failure above and all write actions retain their error codes.
-        read_actions = {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query"}
+        read_actions = {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query", "keyword_inventory"}
         action = str(command.get("action") or "").lower()
         if action not in read_actions:
             raise
