@@ -465,9 +465,9 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
             raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
         result = _read(query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100)
         # Even raw keyword GAQL reads must not silently return another campaign's data.
-        if re.search(r"(?i)\\bFROM\\s+keyword_view\\b", query):
-            campaign_filter = re.search(r"(?i)\\bcampaign\\.id\\s*=\\s*([0-9]+)", query)
-            group_filter = re.search(r"(?i)\\bad_group\\.id\\s*=\\s*([0-9]+)", query)
+        if re.search(r"(?i)\bFROM\s+keyword_view\b", query):
+            campaign_filter = re.search(r"(?i)\bcampaign\.id\s*=\s*([0-9]+)", query)
+            group_filter = re.search(r"(?i)\bad_group\.id\s*=\s*([0-9]+)", query)
             campaign_id = _scope_id(command.get("campaign_id") or (campaign_filter.group(1) if campaign_filter else None), "campaign_id")
             ad_group_id = _scope_id(command.get("ad_group_id") or (group_filter.group(1) if group_filter else None), "ad_group_id")
             if (command.get("campaign_id") and (not campaign_filter or campaign_filter.group(1) != campaign_id)) or (command.get("ad_group_id") and (not group_filter or group_filter.group(1) != ad_group_id)):
