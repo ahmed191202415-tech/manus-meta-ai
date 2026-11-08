@@ -486,7 +486,7 @@ def parse_google_ads_request(body) -> dict:
     # Never guess a campaign/group ID from the account or its name.
     keyword_intent = bool(re.search(
         r"(?i)\bkeyword(?:s|_inventory|_list)?\b|quality\s*score|"
-        r"الكلمات(?:\s+المفتاحية)?|كلمات\s+البحث|جودة\s+الكلمات", message
+        r"(?:ال)?كلمات(?:\s+(?:المفتاحية|مفتاحية|البحث))?|جودة\s+الكلمات", message
     ))
     if keyword_intent:
         def labeled_id(pattern: str) -> str | None:
