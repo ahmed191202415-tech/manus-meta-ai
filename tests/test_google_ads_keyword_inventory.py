@@ -100,3 +100,38 @@ def test_explicit_json_command_only_does_not_change_natural_parser():
     assert gateway.parse_google_ads_request(SimpleNamespace(
         request="google_ads افحص Sales-Search-1", meta_account_id=None
     ))["action"] == "inspect_campaign"
+
+
+def test_api_search_omits_unsupported_page_size_in_both_queries(monkeypatch):
+    payloads = []
+    def mocked_api(tenant, method, path, payload, **kwargs):
+        assert method == "POST"
+        assert path.endswith("/googleAds:search")
+        assert "pageSize" not in payload
+        assert "page_size" not in payload
+        payloads.append(dict(payload))
+        return {"results": [inventory_row()] if "FROM ad_group_criterion" in payload["query"] else [performance_row()]}
+    monkeypatch.setattr(gateway, "_api", mocked_api)
+    result = inv.read_keyword_inventory("tenant-123", PARAMS)
+    assert result["count"] == 1
+    assert len(payloads) == 2
+    assert all(set(payload) == {"query"} for payload in payloads)
+
+
+def test_pagination_sends_page_token_without_page_size(monkeypatch):
+    requests = []
+    def mocked_api(tenant, method, path, payload, **kwargs):
+        requests.append(dict(payload))
+        assert "pageSize" not in payload
+        if "FROM keyword_view" in payload["query"]:
+            return {"results": []}
+        if "pageToken" not in payload:
+            return {"results": [inventory_row(criterion_id="101")], "nextPageToken": "next-token"}
+        assert payload["pageToken"] == "next-token"
+        return {"results": [inventory_row(criterion_id="102")]}
+    monkeypatch.setattr(gateway, "_api", mocked_api)
+    result = inv.read_keyword_inventory("tenant-123", PARAMS)
+    assert result["count"] == 2
+    assert len(requests) == 3
+    assert set(requests[0]) == {"query"}
+    assert set(requests[1]) == {"query", "pageToken"}

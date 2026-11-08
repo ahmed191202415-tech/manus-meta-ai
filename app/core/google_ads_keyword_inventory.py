@@ -38,7 +38,9 @@ def _list(query: str, *, tenant: str, customer_id: str, manager_id=None) -> list
     token = None
     seen = set()
     while True:
-        payload = {"query": query, "pageSize": 1000}
+        # Google Ads API v25 rejects pageSize with PAGE_SIZE_NOT_SUPPORTED.
+        # Let Google select the page size; follow nextPageToken when supplied.
+        payload = {"query": query}
         if token:
             payload["pageToken"] = token
         response = _api(tenant, "POST", f"/customers/{customer_id}/googleAds:search", payload, manager_id=manager_id)
