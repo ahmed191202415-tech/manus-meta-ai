@@ -479,6 +479,52 @@ def parse_google_ads_request(body) -> dict:
         if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\bremove\b", message):
             raise HTTPException(422, "Google Ads write request must be one valid JSON object. No changes were made.")
 
+    # A keyword request must not silently become inspect_campaign just because
+    # the message names a campaign. Preserve explicit GAQL read-only queries.
+    keyword_requested = any(token in lower for token in (
+        "keyword", "الكلمات المفتاحية", "الكلمات", "كلمات البحث"
+    )) or bool(re.search(r"(?i)\bfrom\s+keyword_view\b", message))
+    if keyword_requested:
+        # The account ID must be explicit. A campaign ID is not an account ID.
+        cid = str(getattr(body, "meta_account_id", "") or "").replace("-", "")
+        customer_match = re.search(
+            r"(?i)(?:customer[_ ]id|account[_ ]id|حساب(?: جوجل)?(?: رقم)?)\s*[:= -]*([0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})",
+            message,
+        )
+        if customer_match:
+            cid = customer_match.group(1).replace("-", "")
+        if not re.fullmatch(r"[0-9]{10}", cid):
+            return {"action": "list_accounts", "note": "Supply Google Ads customer_id to read keywords."}
+
+        # Never replace an explicit GAQL keyword_view read with inspect_campaign.
+        query_match = re.search(
+            r"(?is)\bSELECT\s+.+?\bFROM\s+keyword_view\b[^\x60]*",
+            message,
+        )
+        if query_match:
+            query = query_match.group(0).strip()
+            # Strip explanatory text that follows the standalone statement.
+            query = re.split(r"\n\s*\n", query, maxsplit=1)[0].strip()
+            return {"action": "query", "customer_id": cid, "query": query}
+
+        campaign_match = re.search(
+            r"(?i)(?:campaign(?:\.id|_id| id)|الحملة(?: رقم)?)\s*[:= -]*([0-9]{8,15})",
+            message,
+        )
+        if campaign_match:
+            return {
+                "action": "query", "customer_id": cid,
+                "query": (
+                    "SELECT campaign.id, ad_group.name, ad_group_criterion.keyword.text, "
+                    "ad_group_criterion.keyword.match_type, ad_group_criterion.status, "
+                    "ad_group_criterion.quality_info.quality_score, metrics.clicks, "
+                    "metrics.impressions, metrics.cost_micros, metrics.conversions "
+                    "FROM keyword_view WHERE campaign.id = " + campaign_match.group(1) + " "
+                    "AND ad_group_criterion.type = KEYWORD LIMIT 100"
+                ),
+            }
+        return {"action": "report", "customer_id": cid, "report": "keywords", "date_range": "LAST_30_DAYS"}
+
     # Prioritize explicit action/named campaign over incidental 'status',
     # 'connected', 'account', etc. mentioned in the user's explanation.
     campaign_name = str(getattr(body, "campaign_name", "") or "").strip()
