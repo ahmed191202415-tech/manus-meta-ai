@@ -598,7 +598,7 @@ def parse_google_ads_request(body) -> dict:
             return {"action": "query", "customer_id": cid, "query": query}
 
         campaign_match = re.search(
-            r"(?i)(?:campaign(?:\.id|_id| id)|الحملة(?: رقم)?)\s*[:= -]*([0-9]{8,15})",
+            r"(?i)(?:campaign(?:\.id|_id| id)|للحملة|الحملة|حملة)(?:\s+رقم)?\s*[:= -]*([0-9]{8,15})",
             message,
         )
         group_match = re.search(
@@ -611,9 +611,17 @@ def parse_google_ads_request(body) -> dict:
                 "campaign_id": campaign_match.group(1), "ad_group_id": group_match.group(1),
             }
         if campaign_match:
+            campaign_id = campaign_match.group(1)
             return {
-                "action": "report", "customer_id": cid, "report": "keywords",
-                "campaign_id": campaign_match.group(1), "date_range": "LAST_30_DAYS",
+                "action": "query", "customer_id": cid,
+                "query": (
+                    "SELECT campaign.id, ad_group.id, ad_group.name, "
+                    "ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, "
+                    "ad_group_criterion.status, ad_group_criterion.quality_info.quality_score, "
+                    "metrics.clicks, metrics.impressions, metrics.cost_micros, metrics.conversions "
+                    "FROM keyword_view WHERE campaign.id = " + campaign_id + " "
+                    "AND ad_group_criterion.type = KEYWORD LIMIT 100"
+                ),
             }
         if re.search(r"(?i)(?:[a-z][a-z0-9]*-){1,}[a-z0-9]+", message):
             return {"action": "inspect_campaign", "campaign_name": re.search(
