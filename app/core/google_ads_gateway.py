@@ -483,24 +483,35 @@ def parse_google_ads_request(body) -> dict:
     # the message names a campaign. Preserve explicit GAQL read-only queries.
     keyword_requested = any(token in lower for token in (
         "keyword", "الكلمات المفتاحية", "الكلمات", "كلمات البحث"
-    )) or bool(re.search(r"(?i)\\bfrom\\s+keyword_view\\b", message))
+    )) or bool(re.search(r"(?i)\bfrom\s+keyword_view\b", message))
     if keyword_requested:
-        ids = re.findall(r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message)
+        # The account ID must be explicit. A campaign ID is not an account ID.
         cid = str(getattr(body, "meta_account_id", "") or "").replace("-", "")
-        if not cid and len(ids) >= 2:
-            # If the message includes both IDs, use the first as the account.
-            cid = ids[0].replace("-", "")
-        query_match = re.search(r"(?is)\\bSELECT\\s+.+?\\bFROM\\s+keyword_view\\b[^\\x60]*", message)
-        if query_match:
-            # Never invent an account ID: the query action requires it.
-            if not re.fullmatch(r"[0-9]{10}", cid):
-                return {"action": "list_accounts", "note": "Supply Google Ads customer_id with the keyword GAQL query."}
-            return {"action": "query", "customer_id": cid, "query": query_match.group(0).strip()}
-        campaign_ids = re.findall(r"(?i)(?:campaign(?:\\.id|_id| id)|الحملة(?: رقم)?)\\s*[:= -]*([0-9]{8,15})", message)
+        customer_match = re.search(
+            r"(?i)(?:customer[_ ]id|account[_ ]id|حساب(?: جوجل)?(?: رقم)?)\s*[:= -]*([0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})",
+            message,
+        )
+        if customer_match:
+            cid = customer_match.group(1).replace("-", "")
         if not re.fullmatch(r"[0-9]{10}", cid):
             return {"action": "list_accounts", "note": "Supply Google Ads customer_id to read keywords."}
-        if campaign_ids:
-            campaign_id = campaign_ids[-1]
+
+        # Never replace an explicit GAQL keyword_view read with inspect_campaign.
+        query_match = re.search(
+            r"(?is)\bSELECT\s+.+?\bFROM\s+keyword_view\b[^\x60]*",
+            message,
+        )
+        if query_match:
+            query = query_match.group(0).strip()
+            # Strip explanatory text that follows the standalone statement.
+            query = re.split(r"\n\s*\n", query, maxsplit=1)[0].strip()
+            return {"action": "query", "customer_id": cid, "query": query}
+
+        campaign_match = re.search(
+            r"(?i)(?:campaign(?:\.id|_id| id)|الحملة(?: رقم)?)\s*[:= -]*([0-9]{8,15})",
+            message,
+        )
+        if campaign_match:
             return {
                 "action": "query", "customer_id": cid,
                 "query": (
@@ -508,7 +519,7 @@ def parse_google_ads_request(body) -> dict:
                     "ad_group_criterion.keyword.match_type, ad_group_criterion.status, "
                     "ad_group_criterion.quality_info.quality_score, metrics.clicks, "
                     "metrics.impressions, metrics.cost_micros, metrics.conversions "
-                    "FROM keyword_view WHERE campaign.id = " + campaign_id + " "
+                    "FROM keyword_view WHERE campaign.id = " + campaign_match.group(1) + " "
                     "AND ad_group_criterion.type = KEYWORD LIMIT 100"
                 ),
             }
