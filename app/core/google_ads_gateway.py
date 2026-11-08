@@ -485,8 +485,8 @@ def parse_google_ads_request(body) -> dict:
     # Keyword inventory requests take priority over campaign-name inspection.
     # Never guess a campaign/group ID from the account or its name.
     keyword_intent = bool(re.search(
-        r"(?i)\\bkeyword(?:s|_inventory|_list)?\\b|quality\\s*score|"
-        r"الكلمات(?:\\s+المفتاحية)?|كلمات\\s+البحث|جودة\\s+الكلمات", message
+        r"(?i)\bkeyword(?:s|_inventory|_list)?\b|quality\s*score|"
+        r"الكلمات(?:\s+المفتاحية)?|كلمات\s+البحث|جودة\s+الكلمات", message
     ))
     if keyword_intent:
         def labeled_id(pattern: str) -> str | None:
@@ -494,18 +494,18 @@ def parse_google_ads_request(body) -> dict:
             return match.group(1) if match else None
 
         customer_id = labeled_id(
-            r"(?:customer[_ ]id|account[_ ]id|حساب(?:\\s+جوجل)?(?:\\s+رقم)?)\\s*[:= -]*"
+            r"(?:customer[_ ]id|account[_ ]id|حساب(?:\s+جوجل)?(?:\s+رقم)?)\s*[:= -]*"
             r"([0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})"
         )
         if not customer_id:
             account_value = str(getattr(body, "meta_account_id", "") or "").replace("-", "")
             customer_id = account_value if re.fullmatch(r"[0-9]{10}", account_value) else None
         campaign_id = labeled_id(
-            r"(?:campaign(?:[._ ]id)?|الحملة|للحملة|حملة)(?:\\s+رقم)?\\s*[:= -]*([0-9]{8,15})"
+            r"(?:campaign(?:[._ ]id)?|الحملة|للحملة|حملة)(?:\s+رقم)?\s*[:= -]*([0-9]{8,15})"
         )
         group_id = labeled_id(
-            r"(?:ad[_ ]group(?:[._ ]id)?|المجموعة(?:\\s+الإعلانية)?|للمجموعة(?:\\s+الإعلانية)?)"
-            r"(?:\\s+رقم)?\\s*[:= -]*([0-9]{8,15})"
+            r"(?:ad[_ ]group(?:[._ ]id)?|المجموعة(?:\s+الإعلانية)?|للمجموعة(?:\s+الإعلانية)?)"
+            r"(?:\s+رقم)?\s*[:= -]*([0-9]{8,15})"
         )
         if customer_id and campaign_id and group_id:
             return {
