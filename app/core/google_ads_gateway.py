@@ -482,6 +482,45 @@ def parse_google_ads_request(body) -> dict:
         if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\bremove\b", message):
             raise HTTPException(422, "Google Ads write request must be one valid JSON object. No changes were made.")
 
+    # Keyword inventory requests take priority over campaign-name inspection.
+    # Never guess a campaign/group ID from the account or its name.
+    keyword_intent = bool(re.search(
+        r"(?i)\\bkeyword(?:s|_inventory|_list)?\\b|quality\\s*score|"
+        r"الكلمات(?:\\s+المفتاحية)?|كلمات\\s+البحث|جودة\\s+الكلمات", message
+    ))
+    if keyword_intent:
+        def labeled_id(pattern: str) -> str | None:
+            match = re.search(pattern, message, re.IGNORECASE)
+            return match.group(1) if match else None
+
+        customer_id = labeled_id(
+            r"(?:customer[_ ]id|account[_ ]id|حساب(?:\\s+جوجل)?(?:\\s+رقم)?)\\s*[:= -]*"
+            r"([0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})"
+        )
+        if not customer_id:
+            account_value = str(getattr(body, "meta_account_id", "") or "").replace("-", "")
+            customer_id = account_value if re.fullmatch(r"[0-9]{10}", account_value) else None
+        campaign_id = labeled_id(
+            r"(?:campaign(?:[._ ]id)?|الحملة|للحملة|حملة)(?:\\s+رقم)?\\s*[:= -]*([0-9]{8,15})"
+        )
+        group_id = labeled_id(
+            r"(?:ad[_ ]group(?:[._ ]id)?|المجموعة(?:\\s+الإعلانية)?|للمجموعة(?:\\s+الإعلانية)?)"
+            r"(?:\\s+رقم)?\\s*[:= -]*([0-9]{8,15})"
+        )
+        if customer_id and campaign_id and group_id:
+            return {
+                "action": "keyword_inventory",
+                "customer_id": customer_id.replace("-", ""),
+                "campaign_id": campaign_id, "ad_group_id": group_id,
+            }
+        # Never route a keyword request to inspect_campaign or an unfiltered
+        # account-wide report: explicitly request the missing identifiers.
+        return {
+            "action": "keyword_inventory",
+            "customer_id": customer_id, "campaign_id": campaign_id,
+            "ad_group_id": group_id,
+        }
+
     # Prioritize explicit action/named campaign over incidental 'status',
     # 'connected', 'account', etc. mentioned in the user's explanation.
     campaign_name = str(getattr(body, "campaign_name", "") or "").strip()
