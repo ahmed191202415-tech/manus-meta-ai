@@ -64,8 +64,8 @@ def read_keyword_inventory(tenant: str, args: dict) -> dict:
     group_id = _id(args.get("ad_group_id"), "ad_group_id")
     manager_id = args.get("manager_id")
     filters = (f"campaign.id = {campaign_id} AND ad_group.id = {group_id} "
-               "AND ad_group_criterion.type = 'KEYWORD' "
-               "AND ad_group_criterion.status = 'ENABLED' "
+               "AND ad_group_criterion.type = KEYWORD "
+               "AND ad_group_criterion.status = ENABLED "
                "AND ad_group_criterion.negative = FALSE")
     inventory_query = (
         "SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, "
