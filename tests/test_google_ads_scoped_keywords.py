@@ -126,3 +126,29 @@ def test_scope_ids_are_required_and_validated():
             "campaign_id": "24412747386 OR TRUE", "ad_group_id": GROUP,
         }, {"tenant_id": "test-tenant"})
     assert invalid.value.status_code == 422
+
+
+def test_raw_gaql_adds_ids_to_select_before_verifying(monkeypatch):
+    queries = []
+    def mock_read(query, *args):
+        queries.append(query)
+        return {"rows": [_row()], "count": 1, "truncated": False}
+    monkeypatch.setattr(ads, "_read", mock_read)
+    result = ads.execute_google_ads_command({
+        "action": "query", "customer_id": CID,
+        "query": (
+            "SELECT ad_group_criterion.keyword.text, metrics.clicks "
+            "FROM keyword_view WHERE campaign.id = " + CAMPAIGN +
+            " AND ad_group.id = " + GROUP
+        ),
+    }, {"tenant_id": "test-tenant"})
+    assert result["scope_verified"] is True
+    assert "SELECT campaign.id, ad_group.id, " in queries[0]
+
+
+def test_named_campaign_without_id_uses_discovery_not_account_wide_report():
+    command = parse(
+        "google_ads اعرض الكلمات المفتاحية لحملة Sales-Search-crm customer_id " + CID
+    )
+    assert command["action"] == "inspect_campaign"
+    assert command["campaign_name"] == "Sales-Search-crm"
