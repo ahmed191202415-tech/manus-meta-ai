@@ -463,6 +463,16 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
         query = str(command.get("query") or "").strip()
         if not re.match(r"(?is)^SELECT\s+", query) or len(query)>6000 or ";" in query or "--" in query or "/*" in query:
             raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
+        # Include IDs in scoped keyword results even if the user omitted them
+        # from SELECT; this allows us to verify Google Ads responses safely.
+        is_keyword_query = bool(re.search(r"(?i)\\bFROM\\s+keyword_view\\b", query))
+        if is_keyword_query:
+            parts = re.match(r"(?is)^(SELECT\\s+)(.+?)(\\s+FROM\\s+keyword_view\\b.*)$", query)
+            if parts:
+                selected = parts.group(2).lower()
+                extras = [field for field in ("campaign.id", "ad_group.id") if field not in selected]
+                if extras:
+                    query = parts.group(1) + ", ".join(extras) + ", " + parts.group(2) + parts.group(3)
         result = _read(query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100)
         # Even raw keyword GAQL reads must not silently return another campaign's data.
         if re.search(r"(?i)\bFROM\s+keyword_view\b", query):
@@ -605,6 +615,11 @@ def parse_google_ads_request(body) -> dict:
                 "action": "report", "customer_id": cid, "report": "keywords",
                 "campaign_id": campaign_match.group(1), "date_range": "LAST_30_DAYS",
             }
+        if re.search(r"(?i)(?:[a-z][a-z0-9]*-){1,}[a-z0-9]+", message):
+            return {"action": "inspect_campaign", "campaign_name": re.search(
+                r"(?i)(?:[a-z][a-z0-9]*-){1,}[a-z0-9]+", message
+            ).group(0), "customer_id": cid,
+                    "note": "Campaign name needs ID discovery before scoped keyword read."}
         return {"action": "report", "customer_id": cid, "report": "keywords", "date_range": "LAST_30_DAYS"}
 
     # Prioritize explicit action/named campaign over incidental 'status',
