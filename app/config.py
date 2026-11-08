@@ -56,7 +56,8 @@ ANALYSIS_MAX_PAGES = int(os.getenv("ANALYSIS_MAX_PAGES", "3"))
 ANALYSIS_DEFAULT_DATE_PRESET = os.getenv("ANALYSIS_DEFAULT_DATE_PRESET", "last_7d")
 META_RETRY_MAX_ATTEMPTS = int(os.getenv("META_RETRY_MAX_ATTEMPTS", "4"))
 META_RETRY_BASE_DELAY_SECONDS = float(os.getenv("META_RETRY_BASE_DELAY_SECONDS", "2.0"))
-EXPORT_DIR = Path(os.getenv("EXPORT_DIR", "exports")).expanduser().resolve()
+_DEFAULT_EXPORT_DIR = "/tmp/manus-meta/exports" if os.getenv("VERCEL") else "exports"
+EXPORT_DIR = Path(os.getenv("EXPORT_DIR", _DEFAULT_EXPORT_DIR)).expanduser().resolve()
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
