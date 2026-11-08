@@ -9,19 +9,19 @@ CAMPAIGN = "24412747386"
 GROUP = "201563783253"
 
 
-def parse(request, account=None):
+def parse(message, account=None):
     return ads.parse_google_ads_request(SimpleNamespace(
-        request=request, campaign_name=None, meta_account_id=account,
+        request=message, campaign_name=None, meta_account_id=account,
     ))
 
 
-@pytest.mark.parametrize("request", [
+@pytest.mark.parametrize("message", [
     "google_ads اقرأ الكلمات المفتاحية للحملة رقم 24412747386 المجموعة الإعلانية رقم 201563783253 customer_id 3333735582 Sales-Search-crm",
     "google ads keywords campaign_id=24412747386 ad_group_id=201563783253 customer_id=3333735582 Sales-Search-crm",
     "جوجل ادز اعرض Quality Score لحملة رقم 24412747386 للمجموعة رقم 201563783253 customer_id 3333735582",
 ])
-def test_natural_keyword_read_is_not_inspect_campaign(request):
-    command = parse(request)
+def test_natural_keyword_read_is_not_inspect_campaign(message):
+    command = parse(message)
     assert command == {
         "action": "keyword_inventory",
         "customer_id": CUSTOMER,
