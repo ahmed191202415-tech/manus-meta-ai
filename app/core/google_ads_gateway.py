@@ -44,7 +44,7 @@ REPORTS = {
         " metrics.conversions, metrics.ctr"
     , "ad_group_ad"),
     "keywords": (
-        "campaign.name, ad_group.name, ad_group_criterion.criterion_id,"
+        "campaign.id, campaign.name, ad_group.id, ad_group.name, ad_group_criterion.criterion_id,"
         " ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,"
         " ad_group_criterion.status, ad_group_criterion.quality_info.quality_score,"
         " metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions,"
@@ -270,6 +270,60 @@ def _aggregate(rows: list[dict]) -> dict:
     }
 
 
+def _scope_id(value: object, name: str) -> str | None:
+    """Validate Google Ads campaign/ad-group IDs without treating account IDs as scope."""
+    if value in (None, ""):
+        return None
+    cleaned = str(value).strip()
+    if not re.fullmatch(r"[0-9]{1,20}", cleaned):
+        raise HTTPException(422, f"{name} must be a numeric Google Ads ID.")
+    return cleaned
+
+
+def _verify_keyword_scope(rows: list[dict], campaign_id: str | None, ad_group_id: str | None) -> None:
+    """Fail closed if a Google Ads response does not match the requested scope."""
+    if not campaign_id and not ad_group_id:
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            raise HTTPException(502, "Google Ads keyword response is not a valid row.")
+        campaign = row.get("campaign") or {}
+        group = row.get("adGroup") or {}
+        if not isinstance(campaign, dict) or not isinstance(group, dict):
+            raise HTTPException(502, "Google Ads keyword response has invalid identifiers.")
+        if campaign_id and str(campaign.get("id") or "") != campaign_id:
+            raise HTTPException(502, "Google Ads keyword response campaign ID mismatch; rows withheld.")
+        if ad_group_id and str(group.get("id") or "") != ad_group_id:
+            raise HTTPException(502, "Google Ads keyword response ad group ID mismatch; rows withheld.")
+
+
+def _scoped_keywords(tenant_id: str, args: dict) -> dict:
+    """Read only the requested campaign/ad group using GAQL and verify every row."""
+    customer_id = _customer_id(args.get("customer_id"))
+    campaign_id = _scope_id(args.get("campaign_id"), "campaign_id")
+    ad_group_id = _scope_id(args.get("ad_group_id"), "ad_group_id")
+    if not campaign_id or not ad_group_id:
+        raise HTTPException(422, "Scoped keywords require both campaign_id and ad_group_id.")
+    query = (
+        "SELECT campaign.id, campaign.name, ad_group.id, ad_group.name, "
+        "ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, "
+        "ad_group_criterion.keyword.match_type, ad_group_criterion.status, "
+        "ad_group_criterion.quality_info.quality_score, metrics.impressions, "
+        "metrics.clicks, metrics.cost_micros, metrics.conversions "
+        "FROM keyword_view WHERE campaign.id = " + campaign_id
+        + " AND ad_group.id = " + ad_group_id
+        + " AND ad_group_criterion.type = KEYWORD"
+    )
+    limit = min(max(int(args.get("limit") or 300), 1), MAX_ROWS)
+    result = _read(query, tenant_id, customer_id, args.get("manager_id"), limit)
+    _verify_keyword_scope(result["rows"], campaign_id, ad_group_id)
+    return {
+        **result, "customer_id": customer_id, "campaign_id": campaign_id,
+        "ad_group_id": ad_group_id, "report": "keywords", "scope_verified": True,
+        "summary": _aggregate(result["rows"]),
+    }
+
+
 def _report(tenant_id: str, args: dict) -> dict:
     customer_id = _customer_id(args.get("customer_id"))
     report = str(args.get("report") or "campaigns").lower()
@@ -280,13 +334,27 @@ def _report(tenant_id: str, args: dict) -> dict:
         raise HTTPException(422, "Unsupported Google Ads date range.")
     fields, resource = REPORTS[report]
     query = f"SELECT {fields} FROM {resource}"
+    filters = []
     if report not in {"budgets", "conversions", "negative_keywords"} and duration != "ALL_TIME":
-        query += f" WHERE segments.date DURING {duration}"
+        filters.append(f"segments.date DURING {duration}")
     if report == "negative_keywords":
-        query += " WHERE ad_group_criterion.negative = TRUE"
-    query += f" LIMIT {min(max(int(args.get('limit') or 100), 1), MAX_ROWS)}"
-    res = _read(query, tenant_id, customer_id, args.get("manager_id"), args.get("limit") or 100)
-    res.update({"customer_id": customer_id, "report": report, "date_range": duration})
+        filters.append("ad_group_criterion.negative = TRUE")
+    campaign_id = _scope_id(args.get("campaign_id"), "campaign_id") if report == "keywords" else None
+    ad_group_id = _scope_id(args.get("ad_group_id"), "ad_group_id") if report == "keywords" else None
+    if campaign_id:
+        filters.append("campaign.id = " + campaign_id)
+    if ad_group_id:
+        filters.append("ad_group.id = " + ad_group_id)
+    if filters:
+        query += " WHERE " + " AND ".join(filters)
+    limit = min(max(int(args.get("limit") or 100), 1), MAX_ROWS)
+    query += f" LIMIT {limit}"
+    res = _read(query, tenant_id, customer_id, args.get("manager_id"), limit)
+    if report == "keywords":
+        _verify_keyword_scope(res["rows"], campaign_id, ad_group_id)
+    res.update({"customer_id": customer_id, "report": report, "date_range": duration,
+                "campaign_id": campaign_id, "ad_group_id": ad_group_id,
+                "scope_verified": bool(campaign_id or ad_group_id) if report == "keywords" else None})
     if report in {"campaigns", "ad_groups", "ads", "keywords", "search_terms", "daily", "devices"}:
         res["summary"] = _aggregate(res["rows"])
     return res
@@ -385,6 +453,8 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
     if action in {"clone_campaign", "duplicate_campaign"}:
         from app.core.google_ads_clone import preview_clone_campaign
         return preview_clone_campaign(tenant, command)
+    if action in {"keywords", "list_keywords", "scoped_keywords"}:
+        return {"ok": True, "provider": "google_ads", **_scoped_keywords(tenant, command)}
     if action in {"report", "analysis"}:
         result = _report(tenant, command)
         return {"ok": True, "provider": "google_ads", **result}
@@ -393,8 +463,18 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
         query = str(command.get("query") or "").strip()
         if not re.match(r"(?is)^SELECT\s+", query) or len(query)>6000 or ";" in query or "--" in query or "/*" in query:
             raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
-        return {"ok": True, "provider": "google_ads", "customer_id": customer_id,
-                **_read(query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100)}
+        result = _read(query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100)
+        # Even raw keyword GAQL reads must not silently return another campaign's data.
+        if re.search(r"(?i)\\bFROM\\s+keyword_view\\b", query):
+            campaign_filter = re.search(r"(?i)\\bcampaign\\.id\\s*=\\s*([0-9]+)", query)
+            group_filter = re.search(r"(?i)\\bad_group\\.id\\s*=\\s*([0-9]+)", query)
+            campaign_id = _scope_id(command.get("campaign_id") or (campaign_filter.group(1) if campaign_filter else None), "campaign_id")
+            ad_group_id = _scope_id(command.get("ad_group_id") or (group_filter.group(1) if group_filter else None), "ad_group_id")
+            if (command.get("campaign_id") and (not campaign_filter or campaign_filter.group(1) != campaign_id)) or (command.get("ad_group_id") and (not group_filter or group_filter.group(1) != ad_group_id)):
+                raise HTTPException(422, "Keyword GAQL query does not match the requested campaign/ad group scope.")
+            _verify_keyword_scope(result["rows"], campaign_id, ad_group_id)
+            result.update({"campaign_id": campaign_id, "ad_group_id": ad_group_id, "scope_verified": bool(campaign_id or ad_group_id)})
+        return {"ok": True, "provider": "google_ads", "customer_id": customer_id, **result}
     if action == "prepare_mutation":
         cid = _customer_id(command.get("customer_id"))
         ops = _check_mutations(command.get("operations"), cid)
@@ -472,7 +552,7 @@ def parse_google_ads_request(body) -> dict:
             action = str(parsed.get("action") or "").lower()
             if trailing and action in {"prepare_mutation", "commit_mutation"}:
                 raise HTTPException(422, "Write commands must contain exactly one valid JSON object.")
-            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query"}:
+            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query", "keywords", "scoped_keywords", "list_keywords"}:
                 return parsed
         # Malformed read-only snippets may still be resolved from a campaign
         # name. Never guess or reconstruct write operations.
@@ -511,17 +591,19 @@ def parse_google_ads_request(body) -> dict:
             r"(?i)(?:campaign(?:\.id|_id| id)|الحملة(?: رقم)?)\s*[:= -]*([0-9]{8,15})",
             message,
         )
+        group_match = re.search(
+            r"(?i)(?:ad[_ ]group(?:\.id|_id| id)?|المجموعة(?: الإعلانية)?(?: رقم)?)\s*[:= -]*([0-9]{1,20})",
+            message,
+        )
+        if campaign_match and group_match:
+            return {
+                "action": "scoped_keywords", "customer_id": cid,
+                "campaign_id": campaign_match.group(1), "ad_group_id": group_match.group(1),
+            }
         if campaign_match:
             return {
-                "action": "query", "customer_id": cid,
-                "query": (
-                    "SELECT campaign.id, ad_group.name, ad_group_criterion.keyword.text, "
-                    "ad_group_criterion.keyword.match_type, ad_group_criterion.status, "
-                    "ad_group_criterion.quality_info.quality_score, metrics.clicks, "
-                    "metrics.impressions, metrics.cost_micros, metrics.conversions "
-                    "FROM keyword_view WHERE campaign.id = " + campaign_match.group(1) + " "
-                    "AND ad_group_criterion.type = KEYWORD LIMIT 100"
-                ),
+                "action": "report", "customer_id": cid, "report": "keywords",
+                "campaign_id": campaign_match.group(1), "date_range": "LAST_30_DAYS",
             }
         return {"action": "report", "customer_id": cid, "report": "keywords", "date_range": "LAST_30_DAYS"}
 
