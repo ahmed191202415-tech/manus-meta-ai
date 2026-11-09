@@ -1,0 +1,25 @@
+# Isolated Northflank preview - source branch experiment/northflank-sandbox-preview
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8000 \
+    EXPORT_DIR=/tmp/manus-meta/exports
+
+WORKDIR /srv/app
+
+COPY requirements.txt ./
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY knowledge_base ./knowledge_base
+
+RUN groupadd --system app && useradd --system --gid app --home-dir /srv/app app \
+    && mkdir -p /tmp/manus-meta/exports \
+    && chown -R app:app /srv/app /tmp/manus-meta
+
+USER app
+EXPOSE 8000
+
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers"]
