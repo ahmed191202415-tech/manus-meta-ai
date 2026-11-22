@@ -87,6 +87,30 @@ async def google_ads_connect(ticket: str, request: Request):
     )
 
 
+@router.get("/gpt-login", include_in_schema=False)
+async def google_gpt_identity_login(request: Request):
+    """Verify the tenant owner's email independently of Meta availability."""
+    tenant_id = str(request.session.get("tenant_id") or "").strip()
+    if not tenant_id or not request.session.get("gpt_oauth_redirect_uri"):
+        raise HTTPException(status_code=401, detail="Begin signing in from ChatGPT first.")
+    account = get_tenant_account_by_id(tenant_id)
+    if not account or account.get("deleted_at") or str(account.get("status") or "").lower() != "active" or is_account_expired(account):
+        raise HTTPException(status_code=403, detail="This customer account is not active.")
+    state = secrets.token_urlsafe(24)
+    request.session["google_oauth_state"] = state
+    request.session["pending_google_tenant_id"] = tenant_id
+    request.session["gpt_google_identity_pending"] = True
+    request.session.pop("gpt_google_verified_email", None)
+    request.session.pop("gpt_google_verified_tenant", None)
+    # Request only identity scopes: never modify saved Google Ads/GA4 connection.
+    return RedirectResponse(
+        url=build_google_authorization_url(
+            state, additional_scopes="openid email profile"
+        ),
+        status_code=302,
+    )
+
+
 @router.get("/callback")
 async def google_callback(
     request: Request,
@@ -107,6 +131,33 @@ async def google_callback(
     tenant_id = str(request.session.get("pending_google_tenant_id") or request.session.get("tenant_id") or "").strip()
     if not tenant_id:
         raise HTTPException(status_code=400, detail="No tenant was selected for Google authentication.")
+
+    # GPT sign-in is identity verification only. Keep stored integration
+    # credentials, refresh tokens, and account settings entirely unchanged.
+    if request.session.get("gpt_google_identity_pending"):
+        request.session.pop("gpt_google_identity_pending", None)
+        token_data = exchange_google_code(code)
+        userinfo = fetch_google_userinfo(token_data["access_token"])
+        account = get_tenant_account_by_id(tenant_id)
+        email = str(userinfo.get("email") or "").strip().lower()
+        if (
+            not account
+            or account.get("deleted_at")
+            or str(account.get("status") or "").lower() != "active"
+            or is_account_expired(account)
+            or not email
+            or userinfo.get("verified_email") is not True
+            or email != str(account.get("email") or "").strip().lower()
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Sign in with the Google email authorized for this customer.",
+            )
+        request.session["gpt_google_verified_tenant"] = tenant_id
+        request.session["gpt_google_verified_email"] = email
+        request.session.pop("google_oauth_state", None)
+        request.session.pop("pending_google_tenant_id", None)
+        return RedirectResponse(url="/oauth/continue", status_code=302)
 
     token_data = exchange_google_code(code)
     try:
