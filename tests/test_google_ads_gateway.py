@@ -37,7 +37,14 @@ def test_invalid_credentials_rejected():
 
 def test_mutation_is_two_stage_and_single_use(monkeypatch):
     effects = []
-    monkeypatch.setattr(ads, "_api", lambda *a, **k: effects.append((a,k)) or {})
+    def mutate(*a, **k):
+        effects.append((a, k))
+        return {} if a[3]["validateOnly"] else {
+            "mutateOperationResponses": [{
+                "campaignResult": {"resourceName": "customers/1234567890/campaigns/1"},
+            }],
+        }
+    monkeypatch.setattr(ads, "_api", mutate)
     monkeypatch.setattr(ads, "create_auth_code", lambda *a, **k: "code_dummy")
     uses = []
     monkeypatch.setattr(ads, "consume_auth_code", lambda code: uses.append(code) or (

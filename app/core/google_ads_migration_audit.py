@@ -5,6 +5,7 @@ fail independently; never represent partial read results as clone-ready.
 """
 from __future__ import annotations
 
+import re
 from fastapi import HTTPException
 
 from app.core.google_ads_discovery import _safe_google_ads_error
@@ -38,15 +39,19 @@ def audit_crm_migration(tenant: str, customer_id: str, campaign_id: str, ad_grou
     truncated = []
     for name, template, size in SECTIONS:
         q = template.format(campaign=campaign, ad_group=group)
+        # Fetch one extra row so LIMIT cannot make a partial section appear
+        # complete merely because Google returned no nextPageToken.
+        q = re.sub(r"\bLIMIT\s+\d+\s*$", f"LIMIT {size + 1}", q)
         try:
-            data = _read(q, tenant, cid, mid, limit=size)
+            data = _read(q, tenant, cid, mid, limit=size + 1)
             rows = data.get("rows") or []
+            incomplete = bool(data.get("truncated")) or len(rows) > size
             sections[name] = {
-                "ok": True, "count": len(rows),
-                "truncated": bool(data.get("truncated")),
-                "rows": rows,
+                "ok": True, "count": min(len(rows), size),
+                "truncated": incomplete,
+                "rows": rows[:size],
             }
-            if data.get("truncated"):
+            if incomplete:
                 truncated.append(name)
         except HTTPException as exc:
             safe = _safe_google_ads_error(exc)
@@ -67,6 +72,7 @@ def audit_crm_migration(tenant: str, customer_id: str, campaign_id: str, ad_grou
         "ok": complete,
         "provider": "google_ads", "action": "audit_crm_migration",
         "mode": "READ_ONLY", "no_changes_applied": True,
+        "verified_by_google_api": any(section.get("ok") for section in sections.values()),
         "customer_id": cid, "campaign_id": campaign, "ad_group_id": group,
         "identity_verified": identity_ok,
         "sections": sections, "failed_sections": failed,
@@ -78,7 +84,7 @@ def audit_crm_migration(tenant: str, customer_id: str, campaign_id: str, ad_grou
             "Confirm all active and paused ads and keywords were included, with exact text, match type, negatives, policy status and URLs.",
             "Check campaign-level shared lists, audience/location/language targeting and asset associations.",
             "Review bidding learning reset and attribution differences after creating a separate campaign.",
-            "Review combined daily budgets: old campaign 500 EGP plus proposed new campaign 800 EGP.",
+            "Review the source campaign's actual budget and the proposed new campaign budget together.",
             "Only pause the original crm group after new campaign and tracking are validated and user explicitly approves.",
         ],
         "next_step": (

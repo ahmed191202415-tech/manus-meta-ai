@@ -192,7 +192,11 @@ def _campaign_insights_steps(body: IntentToolRequest) -> list[dict]:
 @router.post(
     "/intent",
     summary="Route natural request",
-    description="Maps Arabic or English user requests to the best tool, action, payload, and next steps. Use first when unsure.",
+    description=(
+        "Routes requests and executes Google Ads. Prefer google_ads JSON with action=report, customer_id, "
+        "report, campaign_id, start_date/end_date. Search terms are actual searches. Put query filters in GAQL. "
+        "Writes require preview and approval. Check scope, period and partial before analysis."
+    ),
 )
 async def intent_tool(body: IntentToolRequest, request: Request = None):
     # Google Ads uses the SAME previously published GPT Actions schema:

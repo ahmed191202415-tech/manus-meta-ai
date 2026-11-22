@@ -938,22 +938,30 @@ def create_auth_code(tenant_id: str, meta_user_id: str, expires_in: int = 600):
 
 
 def consume_auth_code(code: str):
-    row = _get_single(
+    """Atomically claim one unexpired code, including Ads mutation approvals.
+
+    The used/expiry predicates and update must run in the same database
+    statement. A separate SELECT followed by unconditional UPDATE lets two
+    concurrent callers both redeem the same code.
+    """
+    clean_code = _clean(code)
+    if not clean_code:
+        return None
+    rows = _patch(
         "oauth_codes",
-        params={"code": f"eq.{_clean(code)}", "select": "*", "limit": "1"},
+        params={
+            "code": f"eq.{clean_code}",
+            "used": "eq.false",
+            "expires_at": f"gt.{_dt(_now_utc())}",
+        },
+        payload={"used": True},
+        prefer="return=representation",
     )
-    if not row or row.get("used"):
+    if not isinstance(rows, list) or len(rows) != 1:
         return None
-
-    expires_at = row.get("expires_at")
-    if not expires_at:
+    row = rows[0]
+    if not isinstance(row, dict) or row.get("used") is not True or row.get("code") != clean_code:
         return None
-
-    exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
-    if exp < datetime.now(timezone.utc):
-        return None
-
-    _patch("oauth_codes", params={"code": f"eq.{_clean(code)}"}, payload={"used": True}, prefer="return=minimal")
     return row
 
 
@@ -1237,13 +1245,13 @@ def get_app_token_data(token: str):
     if not row:
         return None
 
-    exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
-    if exp < datetime.now(timezone.utc):
+    exp = _parse_dt(row.get("expires_at"))
+    if exp is None or exp.tzinfo is None or exp <= _now_utc():
         return None
 
     account = get_tenant_account_by_id(row["tenant_id"])
     account_status = str((account or {}).get("status") or "").lower()
-    if not account or account.get("deleted_at") or account_status in {"disabled", "deleted"} or is_account_expired(account):
+    if not account or account.get("deleted_at") or account.get("disabled_at") or account_status != "active" or is_account_expired(account):
         return None
 
     # Google-verified GPT identity is tenant-scoped, not a Meta access token.
@@ -1253,7 +1261,10 @@ def get_app_token_data(token: str):
 
     connection = get_meta_connection(row["meta_user_id"], tenant_id=row["tenant_id"])
     if not connection:
-        return None
+        # The application bearer still identifies an active tenant. Losing a
+        # provider connection must not revoke Google access or start another
+        # ChatGPT sign-in loop. Meta tools independently require a Meta token.
+        return {"tenant_id": row["tenant_id"], "meta_user_id": row["meta_user_id"], "meta_access_token": None}
 
     meta_app = get_tenant_meta_app(row["tenant_id"])
     return {

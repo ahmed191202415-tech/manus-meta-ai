@@ -1,3 +1,6 @@
+import os
+import re
+
 from fastapi import APIRouter
 from app.config import EXPORT_DIR, META_API_VERSION, META_APP_SECRET, META_TEST_ACCESS_TOKEN, PUBLIC_BASE_URL
 
@@ -6,8 +9,14 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health():
+    commit = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("VERCEL_GIT_COMMIT_SHA") or ""
+    commit = commit if re.fullmatch(r"[a-fA-F0-9]{40}", commit) else None
     return {
         "ok": True,
+        "deployment_commit": commit,
+        "google_ads_report_contract": "2026-11-22-scoped-reports-v1",
+        "google_ads_rest_version": "v25",
+        "google_ads_sdk_version": "v26",
         "meta_api_version": META_API_VERSION,
         "public_base_url": PUBLIC_BASE_URL,
         "export_dir": str(EXPORT_DIR),

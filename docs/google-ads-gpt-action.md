@@ -33,6 +33,7 @@ google_ads {"action":"report","customer_id":"1234567890","report":"campaigns","d
 google_ads {"action":"report","customer_id":"1234567890","report":"ad_groups","date_range":"LAST_7_DAYS"}
 google_ads {"action":"report","customer_id":"1234567890","report":"keywords","date_range":"LAST_30_DAYS"}
 google_ads {"action":"report","customer_id":"1234567890","report":"search_terms","date_range":"LAST_7_DAYS"}
+google_ads {"action":"report","customer_id":"1234567890","campaign_id":"123","report":"search_terms","start_date":"2026-11-16","end_date":"2026-11-22"}
 google_ads {"action":"report","customer_id":"1234567890","report":"daily","date_range":"LAST_7_DAYS"}
 google_ads {"action":"report","customer_id":"1234567890","report":"budgets"}
 google_ads {"action":"query","customer_id":"1234567890","query":"SELECT campaign.id, campaign.name, campaign.status FROM campaign LIMIT 25"}
@@ -44,6 +45,29 @@ budgets, daily, devices, conversions, negative_keywords.
 The client may also pass natural Egyptian Arabic such as
 `حلل إعلانات جوجل النهارده للحساب 123-456-7890`.
 Calls without an account ID return the connected account list first.
+
+Use `start_date` and `end_date` for an exact inclusive interval; `LAST_7_DAYS`
+excludes today and is not a substitute for dates explicitly requested by the
+user. `date` selects one calendar day. Report dates use the Google Ads
+customer's time zone. Campaign/ad-group filters are applied to compatible
+resources and rejected for incompatible configuration reports.
+
+Reports include `period`, `scope`, `currency_code`, `time_zone`, `partial`,
+`truncated`, `summary_scope`, and API provenance. Summaries cover returned rows.
+Search Terms are Google's disclosed searches, not targeted keywords or the
+entire campaign's spending total. Zero returned rows are an empty result, not
+proof that there were no searches. Budget and conversion-action reports describe
+configuration; the negative-keyword report currently covers ad-group negatives.
+
+Explicit `query` commands accept only query execution inputs. Put campaign/date
+filters inside GAQL; extra scope fields are rejected instead of ignored.
+All reads are bounded, and an extra sentinel row detects truncation. An existing
+GAQL LIMIT is never widened.
+
+Structured errors preserve error family/code, field and Google request ID
+across both Search and SearchStream. A provider `400` alone is not a permissions
+diagnosis. Transient reads can be retried once; mutations are never replayed
+automatically.
 
 ## Writes: strictly preview then explicit confirmation
 
@@ -63,6 +87,24 @@ build valid Google Ads operations and let validateOnly check before proposing.
 To commit only after the human has approved this exact preview, include the
 returned `approval_token`, `confirmation_phrase`, and action `commit_mutation`.
 The approval expires within 10 minutes and can only be consumed once.
+Consumption is one conditional database update, including for simultaneous
+requests. `APPLIED` requires matching operation results. A transport failure
+or incomplete mutation response means the outcome may be unknown: read the
+affected resources before preparing another change.
+
+## Deployment and verification
+
+`requirements.txt` applies the committed `constraints.txt`, so a redeployment
+uses the dependency versions tested by CI. Update that file deliberately and
+run the full regression suite when upgrading dependencies.
+
+`GET /health` exposes the deployed Git commit (when supplied by Railway/Vercel)
+and the Google Ads report contract version. Check this after deployment, then
+run the actual scoped read through the authenticated Action. Health and passing
+mocked tests do not establish live Google Ads data access.
+
+The architecture review and primary GitHub/Google references are documented in
+[google-ads-reliability.md](google-ads-reliability.md).
 
 No real Google Ads account was modified during development. Generic mutations
 are restricted to approved Google Ads resource-operation types; not every
