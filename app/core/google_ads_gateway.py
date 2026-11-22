@@ -221,7 +221,7 @@ def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, ma
             "message": "Google Ads API rejected the request. The OAuth Action may still be connected.",
             "next_step": next_step,
         })
-    if not isinstance(result, dict):
+    if not isinstance(result, (dict, list)):
         raise HTTPException(502, "Google Ads returned an unexpected data format.")
     return result
 
@@ -240,6 +240,29 @@ def _read(query: str, tenant_id: str, customer_id: str, manager_id=None, limit: 
         if not next_page or len(rows) >= max_rows:
             break
     return {"rows": rows[:max_rows], "truncated": bool(next_page) or len(rows)>max_rows, "count": min(len(rows), max_rows)}
+
+
+def _read_stream(query: str, tenant_id: str, customer_id: str, manager_id=None, limit: int=100) -> dict:
+    """GoogleAdsService.SearchStream REST method; streams response batches."""
+    batches = _api(
+        tenant_id, "POST", f"/customers/{customer_id}/googleAds:searchStream",
+        {"query": query}, manager_id=manager_id,
+    )
+    # SearchStream REST returns a JSON array, unlike regular Search.
+    if not isinstance(batches, list):
+        raise HTTPException(502, "Google Ads SearchStream returned an unexpected data format.")
+    max_rows = min(max(1, int(limit)), MAX_ROWS)
+    rows = []
+    total = 0
+    for batch in batches:
+        if not isinstance(batch, dict):
+            raise HTTPException(502, "Google Ads SearchStream returned a malformed batch.")
+        chunk = batch.get("results") or []
+        if not isinstance(chunk, list):
+            raise HTTPException(502, "Google Ads SearchStream returned malformed results.")
+        total += len(chunk)
+        rows.extend(chunk[:max(0, max_rows - len(rows))])
+    return {"rows": rows, "count": len(rows), "truncated": total > max_rows, "query_method": "GoogleAdsService.SearchStream"}
 
 
 def _aggregate(rows: list[dict]) -> dict:
@@ -276,17 +299,31 @@ def _report(tenant_id: str, args: dict) -> dict:
     if report not in REPORTS:
         raise HTTPException(422, "Unknown report. Use: " + ", ".join(REPORTS))
     duration = str(args.get("date_range") or "LAST_7_DAYS").upper()
-    if duration not in DURATIONS:
+    requested_date = str(args.get("date") or "").strip()
+    if requested_date:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", requested_date):
+            raise HTTPException(422, "date must be YYYY-MM-DD.")
+        from datetime import date as calendar_date
+        try:
+            calendar_date.fromisoformat(requested_date)
+        except ValueError:
+            raise HTTPException(422, "Invalid calendar date.")
+    elif duration not in DURATIONS:
         raise HTTPException(422, "Unsupported Google Ads date range.")
     fields, resource = REPORTS[report]
     query = f"SELECT {fields} FROM {resource}"
-    if report not in {"budgets", "conversions", "negative_keywords"} and duration != "ALL_TIME":
+    if requested_date and report in {"budgets", "conversions", "negative_keywords"}:
+        raise HTTPException(422, "This report does not support a campaign metrics date.")
+    if requested_date:
+        query += f" WHERE segments.date = '{requested_date}'"
+    elif report not in {"budgets", "conversions", "negative_keywords"} and duration != "ALL_TIME":
         query += f" WHERE segments.date DURING {duration}"
     if report == "negative_keywords":
         query += " WHERE ad_group_criterion.negative = TRUE"
     query += f" LIMIT {min(max(int(args.get('limit') or 100), 1), MAX_ROWS)}"
-    res = _read(query, tenant_id, customer_id, args.get("manager_id"), args.get("limit") or 100)
-    res.update({"customer_id": customer_id, "report": report, "date_range": duration})
+    read_method = _read_stream if requested_date else _read
+    res = read_method(query, tenant_id, customer_id, args.get("manager_id"), args.get("limit") or 100)
+    res.update({"customer_id": customer_id, "report": report, "date_range": requested_date or duration, "gaql": query})
     if report in {"campaigns", "ad_groups", "ads", "keywords", "search_terms", "daily", "devices"}:
         res["summary"] = _aggregate(res["rows"])
     return res
@@ -397,7 +434,9 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
         if not re.match(r"(?is)^SELECT\s+", query) or len(query)>6000 or ";" in query or "--" in query or "/*" in query:
             raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
         return {"ok": True, "provider": "google_ads", "customer_id": customer_id,
-                **_read(query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100)}
+                **(_read_stream if command.get("search_stream") else _read)(
+                    query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100),
+                "gaql": query}
     if action == "prepare_mutation":
         cid = _customer_id(command.get("customer_id"))
         ops = _check_mutations(command.get("operations"), cid)
@@ -481,6 +520,49 @@ def parse_google_ads_request(body) -> dict:
         # name. Never guess or reconstruct write operations.
         if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\bremove\b", message):
             raise HTTPException(422, "Google Ads write request must be one valid JSON object. No changes were made.")
+
+    # Explicit GAQL must not be interpreted as inspecting a named campaign.
+    # A date-specific performance request must return a dated report, even if
+    # it mentions an individual campaign name (e.g. Sales-Search-1).
+    date_match = re.search(r"(?<!\d)(20\d{2}-\d{2}-\d{2})(?!\d)", message)
+    quoted_gaql = re.search(r"(?is)\bSELECT\s+.+?\bFROM\s+(?:campaign|ad_group|keyword_view|search_term_view|ad_group_ad)\b(?:.+)?", message)
+    if quoted_gaql:
+        cid_match = re.search(r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message[:quoted_gaql.start()])
+        cid = cid_match.group(0) if cid_match else getattr(body, "meta_account_id", None)
+        # Disallow guessing a customer ID from a GAQL campaign id.
+        if not cid:
+            raise HTTPException(422, "Supply customer_id for a GAQL query.")
+        gaql = quoted_gaql.group(0).strip().rstrip("\"`").strip()
+        # Trim only a closing markdown fence, never change the query itself.
+        gaql = re.split(r"\n\s*```", gaql, maxsplit=1)[0].strip()
+        return {"action": "query", "customer_id": cid, "query": gaql, "search_stream": True}
+
+    performance_words = (
+        "report", "تقرير", "نتائج", "أداء", "اداء", "performance", "metrics",
+        "cost", "clicks", "impressions", "conversions", "spend", "نتيجة",
+        "صرف", "تكلفة", "نقرات", "ظهور", "تحويلات", "daily", "campaigns",
+        "searchstream", "search_stream",
+    )
+    explicit_report = any(word in lower for word in performance_words)
+    explicit_inspect_request = bool(re.search(
+        r"(?i)inspect_campaign|discover_campaign|inspect campaign|افحص الحملة|فحص حملة", message
+    ))
+    if explicit_report and not explicit_inspect_request:
+        cid_match = re.search(
+            r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)",
+            message,
+        )
+        cid = cid_match.group(0) if cid_match else getattr(body, "meta_account_id", None)
+        if not cid:
+            return {"action": "list_accounts", "note": "Supply Google Ads customer_id for performance report."}
+        report_name = "daily" if "daily" in lower or "يومي" in lower else "campaigns"
+        if re.search(r"(?i)report\s*=\s*daily", message):
+            report_name = "daily"
+        duration = "TODAY" if any(w in lower for w in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS"
+        result = {"action": "report", "customer_id": cid, "report": report_name, "date_range": duration}
+        if date_match:
+            result["date"] = date_match.group(1)
+        return result
 
     # Keyword inventory requests take priority over campaign-name inspection.
     # Never guess a campaign/group ID from the account or its name.
