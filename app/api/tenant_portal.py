@@ -1120,6 +1120,9 @@ async def session_email(body: TenantEmailAccessRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    if request.session.get("tenant_id") != record["tenant_id"]:
+        request.session.pop("gpt_google_verified_email", None)
+        request.session.pop("gpt_google_verified_tenant", None)
     request.session["tenant_id"] = record["tenant_id"]
     request.session["user_email"] = record["email"]
     return resolve_tenant_connection_state(record["tenant_id"])
@@ -1129,6 +1132,9 @@ async def session_email(body: TenantEmailAccessRequest, request: Request):
 async def session_logout(request: Request):
     request.session.pop("tenant_id", None)
     request.session.pop("user_email", None)
+    request.session.pop("gpt_google_verified_email", None)
+    request.session.pop("gpt_google_verified_tenant", None)
+    request.session.pop("gpt_google_identity_pending", None)
     request.session.pop("meta_access_token", None)
     request.session.pop("meta_user_id", None)
     request.session.pop("meta_user", None)
