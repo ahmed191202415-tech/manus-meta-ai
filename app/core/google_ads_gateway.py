@@ -173,22 +173,37 @@ def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, ma
         err = (result.get("error") or {}) if isinstance(result, dict) else {}
         if not isinstance(err, dict):
             err = {}
+        # Google Ads failures may have a nested GoogleAdsFailure, an ordinary
+        # google.rpc.Status, or no detailed error. Never silently return an
+        # UNSPECIFIED error when Google provided a structured reason.
         code = ""
-        for detail in err.get("details") or []:
+        failure_message = ""
+        field_path = ""
+        details = err.get("details") or []
+        if not isinstance(details, list):
+            details = []
+        for detail in details:
             if not isinstance(detail, dict):
                 continue
-            if isinstance(detail.get("reason"), str):
-                candidate = detail["reason"]
-                if re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", candidate):
-                    code = candidate
-                    break
-            for item in detail.get("errors") or []:
-                value = item.get("errorCode") if isinstance(item, dict) else None
-                if isinstance(value, dict):
-                    for candidate in value.values():
+            errors = detail.get("errors") or []
+            if not isinstance(errors, list):
+                continue
+            for item in errors:
+                if not isinstance(item, dict):
+                    continue
+                error_codes = item.get("errorCode") or {}
+                if isinstance(error_codes, dict):
+                    for candidate in error_codes.values():
                         if isinstance(candidate, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", candidate):
                             code = candidate
                             break
+                if isinstance(item.get("message"), str):
+                    failure_message = item["message"]
+                location = item.get("location") or {}
+                elements = location.get("fieldPathElements") or [] if isinstance(location, dict) else []
+                parts = [entry.get("fieldName") for entry in elements
+                         if isinstance(entry, dict) and isinstance(entry.get("fieldName"), str)]
+                field_path = ".".join(parts[:6])[:150]
                 if code:
                     break
             if code:
@@ -196,18 +211,32 @@ def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, ma
         status = str(err.get("status") or "")
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", status):
             status = "UNKNOWN"
+        # A controlled classification for safe client reporting. Provider
+        # messages may include sensitive values, so leave them server-side.
+        provider_message = str(failure_message or err.get("message") or "")[:500]
+        message_lower = provider_message.lower()
+        if code == "UNSPECIFIED" or not code:
+            if "developer token" in message_lower:
+                code = "DEVELOPER_TOKEN_ERROR"
+            elif "query" in message_lower or "syntax" in message_lower or "field" in message_lower:
+                code = "GOOGLE_ADS_QUERY_ERROR"
+            elif "permission" in message_lower or "access" in message_lower or "not approved" in message_lower:
+                code = "GOOGLE_ADS_ACCESS_ERROR"
         if code in {"SERVICE_DISABLED", "API_DISABLED"}:
-            next_step = "Enable Google Ads API in the same Google Cloud project that owns the OAuth client ID."
-        elif code == "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION":
-            next_step = "Apply for Explorer or higher Google Ads API access in that Google Cloud project's Google Ads API Overview."
+            next_step = "Enable Google Ads API in the Google Cloud project that owns this OAuth client ID."
+        elif code in {"CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "GOOGLE_ADS_ACCESS_ERROR"}:
+            next_step = "Check production access (Explorer or higher) for the OAuth client's Google Cloud project and Ads customer permissions."
         elif code in {"USER_PERMISSION_DENIED", "CUSTOMER_NOT_ENABLED", "CUSTOMER_NOT_FOUND"}:
-            next_step = "Check the signed-in Google user's Ads account permissions and the customer/manager ID."
+            next_step = "Check the signed-in Google user's Ads account permissions and customer/manager ID."
+        elif code in {"GOOGLE_ADS_QUERY_ERROR", "UNRECOGNIZED_FIELD", "PROHIBITED_FIELD_IN_SELECT_CLAUSE", "PROHIBITED_FIELD_IN_WHERE_CLAUSE", "EXPECTED_FILTERS_ON_DATE_RANGE"}:
+            next_step = "Fix the GAQL query fields/date filters. This is not an OAuth sign-in failure."
         else:
-            next_step = "Inspect Google Ads API access in Google Cloud and the Google user's Ads permissions; if still blocked, share the Google Ads error code below."
+            next_step = "Inspect the Google Ads API failure with the request ID and server log; 400 by itself does not prove missing permissions."
         import logging
         logging.getLogger("ads.google_action").warning(
-            "google_ads_api_error http_status=%d api_status=%s error_code=%s",
-            response.status_code, status, code or "UNSPECIFIED",
+            "google_ads_api_error http_status=%d api_status=%s error_code=%s request_id=%s field=%s provider_message=%s",
+            response.status_code, status, code or "UNSPECIFIED", str(response.headers.get("request-id") or "")[:100],
+            field_path, re.sub(r"(?i)(bearer\\s+|access[_ -]?token\\s*[:=]\\s*)[^\\s,;]+", r"\\1[REDACTED]", provider_message)[:300],
         )
         request_id = str(response.headers.get("request-id") or "")
         if not re.fullmatch(r"[A-Za-z0-9_-]{4,100}", request_id):
@@ -217,6 +246,8 @@ def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, ma
             "http_status": response.status_code,
             "api_status": status,
             "google_ads_error_code": code or "UNSPECIFIED",
+            "google_ads_error_category": "query" if code == "GOOGLE_ADS_QUERY_ERROR" else ("access" if code in {"GOOGLE_ADS_ACCESS_ERROR", "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "USER_PERMISSION_DENIED"} else "unknown"),
+            "google_ads_error_field": field_path or None,
             "google_request_id": request_id or None,
             "message": "Google Ads API rejected the request. The OAuth Action may still be connected.",
             "next_step": next_step,
