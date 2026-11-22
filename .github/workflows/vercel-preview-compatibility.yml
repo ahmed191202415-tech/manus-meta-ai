@@ -11,6 +11,7 @@ on:
       - .vercelignore
       - .python-version
       - requirements.txt
+      - constraints.txt
       - app/**
       - tests/**
       - .github/workflows/vercel-preview-compatibility.yml

@@ -5,8 +5,8 @@ token, refresh token or tenant identity from natural-language GPT inputs.
 """
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
-import json
+import logging
+import time
 import os
 import re
 import secrets
@@ -17,65 +17,20 @@ from fastapi import HTTPException, Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.config import PUBLIC_BASE_URL, SESSION_SECRET
+from app.core.google_ads_errors import decode_google_ads_error, safe_request_id
+from app.core.google_ads_reporting import REPORTS, prepare_report, finalize_report, aggregate_metrics
+from app.core.google_ads_query import prepare_query, finalize_query
 from app.core.ga4_client import get_google_credentials_for_tenant
 from app.core.oauth_store import (
     consume_auth_code, create_auth_code, get_active_google_connection_for_tenant,
     get_app_token_data,
 )
 
-BASE = "https://googleads.googleapis.com/v25"
+API_VERSION = "v25"
+BASE = f"https://googleads.googleapis.com/{API_VERSION}"
 ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
 MAX_ROWS = 300
 DURATIONS = {"TODAY", "YESTERDAY", "LAST_7_DAYS", "LAST_14_DAYS", "LAST_30_DAYS", "THIS_MONTH", "LAST_MONTH", "ALL_TIME"}
-REPORTS = {
-    "campaigns": (
-        "campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,"
-        " campaign.campaign_budget, metrics.cost_micros, metrics.impressions, metrics.clicks,"
-        " metrics.conversions, metrics.conversions_value, metrics.ctr, metrics.average_cpc"
-    , "campaign"),
-    "ad_groups": (
-        "campaign.id, campaign.name, ad_group.id, ad_group.name, ad_group.status,"
-        " metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions,"
-        " metrics.conversions_value, metrics.ctr, metrics.average_cpc"
-    , "ad_group"),
-    "ads": (
-        "campaign.name, ad_group.name, ad_group_ad.ad.id, ad_group_ad.ad.name,"
-        " ad_group_ad.status, metrics.cost_micros, metrics.impressions, metrics.clicks,"
-        " metrics.conversions, metrics.ctr"
-    , "ad_group_ad"),
-    "keywords": (
-        "campaign.name, ad_group.name, ad_group_criterion.criterion_id,"
-        " ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,"
-        " ad_group_criterion.status, ad_group_criterion.quality_info.quality_score,"
-        " metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions,"
-        " metrics.ctr, metrics.average_cpc"
-    , "keyword_view"),
-    "search_terms": (
-        "search_term_view.search_term, campaign.name, ad_group.name,"
-        " metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions,"
-        " metrics.ctr, metrics.average_cpc"
-    , "search_term_view"),
-    "budgets": (
-        "campaign_budget.id, campaign_budget.name, campaign_budget.amount_micros,"
-        " campaign_budget.status, campaign_budget.delivery_method"
-    , "campaign_budget"),
-    "daily": (
-        "segments.date, campaign.name, metrics.cost_micros, metrics.impressions,"
-        " metrics.clicks, metrics.conversions, metrics.conversions_value"
-    , "campaign"),
-    "devices": (
-        "segments.device, campaign.name, metrics.cost_micros, metrics.impressions,"
-        " metrics.clicks, metrics.conversions, metrics.ctr"
-    , "campaign"),
-    "conversions": (
-        "conversion_action.id, conversion_action.name, conversion_action.type,"
-        " conversion_action.status, conversion_action.category"
-    , "conversion_action"),
-    "negative_keywords": (
-        "campaign.name, ad_group.name, ad_group_criterion.keyword.text,"
-        " ad_group_criterion.keyword.match_type, ad_group_criterion.negative"
-    , "ad_group_criterion"),
-}
 WRITABLE_OPERATIONS = {
     "campaignOperation", "campaignBudgetOperation", "adGroupOperation",
     "adGroupCriterionOperation", "adGroupAdOperation", "campaignCriterionOperation",
@@ -101,7 +56,9 @@ def _required_app_identity(request: Request) -> dict:
     try:
         identity = get_app_token_data(token)
     except Exception:
-        identity = None
+        raise HTTPException(
+            503, "Application session verification is temporarily unavailable. Retry without signing in again."
+        ) from None
     if not identity:
         raise HTTPException(401, "Your GPT connection expired. Reconnect the GPT Action.")
     return identity
@@ -154,210 +111,170 @@ def _headers(credentials: dict, manager_id: object = None) -> dict:
     return headers
 
 
-def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, manager_id=None) -> dict:
+def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, manager_id=None) -> dict | list:
+    """Tenant-scoped REST transport. Only read-only calls can be retried."""
     credentials = _credentials(tenant_id)
-    try:
-        response = requests.request(
-            method, BASE + path, headers=_headers(credentials, manager_id),
-            json=body, timeout=45,
-        )
-    except requests.RequestException:
-        raise HTTPException(502, "Google Ads API could not be reached.")
+    read_only = method.upper() == "GET" or path.endswith(("/googleAds:search", "/googleAds:searchStream"))
+    applying_write = path.endswith("/googleAds:mutate") and (body or {}).get("validateOnly") is not True
+    attempts = 2 if read_only else 1
+    response = None
+    for attempt in range(attempts):
+        try:
+            response = requests.request(
+                method, BASE + path, headers=_headers(credentials, manager_id),
+                json=body, timeout=45,
+            )
+        except requests.RequestException:
+            if read_only and attempt + 1 < attempts:
+                time.sleep(0.5)
+                continue
+            detail = {
+                "origin": "google_ads_transport", "http_status": 502,
+                "message": "Google Ads API could not be reached.",
+                "retryable": read_only, "outcome_unknown": applying_write,
+                "next_step": (
+                    "Retry the read after connectivity recovers."
+                    if not applying_write else
+                    "Do not repeat this mutation automatically. Check the account state before preparing another change."
+                ),
+            }
+            raise HTTPException(502, detail) from None
+        # A temporary read failure can be retried once. A 400/401/403 and any
+        # write are never automatically replayed.
+        if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < attempts:
+            retry_after = str(response.headers.get("Retry-After") or "")
+            delay = float(retry_after) if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", retry_after) else 0.5
+            # Respect a long Retry-After instead of replaying earlier than
+            # Google permits or blocking this interactive request indefinitely.
+            if retry_after and (not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", retry_after) or delay > 2):
+                break
+            time.sleep(delay)
+            continue
+        break
     try:
         result = response.json()
     except ValueError:
-        raise HTTPException(502, "Google Ads returned a non-JSON response.")
-    if response.status_code >= 400:
-        # Return provider error ENUMS only. Never expose OAuth tokens, raw
-        # upstream messages, arbitrary IDs or request headers.
-        err = (result.get("error") or {}) if isinstance(result, dict) else {}
-        if not isinstance(err, dict):
-            err = {}
-        # Google Ads failures may have a nested GoogleAdsFailure, an ordinary
-        # google.rpc.Status, or no detailed error. Never silently return an
-        # UNSPECIFIED error when Google provided a structured reason.
-        code = ""
-        failure_message = ""
-        field_path = ""
-        details = err.get("details") or []
-        if not isinstance(details, list):
-            details = []
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            errors = detail.get("errors") or []
-            if not isinstance(errors, list):
-                continue
-            for item in errors:
-                if not isinstance(item, dict):
-                    continue
-                error_codes = item.get("errorCode") or {}
-                if isinstance(error_codes, dict):
-                    for candidate in error_codes.values():
-                        if isinstance(candidate, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", candidate):
-                            code = candidate
-                            break
-                if isinstance(item.get("message"), str):
-                    failure_message = item["message"]
-                location = item.get("location") or {}
-                elements = location.get("fieldPathElements") or [] if isinstance(location, dict) else []
-                parts = [entry.get("fieldName") for entry in elements
-                         if isinstance(entry, dict) and isinstance(entry.get("fieldName"), str)]
-                field_path = ".".join(parts[:6])[:150]
-                if code:
-                    break
-            if code:
-                break
-        status = str(err.get("status") or "")
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", status):
-            status = "UNKNOWN"
-        # A controlled classification for safe client reporting. Provider
-        # messages may include sensitive values, so leave them server-side.
-        provider_message = str(failure_message or err.get("message") or "")[:500]
-        message_lower = provider_message.lower()
-        if code == "UNSPECIFIED" or not code:
-            if "developer token" in message_lower:
-                code = "DEVELOPER_TOKEN_ERROR"
-            elif "query" in message_lower or "syntax" in message_lower or "field" in message_lower:
-                code = "GOOGLE_ADS_QUERY_ERROR"
-            elif "permission" in message_lower or "access" in message_lower or "not approved" in message_lower:
-                code = "GOOGLE_ADS_ACCESS_ERROR"
-        if code in {"SERVICE_DISABLED", "API_DISABLED"}:
-            next_step = "Enable Google Ads API in the Google Cloud project that owns this OAuth client ID."
-        elif code in {"CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "GOOGLE_ADS_ACCESS_ERROR"}:
-            next_step = "Check production access (Explorer or higher) for the OAuth client's Google Cloud project and Ads customer permissions."
-        elif code in {"USER_PERMISSION_DENIED", "CUSTOMER_NOT_ENABLED", "CUSTOMER_NOT_FOUND"}:
-            next_step = "Check the signed-in Google user's Ads account permissions and customer/manager ID."
-        elif code in {"GOOGLE_ADS_QUERY_ERROR", "UNRECOGNIZED_FIELD", "PROHIBITED_FIELD_IN_SELECT_CLAUSE", "PROHIBITED_FIELD_IN_WHERE_CLAUSE", "EXPECTED_FILTERS_ON_DATE_RANGE"}:
-            next_step = "Fix the GAQL query fields/date filters. This is not an OAuth sign-in failure."
-        else:
-            next_step = "Inspect the Google Ads API failure with the request ID and server log; 400 by itself does not prove missing permissions."
-        import logging
+        raise HTTPException(502, {
+            "origin": "google_ads_transport", "http_status": 502,
+            "message": "Google Ads returned a non-JSON response.",
+            "google_request_id": safe_request_id(response.headers.get("request-id")),
+            "retryable": read_only, "outcome_unknown": applying_write,
+            "next_step": "Inspect the provider response; do not assume a write failed or replay it automatically.",
+        }) from None
+    failure = decode_google_ads_error(result, response.status_code, response.headers)
+    if failure:
+        # Log structured diagnostics only. Provider messages/triggers can
+        # contain credentials, account data, or user-entered query values.
         logging.getLogger("ads.google_action").warning(
-            "google_ads_api_error http_status=%d api_status=%s error_code=%s request_id=%s field=%s provider_message=%s",
-            response.status_code, status, code or "UNSPECIFIED", str(response.headers.get("request-id") or "")[:100],
-            field_path, re.sub(r"(?i)(bearer\\s+|access[_ -]?token\\s*[:=]\\s*)[^\\s,;]+", "[REDACTED]", provider_message)[:300],
+            "google_ads_api_error http_status=%s api_status=%s error_code=%s family=%s request_id=%s field=%s",
+            failure["http_status"], failure["api_status"], failure["google_ads_error_code"],
+            failure["google_ads_error_family"], failure["google_request_id"], failure["google_ads_error_field"],
         )
-        request_id = str(response.headers.get("request-id") or "")
-        if not re.fullmatch(r"[A-Za-z0-9_-]{4,100}", request_id):
-            request_id = ""
-        raise HTTPException(response.status_code, {
-            "origin": "google_ads_api",
-            "http_status": response.status_code,
-            "api_status": status,
-            "google_ads_error_code": code or "UNSPECIFIED",
-            "google_ads_error_category": "query" if code == "GOOGLE_ADS_QUERY_ERROR" else ("access" if code in {"GOOGLE_ADS_ACCESS_ERROR", "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "USER_PERMISSION_DENIED"} else "unknown"),
-            "google_ads_error_field": field_path or None,
-            "google_request_id": request_id or None,
-            "message": "Google Ads API rejected the request. The OAuth Action may still be connected.",
-            "next_step": next_step,
-        })
-    if not isinstance(result, (dict, list)):
+        failure["retryable"] = bool(failure["retryable"] and read_only)
+        if applying_write and failure["http_status"] >= 500:
+            failure["outcome_unknown"] = True
+            failure["next_step"] = "Do not replay this mutation automatically. Reconcile the account state using the Google request ID."
+        raise HTTPException(failure["http_status"], failure)
+    expected = list if path.endswith("/googleAds:searchStream") else dict
+    if not isinstance(result, expected):
         raise HTTPException(502, "Google Ads returned an unexpected data format.")
+    request_id = safe_request_id(response.headers.get("request-id"))
+    if request_id and isinstance(result, dict):
+        result = {**result, "requestId": result.get("requestId") or request_id}
     return result
+
+
+def _read_metadata(method: str, request_ids: list[str] | None = None) -> dict:
+    return {
+        "source": "Google Ads API", "verified_by_google_api": True,
+        "google_api_called": True, "query_method": method,
+        "api_version": API_VERSION, "google_request_ids": request_ids or [],
+    }
 
 
 def _read(query: str, tenant_id: str, customer_id: str, manager_id=None, limit: int=100) -> dict:
     rows = []
     next_page = None
-    max_rows = min(max(1, int(limit)), MAX_ROWS)
+    seen_tokens = set()
+    request_ids = []
+    # Reports fetch one sentinel row beyond the user-visible limit.
+    max_rows = min(max(1, int(limit)), MAX_ROWS + 1)
+    truncated = False
     for _ in range(4):
         data = {"query": query}
         if next_page:
             data["pageToken"] = next_page
         response = _api(tenant_id, "POST", f"/customers/{customer_id}/googleAds:search", data, manager_id=manager_id)
-        rows.extend(response.get("results") or [])
+        if not isinstance(response, dict):
+            raise HTTPException(502, "Google Ads Search returned a malformed response.")
+        chunk = response.get("results", [])
+        if not isinstance(chunk, list) or any(not isinstance(row, dict) for row in chunk):
+            raise HTTPException(502, "Google Ads Search returned malformed results.")
+        request_id = safe_request_id(response.get("requestId"))
+        if request_id and request_id not in request_ids:
+            request_ids.append(request_id)
+        available = max_rows - len(rows)
+        rows.extend(chunk[:available])
         next_page = response.get("nextPageToken")
+        if next_page is not None and not isinstance(next_page, str):
+            raise HTTPException(502, "Google Ads Search returned a malformed page token.")
+        truncated = len(chunk) > available or bool(next_page)
         if not next_page or len(rows) >= max_rows:
             break
-    return {"rows": rows[:max_rows], "truncated": bool(next_page) or len(rows)>max_rows, "count": min(len(rows), max_rows)}
+        if next_page in seen_tokens:
+            raise HTTPException(502, "Google Ads returned a repeated page token; partial results withheld.")
+        seen_tokens.add(next_page)
+    return {
+        "rows": rows, "truncated": truncated, "count": len(rows),
+        **_read_metadata("GoogleAdsService.Search", request_ids),
+    }
 
 
 def _read_stream(query: str, tenant_id: str, customer_id: str, manager_id=None, limit: int=100) -> dict:
-    """GoogleAdsService.SearchStream REST method; streams response batches."""
+    """Read all REST response batches and withhold any failed partial stream."""
     batches = _api(
         tenant_id, "POST", f"/customers/{customer_id}/googleAds:searchStream",
         {"query": query}, manager_id=manager_id,
     )
-    # SearchStream REST returns a JSON array, unlike regular Search.
     if not isinstance(batches, list):
         raise HTTPException(502, "Google Ads SearchStream returned an unexpected data format.")
-    max_rows = min(max(1, int(limit)), MAX_ROWS)
+    max_rows = min(max(1, int(limit)), MAX_ROWS + 1)
     rows = []
     total = 0
+    request_ids = []
     for batch in batches:
         if not isinstance(batch, dict):
             raise HTTPException(502, "Google Ads SearchStream returned a malformed batch.")
-        chunk = batch.get("results") or []
-        if not isinstance(chunk, list):
+        # The transport normally rejects this; keep the reader safe for other
+        # transports and test doubles, too.
+        failure = decode_google_ads_error(batch, 200)
+        if failure:
+            raise HTTPException(failure["http_status"], failure)
+        chunk = batch.get("results", [])
+        if not isinstance(chunk, list) or any(not isinstance(row, dict) for row in chunk):
             raise HTTPException(502, "Google Ads SearchStream returned malformed results.")
+        request_id = safe_request_id(batch.get("requestId"))
+        if request_id and request_id not in request_ids:
+            request_ids.append(request_id)
         total += len(chunk)
         rows.extend(chunk[:max(0, max_rows - len(rows))])
-    return {"rows": rows, "count": len(rows), "truncated": total > max_rows, "query_method": "GoogleAdsService.SearchStream"}
-
-
-def _aggregate(rows: list[dict]) -> dict:
-    spend_micro = 0
-    clicks = 0
-    impressions = 0
-    conversions = Decimal(0)
-    value = Decimal(0)
-    for row in rows:
-        m = row.get("metrics") or {}
-        try:
-            spend_micro += int(m.get("costMicros") or 0)
-            clicks += int(m.get("clicks") or 0)
-            impressions += int(m.get("impressions") or 0)
-            conversions += Decimal(str(m.get("conversions") or "0"))
-            value += Decimal(str(m.get("conversionsValue") or "0"))
-        except (ValueError, InvalidOperation, TypeError):
-            continue
-    spend = Decimal(spend_micro) / Decimal(1000000)
     return {
-        "cost": str(spend), "clicks": clicks, "impressions": impressions,
-        "conversions": str(conversions), "conversion_value": str(value),
-        "ctr_percent": round(clicks * 100 / impressions, 3) if impressions else None,
-        "cpc": str(round(spend / clicks, 2)) if clicks else None,
-        "cost_per_conversion": str(round(spend / conversions, 2)) if conversions else None,
-        "roas": str(round(value / spend, 2)) if spend else None,
-        "note": "Cost is in the selected account currency. Conversions reflect Google Ads attribution, not verified CRM sales.",
+        "rows": rows, "count": len(rows), "truncated": total > max_rows,
+        **_read_metadata("GoogleAdsService.SearchStream", request_ids),
     }
 
 
+def _aggregate(rows: list[dict]) -> dict:
+    return aggregate_metrics(rows)
+
+
 def _report(tenant_id: str, args: dict) -> dict:
-    customer_id = _customer_id(args.get("customer_id"))
-    report = str(args.get("report") or "campaigns").lower()
-    if report not in REPORTS:
-        raise HTTPException(422, "Unknown report. Use: " + ", ".join(REPORTS))
-    duration = str(args.get("date_range") or "LAST_7_DAYS").upper()
-    requested_date = str(args.get("date") or "").strip()
-    if requested_date:
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", requested_date):
-            raise HTTPException(422, "date must be YYYY-MM-DD.")
-        from datetime import date as calendar_date
-        try:
-            calendar_date.fromisoformat(requested_date)
-        except ValueError:
-            raise HTTPException(422, "Invalid calendar date.")
-    elif duration not in DURATIONS:
-        raise HTTPException(422, "Unsupported Google Ads date range.")
-    fields, resource = REPORTS[report]
-    query = f"SELECT {fields} FROM {resource}"
-    if requested_date and report in {"budgets", "conversions", "negative_keywords"}:
-        raise HTTPException(422, "This report does not support a campaign metrics date.")
-    if requested_date:
-        query += f" WHERE segments.date = '{requested_date}'"
-    elif report not in {"budgets", "conversions", "negative_keywords"} and duration != "ALL_TIME":
-        query += f" WHERE segments.date DURING {duration}"
-    if report == "negative_keywords":
-        query += " WHERE ad_group_criterion.negative = TRUE"
-    query += f" LIMIT {min(max(int(args.get('limit') or 100), 1), MAX_ROWS)}"
-    read_method = _read_stream if requested_date else _read
-    res = read_method(query, tenant_id, customer_id, args.get("manager_id"), args.get("limit") or 100)
-    res.update({"customer_id": customer_id, "report": report, "date_range": requested_date or duration, "gaql": query})
-    if report in {"campaigns", "ad_groups", "ads", "keywords", "search_terms", "daily", "devices"}:
-        res["summary"] = _aggregate(res["rows"])
-    return res
+    plan = prepare_report(args)
+    reader = _read_stream if plan["search_stream"] else _read
+    result = reader(
+        plan["query"], tenant_id, plan["customer_id"], plan["manager_id"], plan["read_limit"],
+    )
+    return finalize_report(plan, result, api_version=API_VERSION)
 
 
 def _check_mutations(operations: object, customer_id: str) -> list[dict]:
@@ -376,8 +293,15 @@ def _check_mutations(operations: object, customer_id: str) -> list[dict]:
         if "update" in actions and not isinstance(payload.get("updateMask"), str):
             raise HTTPException(422, "Google Ads update operations require an explicit updateMask.")
         obj = payload[next(iter(actions))]
-        if not isinstance(obj, (dict, str)):
+        if ("remove" in actions and not isinstance(obj, str)) or ("remove" not in actions and not isinstance(obj, dict)):
             raise HTTPException(422, "Invalid resource payload.")
+        if "update" in actions:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:,[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)*", payload["updateMask"]):
+                raise HTTPException(422, "updateMask must list explicit comma-separated field paths.")
+            if not isinstance(obj.get("resourceName"), str) or not obj["resourceName"].startswith(f"customers/{customer_id}/"):
+                raise HTTPException(422, "An update requires the target customer's resourceName.")
+        if "remove" in actions and not obj.startswith(f"customers/{customer_id}/"):
+            raise HTTPException(403, "A removal requires the target customer's resourceName.")
         def check_resource(value):
             if isinstance(value, str) and value.startswith("customers/"):
                 match = _RESOURCE_RE.match(value)
@@ -391,6 +315,43 @@ def _check_mutations(operations: object, customer_id: str) -> list[dict]:
                     check_resource(v)
         check_resource(obj)
     return operations
+
+
+def _mutation_response(result: object, operations: list[dict], customer_id: str, *, validate_only: bool = False) -> list:
+    """Never report APPLIED for an empty, partial, or mismatched response."""
+    if isinstance(result, dict):
+        partial = result.get("partialFailureError")
+        if isinstance(partial, dict) and partial.get("code", 0) != 0:
+            failure = decode_google_ads_error({"error": partial}, 400)
+            failure["next_step"] = "Reconcile the account state and failed operation before preparing another change."
+            failure["outcome_unknown"] = not validate_only
+            raise HTTPException(400, failure)
+        if validate_only:
+            return []
+        responses = result.get("mutateOperationResponses")
+        if isinstance(responses, list) and len(responses) == len(operations):
+            valid = True
+            for operation, response in zip(operations, responses):
+                kind, payload = next(iter(operation.items()))
+                expected = kind.removesuffix("Operation") + "Result"
+                resource = response.get(expected) if isinstance(response, dict) else None
+                name = resource.get("resourceName") if isinstance(resource, dict) else None
+                if not isinstance(name, str) or not name.startswith(f"customers/{customer_id}/"):
+                    valid = False
+                    break
+                original = payload.get("remove") or (payload.get("update") or {}).get("resourceName")
+                if original and name != original:
+                    valid = False
+                    break
+            if valid:
+                return responses
+    raise HTTPException(502, {
+        "origin": "google_ads_response",
+        "status": "MUTATION_OUTCOME_UNKNOWN",
+        "message": "Google Ads did not return a complete matching mutation result.",
+        "outcome_unknown": not validate_only, "retryable": False,
+        "next_step": "Do not replay the approved change. Read the affected resources and reconcile the account state first.",
+    })
 
 
 def execute_google_ads_command(command: dict, identity: dict) -> dict:
@@ -440,6 +401,8 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
             customer_id=command.get("customer_id"),
             manager_id=command.get("manager_id"),
             date_range=str(command.get("date_range") or "LAST_7_DAYS").upper(),
+            date=command.get("date"), start_date=command.get("start_date"),
+            end_date=command.get("end_date"), campaign_id=command.get("campaign_id"),
         )}
     if action == "audit_crm_migration":
         from app.core.google_ads_migration_audit import audit_crm_migration
@@ -461,13 +424,16 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
         return {"ok": True, "provider": "google_ads", **result}
     if action == "query":
         customer_id = _customer_id(command.get("customer_id"))
-        query = str(command.get("query") or "").strip()
-        if not re.match(r"(?is)^SELECT\s+", query) or len(query)>6000 or ";" in query or "--" in query or "/*" in query:
-            raise HTTPException(422, "Only a single read-only GAQL SELECT statement is supported.")
+        plan = prepare_query(command)
+        manager_id = command.get("manager_id") or command.get("login_customer_id")
+        if command.get("manager_id") and command.get("login_customer_id") and _customer_id(command["manager_id"]) != _customer_id(command["login_customer_id"]):
+            raise HTTPException(422, "manager_id and login_customer_id disagree.")
+        if manager_id:
+            manager_id = _customer_id(manager_id)
+        result = (_read_stream if plan["search_stream"] else _read)(
+            plan["query"], tenant, customer_id, manager_id, plan["read_limit"])
         return {"ok": True, "provider": "google_ads", "customer_id": customer_id,
-                **(_read_stream if command.get("search_stream") else _read)(
-                    query, tenant, customer_id, command.get("manager_id"), command.get("limit") or 100),
-                "gaql": query}
+                **finalize_query(plan, result)}
     if action == "prepare_mutation":
         cid = _customer_id(command.get("customer_id"))
         ops = _check_mutations(command.get("operations"), cid)
@@ -475,9 +441,10 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
         if mid:
             _customer_id(mid)
         # Validate with Google Ads before issuing an approval token; no changes applied.
-        _api(tenant, "POST", f"/customers/{cid}/googleAds:mutate",
-             {"mutateOperations": ops, "validateOnly": True, "partialFailure": False},
-             manager_id=mid)
+        validation = _api(tenant, "POST", f"/customers/{cid}/googleAds:mutate",
+                          {"mutateOperations": ops, "validateOnly": True, "partialFailure": False},
+                          manager_id=mid)
+        _mutation_response(validation, ops, cid, validate_only=True)
         approval_code = create_auth_code(tenant, "google_ads_mutation_approval", expires_in=600)
         approval_token = _signer("google-ads-mut-v1").dumps({
             "tenant_id": tenant, "customer_id": cid, "manager_id": mid,
@@ -503,6 +470,12 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
             raise HTTPException(403, "Approval belongs to a different tenant.")
         cid = _customer_id(details["customer_id"])
         operations = _check_mutations(details.get("operations"), cid)
+        if command.get("customer_id") is not None and _customer_id(command["customer_id"]) != cid:
+            raise HTTPException(403, "The customer differs from the approved preview.")
+        if command.get("operations") is not None and command["operations"] != operations:
+            raise HTTPException(403, "The operations differ from the approved preview.")
+        if command.get("manager_id") is not None and command["manager_id"] != details.get("manager_id"):
+            raise HTTPException(403, "The manager differs from the approved preview.")
         code = str(details.get("approval_code") or "")
         approved_once = consume_auth_code(code)
         if not approved_once or approved_once.get("tenant_id") != tenant or approved_once.get("meta_user_id") != "google_ads_mutation_approval":
@@ -510,198 +483,22 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
         result = _api(tenant, "POST", f"/customers/{cid}/googleAds:mutate",
                       {"mutateOperations": operations, "partialFailure": False, "validateOnly": False},
                       manager_id=details.get("manager_id"))
+        responses = _mutation_response(result, operations, cid)
         return {"ok": True, "status": "APPLIED", "provider": "google_ads", "customer_id": cid,
-                "results": result.get("mutateOperationResponses") or result}
+                "verified_by_google_api": True, "google_api_called": True,
+                "google_request_id": safe_request_id(result.get("requestId")),
+                "results": responses}
     raise HTTPException(422, "Unknown Google Ads action.")
 
 
 def _detect(command: str) -> bool:
-    value = command.lower()
-    return any(x in value for x in ("google_ads", "google ads", "google adwords", "adwords", "جوجل ادز", "جوجل أدز", "اعلانات جوجل", "إعلانات جوجل", "google search ads", "clone_campaign", "duplicate_campaign", "inspect_campaign", "discover_campaign", "list_accounts", "prepare_mutation", "commit_mutation")) or ("جوجل" in value and any(w in value for w in ("اعلان", "إعلان", "حمل", "ads", "كلمات البحث")))
+    from app.core.google_ads_intent import detect_google_ads_request
+    return detect_google_ads_request(command)
 
 
 def parse_google_ads_request(body) -> dict:
-    """Parse the EXISTING GPT Action request string into an Ads command.
-
-    Accept JSON, a markdown fenced JSON object, or a natural-language read
-    request. Never infer a mutation from malformed or conversational text:
-    writes must be explicit valid JSON followed by the existing approval flow.
-    """
-    message = str(body.request or "").strip()
-    lower = message.lower()
-    looks_like_ads_json = bool(re.search(
-        r"(?i)google[_ ]ads\s*(?:[:\-]\s*)?(?:```(?:json)?\s*)?\{", message
-    ))
-    start = message.find("{")
-    if start >= 0 and looks_like_ads_json:
-        try:
-            parsed, end_offset = json.JSONDecoder().raw_decode(message[start:])
-        except (json.JSONDecodeError, TypeError):
-            parsed = None
-            end_offset = 0
-        if isinstance(parsed, dict):
-            trailing = message[start + end_offset:].strip()
-            trailing = re.sub(r"^```\s*", "", trailing).strip()
-            action = str(parsed.get("action") or "").lower()
-            if trailing and action in {"prepare_mutation", "commit_mutation"}:
-                raise HTTPException(422, "Write commands must contain exactly one valid JSON object.")
-            if not trailing or action in {"status", "list_accounts", "inspect_campaign", "discover_campaign", "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report", "analysis", "query", "keyword_inventory"}:
-                return parsed
-        # Malformed read-only snippets may still be resolved from a campaign
-        # name. Never guess or reconstruct write operations.
-        if re.search(r"(?i)prepare_mutation|commit_mutation|mutateOperations|approval_token|\bremove\b", message):
-            raise HTTPException(422, "Google Ads write request must be one valid JSON object. No changes were made.")
-
-    # Explicit GAQL must not be interpreted as inspecting a named campaign.
-    # A date-specific performance request must return a dated report, even if
-    # it mentions an individual campaign name (e.g. Sales-Search-1).
-    date_match = re.search(r"(?<!\d)(20\d{2}-\d{2}-\d{2})(?!\d)", message)
-    quoted_gaql = re.search(r"(?is)\bSELECT\s+.+?\bFROM\s+(?:campaign|ad_group|keyword_view|search_term_view|ad_group_ad)\b(?:.+)?", message)
-    if quoted_gaql:
-        cid_match = re.search(r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message[:quoted_gaql.start()])
-        cid = cid_match.group(0) if cid_match else getattr(body, "meta_account_id", None)
-        # Disallow guessing a customer ID from a GAQL campaign id.
-        if not cid:
-            raise HTTPException(422, "Supply customer_id for a GAQL query.")
-        gaql = quoted_gaql.group(0).strip().rstrip("\"`").strip()
-        # Trim only a closing markdown fence, never change the query itself.
-        gaql = re.split(r"\n\s*```", gaql, maxsplit=1)[0].strip()
-        return {"action": "query", "customer_id": cid, "query": gaql, "search_stream": True}
-
-    performance_words = (
-        "report", "تقرير", "نتائج", "أداء", "اداء", "performance", "metrics",
-        "cost", "clicks", "impressions", "conversions", "spend", "نتيجة",
-        "صرف", "تكلفة", "نقرات", "ظهور", "تحويلات", "daily", "campaigns",
-        "searchstream", "search_stream",
-    )
-    explicit_report = any(word in lower for word in performance_words)
-    explicit_inspect_request = bool(re.search(
-        r"(?i)inspect_campaign|discover_campaign|inspect campaign|افحص الحملة|فحص حملة", message
-    ))
-    if explicit_report and not explicit_inspect_request:
-        cid_match = re.search(
-            r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)",
-            message,
-        )
-        cid = cid_match.group(0) if cid_match else getattr(body, "meta_account_id", None)
-        if not cid:
-            return {"action": "list_accounts", "note": "Supply Google Ads customer_id for performance report."}
-        report_name = "daily" if "daily" in lower or "يومي" in lower else "campaigns"
-        if re.search(r"(?i)report\s*=\s*daily", message):
-            report_name = "daily"
-        duration = "TODAY" if any(w in lower for w in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS"
-        result = {"action": "report", "customer_id": cid, "report": report_name, "date_range": duration}
-        if date_match:
-            result["date"] = date_match.group(1)
-        return result
-
-    # Keyword inventory requests take priority over campaign-name inspection.
-    # Never guess a campaign/group ID from the account or its name.
-    keyword_intent = bool(re.search(
-        r"(?i)\bkeyword(?:s|_inventory|_list)?\b|quality\s*score|"
-        r"(?:ال)?كلمات(?:\s+(?:المفتاحية|مفتاحية|البحث))?|جودة\s+الكلمات", message
-    ))
-    if keyword_intent:
-        def labeled_id(pattern: str) -> str | None:
-            match = re.search(pattern, message, re.IGNORECASE)
-            return match.group(1) if match else None
-
-        customer_id = labeled_id(
-            r"(?:customer[_ ]id|account[_ ]id|حساب(?:\s+جوجل)?(?:\s+رقم)?)\s*[:= -]*"
-            r"([0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})"
-        )
-        if not customer_id:
-            account_value = str(getattr(body, "meta_account_id", "") or "").replace("-", "")
-            customer_id = account_value if re.fullmatch(r"[0-9]{10}", account_value) else None
-        campaign_id = labeled_id(
-            r"(?:campaign(?:[._ ]id)?|الحملة|للحملة|حملة)(?:\s+رقم)?\s*[:= -]*([0-9]{8,15})"
-        )
-        group_id = labeled_id(
-            r"(?:ad[_ ]group(?:[._ ]id)?|المجموعة(?:\s+الإعلانية)?|للمجموعة(?:\s+الإعلانية)?)"
-            r"(?:\s+رقم)?\s*[:= -]*([0-9]{8,15})"
-        )
-        if customer_id and campaign_id and group_id:
-            return {
-                "action": "keyword_inventory",
-                "customer_id": customer_id.replace("-", ""),
-                "campaign_id": campaign_id, "ad_group_id": group_id,
-            }
-        # Never route a keyword request to inspect_campaign or an unfiltered
-        # account-wide report: explicitly request the missing identifiers.
-        return {
-            "action": "keyword_inventory",
-            "customer_id": customer_id, "campaign_id": campaign_id,
-            "ad_group_id": group_id,
-        }
-
-    # Prioritize explicit action/named campaign over incidental 'status',
-    # 'connected', 'account', etc. mentioned in the user's explanation.
-    campaign_name = str(getattr(body, "campaign_name", "") or "").strip()
-    if not campaign_name:
-        name_match = re.search(
-            r"(?<![a-zA-Z0-9])(?:[a-zA-Z][a-zA-Z0-9]*-){1,}[a-zA-Z0-9]+(?![a-zA-Z0-9])",
-            message,
-        )
-        if name_match:
-            campaign_name = name_match.group(0)
-    explicit_inspect = bool(re.search(
-        r"(?i)inspect_campaign|discover_campaign|inspect campaign|افحص الحملة|فحص حملة",
-        message,
-    ))
-    if explicit_inspect or campaign_name:
-        if not campaign_name:
-            raise HTTPException(422, "Specify campaign_name, for example Sales-Search-1.")
-        id_match = re.search(
-            r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message
-        )
-        return {
-            "action": "inspect_campaign",
-            "campaign_name": campaign_name,
-            "customer_id": id_match.group(0) if id_match else None,
-            "date_range": "TODAY" if any(x in lower for x in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS",
-        }
-    if any(x in lower for x in ("ربط", "connect", "حاله الاتصال", "حالة الاتصال", "status")):
-        return {"action": "status"}
-    listed_accounts = any(x in lower for x in (
-        "list_accounts", "list accounts", "عرض الحسابات", "اعرض الحسابات",
-        "الحسابات الإعلانية", "الحسابات الاعلانية", "حساباتي",
-    ))
-    contains_customer_id = bool(re.search(
-        r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message
-    ))
-    if listed_accounts or (not contains_customer_id and any(x in lower for x in ("حساب", "account"))):
-        return {"action": "list_accounts"}
-    report = "campaigns"
-    for words, kind in [
-        (("search term", "عبارات البحث", "مصطلحات البحث"), "search_terms"),
-        (("keyword", "الكلمات", "كلمات البحث"), "keywords"),
-        (("ad group", "مجموعات", "المجموعات"), "ad_groups"),
-        (("budget", "الميزانيات"), "budgets"),
-        (("conversion", "تحويلات"), "conversions"),
-        (("devices", "الأجهزة"), "devices"),
-    ]:
-        if any(w in lower for w in words):
-            report = kind
-            break
-    duration = "LAST_7_DAYS"
-    if any(x in lower for x in ("today", "النهارده", "اليوم")):
-        duration = "TODAY"
-    elif any(x in lower for x in ("yesterday", "امبارح", "أمس")):
-        duration = "YESTERDAY"
-    elif any(x in lower for x in ("last 30", "آخر 30", "شهر")):
-        duration = "LAST_30_DAYS"
-    cid = body.meta_account_id
-    match = re.search(
-        r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message
-    )
-    if match:
-        cid = match.group(0)
-    if not cid:
-        return {
-            "action": "list_accounts",
-            "note": "Choose a Google Ads customer_id, or use inspect_campaign with its campaign name.",
-        }
-    return {"action": "report", "customer_id": cid, "report": report, "date_range": duration}
+    from app.core.google_ads_intent import parse_google_ads_request as parse
+    return parse(body)
 
 
 async def google_ads_intent(body, request: Request) -> dict:
@@ -724,7 +521,7 @@ async def google_ads_intent(body, request: Request) -> dict:
         if isinstance(detail, dict):
             safe = {
                 key: detail.get(key)
-                for key in ("origin", "http_status", "api_status", "google_ads_error_code", "google_ads_error_category", "google_ads_error_field", "google_request_id",
+                for key in ("origin", "http_status", "api_status", "google_ads_error_code", "google_ads_error_category", "google_ads_error_family", "google_ads_error_field", "google_ads_errors", "google_request_id", "retryable",
                             "message", "next_step", "connect_url", "required_scope")
                 if key in detail
             }
@@ -736,7 +533,7 @@ async def google_ads_intent(body, request: Request) -> dict:
             "action": action,
             "status": "READ_FAILED",
             "http_status": exc.status_code,
-            "google_api_called": safe.get("origin") == "google_ads_api",
+            "google_api_called": safe.get("origin") in {"google_ads_api", "google_ads_official_sdk", "google_ads_response"},
             "error": safe,
             "message": "Google Ads read was rejected; no advertising changes were made.",
             "next_step": safe.get("next_step") or "Review the structured error and resolve the Google OAuth or API access issue.",

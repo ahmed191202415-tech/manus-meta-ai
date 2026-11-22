@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from fastapi import HTTPException
 
+from app.core.google_ads_reporting import DURATIONS, _date, _id
+
 MAX_DIRECT_ACCOUNTS = 8
 MAX_CLIENT_ACCOUNTS = 25
 MAX_CAMPAIGNS_TO_INSPECT = 3
@@ -21,14 +23,29 @@ def _client_id_from_resource(resource: str) -> str | None:
 
 
 def _safe_google_ads_error(exc: HTTPException) -> dict:
-    """Return only the safe structured error enums from the Google Ads gateway."""
+    """Keep safe structured diagnostics across account and campaign discovery."""
     raw = exc.detail if isinstance(exc.detail, dict) else {}
+    def enum(value, fallback):
+        return value if isinstance(value, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", value) else fallback
+    request_id = raw.get("google_request_id")
+    if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{4,100}", request_id):
+        request_id = None
+    field = raw.get("google_ads_error_field")
+    if not isinstance(field, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.\[\]]{0,149}", field):
+        field = None
+    category = raw.get("google_ads_error_category")
+    if category not in {"query", "access", "authentication", "quota", "transient", "request", "configuration", "validation", "unknown"}:
+        category = "unknown"
+    next_step = raw.get("next_step")
     return {
         "http_status": exc.status_code,
-        "origin": raw.get("origin") if raw.get("origin") == "google_ads_api" else "unknown",
-        "api_status": raw.get("api_status") or "UNKNOWN",
-        "google_ads_error_code": raw.get("google_ads_error_code") or "UNSPECIFIED",
-        "next_step": raw.get("next_step") or "Check Google Ads API access and account status.",
+        "origin": raw.get("origin") if raw.get("origin") in {"google_ads_api", "google_ads_official_sdk"} else "unknown",
+        "api_status": enum(raw.get("api_status"), "UNKNOWN"),
+        "google_ads_error_code": enum(raw.get("google_ads_error_code"), "UNSPECIFIED"),
+        "google_ads_error_category": category,
+        "google_ads_error_field": field,
+        "google_request_id": request_id,
+        "next_step": next_step[:500] if isinstance(next_step, str) else "Use the structured Google Ads error to diagnose this failed read.",
     }
 
 
@@ -47,7 +64,7 @@ def list_accounts_live(tenant: str, manager_id=None, expand_clients: bool = True
         try:
             info = _read(
                 "SELECT customer.id, customer.descriptive_name, customer.currency_code,"
-                " customer.manager, customer.status FROM customer LIMIT 1",
+                " customer.time_zone, customer.manager, customer.status FROM customer LIMIT 1",
                 tenant, cid, manager_id=None, limit=1,
             )
             customer = (info.get("rows") or [{}])[0].get("customer") or {}
@@ -56,6 +73,7 @@ def list_accounts_live(tenant: str, manager_id=None, expand_clients: bool = True
                 "customer_id": cid,
                 "name": customer.get("descriptiveName"),
                 "currency": customer.get("currencyCode"),
+                "time_zone": customer.get("timeZone"),
                 "manager": manager,
                 "access": "direct",
             })
@@ -116,16 +134,48 @@ def list_accounts_live(tenant: str, manager_id=None, expand_clients: bool = True
 
 
 def inspect_campaign_live(
-    tenant: str, campaign_name: str, customer_id=None, manager_id=None,
-    date_range: str = "LAST_7_DAYS",
+    tenant: str, campaign_name: str | None = None, customer_id=None, manager_id=None,
+    date_range: str = "LAST_7_DAYS", *, date=None, start_date=None, end_date=None,
+    campaign_id=None,
 ) -> dict:
-    from app.core.google_ads_gateway import _read, _customer_id, DURATIONS
+    from app.core.google_ads_gateway import _read, _customer_id
 
     name = str(campaign_name or "").strip()
-    if not SAFE_CAMPAIGN_NAME.fullmatch(name):
+    if name and not SAFE_CAMPAIGN_NAME.fullmatch(name):
         raise HTTPException(422, "Campaign name must be 1-90 letters/numbers/spaces/hyphens without quotes.")
-    if date_range not in DURATIONS:
-        raise HTTPException(422, "Unsupported date range.")
+    requested_id = _id(campaign_id, "campaign_id") if campaign_id not in (None, "") else None
+    if not name and not requested_id:
+        raise HTTPException(422, "Supply campaign_name or campaign_id for campaign inspection.")
+    has_date = date not in (None, "")
+    has_start, has_end = start_date not in (None, ""), end_date not in (None, "")
+    if has_date and (has_start or has_end):
+        raise HTTPException(422, "Use either date or start_date/end_date, not both.")
+    if has_start != has_end:
+        raise HTTPException(422, "Supply both start_date and end_date for an inclusive date range.")
+    if has_date:
+        start_date = end_date = _date(date, "date")
+        period_mode = "date"
+        date_range = start_date
+        date_filter = f"segments.date = '{start_date}'"
+    elif has_start:
+        start_date, end_date = _date(start_date, "start_date"), _date(end_date, "end_date")
+        if start_date > end_date:
+            raise HTTPException(422, "start_date must not be after end_date.")
+        period_mode = "inclusive_range"
+        date_range = f"{start_date}..{end_date}"
+        date_filter = f"segments.date BETWEEN '{start_date}' AND '{end_date}'"
+    else:
+        date_range = str(date_range or "LAST_7_DAYS").upper()
+        if date_range not in DURATIONS:
+            raise HTTPException(422, "Unsupported date_range for inspection metrics. Use a supported preset or explicit start_date/end_date; ALL_TIME is not supported.")
+        start_date = end_date = None
+        period_mode = "preset"
+        date_filter = f"segments.date DURING {date_range}"
+    period = {
+        "mode": period_mode, "start_date": start_date, "end_date": end_date,
+        "preset": date_range if period_mode == "preset" else None,
+        "time_zone_basis": "customer.time_zone",
+    }
     if customer_id:
         candidates=[{"customer_id": _customer_id(customer_id), "manager_id": _customer_id(manager_id) if manager_id else None}]
         accounts={"accounts": candidates, "warnings": []}
@@ -146,11 +196,17 @@ def inspect_campaign_live(
     for candidate in candidates[:MAX_CLIENT_ACCOUNTS]:
         cid=candidate["customer_id"]
         mid=candidate.get("manager_id") or (manager_id if manager_id else None)
+        conditions = []
+        if name:
+            conditions.append("campaign.name = '" + name + "'")
+        if requested_id:
+            conditions.append(f"campaign.id = {requested_id}")
         query=(
-            "SELECT campaign.id, campaign.name, campaign.status,"
+            "SELECT customer.id, customer.currency_code, customer.time_zone,"
+            " campaign.id, campaign.name, campaign.status,"
             " campaign.campaign_budget, campaign.advertising_channel_type,"
             " campaign_budget.amount_micros, campaign_budget.explicitly_shared"
-            " FROM campaign WHERE campaign.name = '" + name + "' LIMIT 10"
+            " FROM campaign WHERE " + " AND ".join(conditions) + " LIMIT 10"
         )
         try:
             res=_read(query, tenant, cid, mid, limit=10)
@@ -165,8 +221,10 @@ def inspect_campaign_live(
             continue
         for row in res.get("rows") or []:
             campaign=row.get("campaign") or {}
-            if str(campaign.get("name") or "").casefold()!=name.casefold():
+            if name and str(campaign.get("name") or "").casefold() != name.casefold():
                 continue
+            if requested_id and str(campaign.get("id") or "") != requested_id:
+                raise HTTPException(502, "Google Ads returned a campaign outside the requested ID; results withheld.")
             budget=row.get("campaignBudget") or {}
             camp_id=str(campaign.get("id") or "")
             if not camp_id.isdigit():
@@ -176,13 +234,14 @@ def inspect_campaign_live(
                 " metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions"
                 f" FROM ad_group WHERE campaign.id = {camp_id}"
             )
-            if date_range != "ALL_TIME":
-                groups_query+=f" AND segments.date DURING {date_range}"
-            groups_query+=" LIMIT 100"
+            groups_query += " AND " + date_filter
+            groups_query+=" LIMIT 101"
             groups_truncated = False
+            groups_verified = False
             try:
-                groups=_read(groups_query, tenant, cid, mid, limit=100)
-                groups_truncated = bool(groups.get("truncated"))
+                groups=_read(groups_query, tenant, cid, mid, limit=101)
+                groups_truncated = bool(groups.get("truncated")) or len(groups.get("rows") or []) > 100
+                groups_verified = True
                 ad_groups=[
                     {
                         "id": (g.get("adGroup") or {}).get("id"),
@@ -190,7 +249,7 @@ def inspect_campaign_live(
                         "status": (g.get("adGroup") or {}).get("status"),
                         "metrics": g.get("metrics") or {},
                     }
-                    for g in groups.get("rows") or []
+                    for g in (groups.get("rows") or [])[:100]
                 ]
             except HTTPException as exc:
                 ad_groups=[]
@@ -206,7 +265,8 @@ def inspect_campaign_live(
             found.append({
                 "customer_id": cid,
                 "account_name": candidate.get("name"),
-                "currency": candidate.get("currency"),
+                "currency": candidate.get("currency") or (row.get("customer") or {}).get("currencyCode"),
+                "time_zone": candidate.get("time_zone") or (row.get("customer") or {}).get("timeZone"),
                 "manager_id": mid,
                 "campaign_id": camp_id,
                 "campaign_name": campaign.get("name"),
@@ -216,6 +276,9 @@ def inspect_campaign_live(
                 "budget_shared": budget.get("explicitlyShared"),
                 "ad_groups": ad_groups,
                 "ad_groups_truncated": groups_truncated,
+                "ad_groups_verified": groups_verified,
+                "metrics_date_range": date_range,
+                "metrics_period": dict(period),
             })
             if len(found) >= MAX_CAMPAIGNS_TO_INSPECT:
                 break
@@ -223,15 +286,21 @@ def inspect_campaign_live(
             break
     return {
         "provider":"google_ads", "action":"inspect_campaign",
-        "verified_by_google_api": True,
+        "verified_by_google_api": checked > 0,
+        "google_api_called": checked > 0 or any(e.get("origin") == "google_ads_api" for e in account_errors),
         "campaign_data_verified": bool(found),
-        "campaign_name":name,
+        "read_complete": not account_errors and not any(c["ad_groups_truncated"] for c in found),
+        "date_range": date_range,
+        "start_date": start_date, "end_date": end_date, "period": period,
+        "metrics_scope": "ad_groups",
+        "no_changes_applied": True,
+        "campaign_name": name or None, "campaign_id": requested_id,
         "campaigns":found, "accounts_checked":checked,
         "account_errors": account_errors, "warnings":warnings,
         "note": (
-            "Budgets are at campaign level, not ad-group level. If crm is an ad group,"
-            " assigning it its own EGP 800/day budget requires a separate campaign and"
-            " a reviewed migration plan. This endpoint does not change any campaign."
+            "This is campaign configuration and ad-group performance for the stated date_range. "
+            "It is not a campaign performance report. Budgets are at campaign level. "
+            "This endpoint does not change any campaign."
         ),
         "next_step": (
             "Resolve account_errors first. Google Ads has not provided any verified campaign data."

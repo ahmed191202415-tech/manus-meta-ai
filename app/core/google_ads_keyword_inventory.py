@@ -9,6 +9,7 @@ import re
 from fastapi import HTTPException
 
 MAX_KEYWORDS = 1000
+MAX_KEYWORD_PAGES = 20
 VALID_ID = re.compile(r"^[0-9]{1,20}$")
 
 def _id(value: object, field: str) -> str:
@@ -37,15 +38,17 @@ def _list(query: str, *, tenant: str, customer_id: str, manager_id=None) -> list
     rows = []
     token = None
     seen = set()
-    while True:
+    for _ in range(MAX_KEYWORD_PAGES):
         # Google Ads API v25 rejects pageSize with PAGE_SIZE_NOT_SUPPORTED.
         # Let Google select the page size; follow nextPageToken when supplied.
         payload = {"query": query}
         if token:
             payload["pageToken"] = token
         response = _api(tenant, "POST", f"/customers/{customer_id}/googleAds:search", payload, manager_id=manager_id)
+        if not isinstance(response, dict) or response.get("error"):
+            raise HTTPException(502, "Invalid Google Ads keyword response.")
         page = response.get("results") or []
-        if not isinstance(page, list):
+        if not isinstance(page, list) or not all(isinstance(row, dict) for row in page):
             raise HTTPException(502, "Invalid Google Ads keyword response.")
         rows.extend(page)
         if len(rows) > MAX_KEYWORDS:
@@ -53,10 +56,13 @@ def _list(query: str, *, tenant: str, customer_id: str, manager_id=None) -> list
         following = response.get("nextPageToken")
         if not following:
             return rows
+        if not isinstance(following, str) or len(following) > 8192:
+            raise HTTPException(502, "Invalid Google Ads keyword page token.")
         if following in seen:
             raise HTTPException(502, "Repeated Google Ads page token; results withheld.")
         seen.add(following)
         token = following
+    raise HTTPException(502, "Google Ads keyword pagination exceeded its page limit; results withheld.")
 
 def read_keyword_inventory(tenant: str, args: dict) -> dict:
     """Inventory (no date filter) + performance, joined by criterion ID."""
@@ -121,6 +127,7 @@ def read_keyword_inventory(tenant: str, args: dict) -> dict:
         "ok": True, "provider": "google_ads", "report": "keyword_inventory",
         "customer_id": customer_id, "campaign_id": campaign_id, "ad_group_id": group_id,
         "date_range": "LAST_30_DAYS", "source": "Google Ads API",
+        "verified_by_google_api": True, "google_api_called": True,
         "inventory_complete": True, "scope_verified": True,
         "count": len(result), "keywords": list(result.values()),
     }
