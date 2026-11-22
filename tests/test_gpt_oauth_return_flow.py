@@ -1,32 +1,29 @@
 """Regression tests for ChatGPT OAuth portal round trip (no live credentials)."""
 from types import SimpleNamespace
-import pytest
+import asyncio
 from fastapi.responses import RedirectResponse
 from app.api import tenant_portal, oauth_gpt
 
-@pytest.mark.asyncio
-async def test_portal_home_resumes_pending_chatgpt_oauth(monkeypatch):
+def test_portal_home_resumes_pending_chatgpt_oauth(monkeypatch):
     monkeypatch.setattr(tenant_portal, "ensure_allowed_tenant_by_email",
                         lambda email: {"tenant_id": "tenant-demo", "email": email})
     req = SimpleNamespace(session={
         "gpt_oauth_redirect_uri": "https://chatgpt.com/aip/callback",
         "gpt_oauth_state": "test-state",
     })
-    response = await tenant_portal.portal_home(req, email="person@example.com")
+    response = asyncio.run(tenant_portal.portal_home(req, email="person@example.com"))
     assert isinstance(response, RedirectResponse)
     assert response.headers["location"] == "/oauth/continue"
     assert req.session["tenant_id"] == "tenant-demo"
 
-@pytest.mark.asyncio
-async def test_portal_home_normal_visit_opens_dashboard(monkeypatch):
+def test_portal_home_normal_visit_opens_dashboard(monkeypatch):
     monkeypatch.setattr(tenant_portal, "ensure_allowed_tenant_by_email",
                         lambda email: {"tenant_id": "tenant-demo", "email": email})
     req = SimpleNamespace(session={})
-    response = await tenant_portal.portal_home(req, email="person@example.com")
+    response = asyncio.run(tenant_portal.portal_home(req, email="person@example.com"))
     assert response.headers["location"] == "/portal/client"
 
-@pytest.mark.asyncio
-async def test_oauth_continue_reports_blocker_without_redirect_loop(monkeypatch):
+def test_oauth_continue_reports_blocker_without_redirect_loop(monkeypatch):
     monkeypatch.setattr(oauth_gpt, "resolve_tenant_connection_state", lambda tenant: {
         "next_action": "show_reconnect",
     })
@@ -35,12 +32,11 @@ async def test_oauth_continue_reports_blocker_without_redirect_loop(monkeypatch)
         "gpt_oauth_redirect_uri": "https://chatgpt.com/aip/callback",
         "gpt_oauth_state": "test-state",
     })
-    response = await oauth_gpt.oauth_continue(req)
+    response = asyncio.run(oauth_gpt.oauth_continue(req))
     assert response.headers["location"] == "/portal/client?oauth_error=meta_connection_not_ready"
     assert req.session["gpt_oauth_redirect_uri"] == "https://chatgpt.com/aip/callback"
 
-@pytest.mark.asyncio
-async def test_oauth_continue_returns_to_chatgpt_on_ready_connection(monkeypatch):
+def test_oauth_continue_returns_to_chatgpt_on_ready_connection(monkeypatch):
     monkeypatch.setattr(oauth_gpt, "resolve_tenant_connection_state", lambda tenant: {
         "next_action": "continue",
         "connection": {"meta_user_id": "meta-user"},
@@ -56,6 +52,6 @@ async def test_oauth_continue_returns_to_chatgpt_on_ready_connection(monkeypatch
         "gpt_oauth_redirect_uri": "https://chatgpt.com/aip/callback",
         "gpt_oauth_state": "state-test",
     })
-    response = await oauth_gpt.oauth_continue(req)
+    response = asyncio.run(oauth_gpt.oauth_continue(req))
     assert response.headers["location"] == "https://chatgpt.com/aip/callback?code=code-test&state=state-test"
     assert "gpt_oauth_redirect_uri" not in req.session
