@@ -162,10 +162,13 @@ async def oauth_continue(request: Request):
 
     resolution = resolve_tenant_connection_state(tenant_id)
     next_action = resolution.get("next_action")
-    if next_action in {"show_setup", "show_email_gate", "show_blocked"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
-    if next_action in {"show_reconnect", "show_support"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+    if next_action != "continue":
+        # Returning to /portal would immediately redirect here again while
+        # the pending GPT OAuth session exists, creating a redirect loop.
+        return RedirectResponse(
+            url="/portal/client?oauth_error=meta_connection_not_ready",
+            status_code=302,
+        )
 
     meta_user_id = request.session.get("meta_user_id") or resolution.get("connection", {}).get("meta_user_id")
     if not meta_user_id:
