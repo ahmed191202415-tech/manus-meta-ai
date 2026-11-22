@@ -33,7 +33,7 @@ def test_oauth_continue_reports_blocker_without_redirect_loop(monkeypatch):
         "gpt_oauth_state": "test-state",
     })
     response = asyncio.run(oauth_gpt.oauth_continue(req))
-    assert response.headers["location"] == "/portal/client?oauth_error=meta_connection_not_ready"
+    assert response.headers["location"] == "/auth/google/gpt-login"
     assert req.session["gpt_oauth_redirect_uri"] == "https://chatgpt.com/aip/callback"
 
 def test_oauth_continue_returns_to_chatgpt_on_ready_connection(monkeypatch):
