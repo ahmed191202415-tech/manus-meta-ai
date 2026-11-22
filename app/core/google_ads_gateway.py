@@ -724,7 +724,7 @@ async def google_ads_intent(body, request: Request) -> dict:
         if isinstance(detail, dict):
             safe = {
                 key: detail.get(key)
-                for key in ("origin", "http_status", "api_status", "google_ads_error_code", "google_request_id",
+                for key in ("origin", "http_status", "api_status", "google_ads_error_code", "google_ads_error_category", "google_ads_error_field", "google_request_id",
                             "message", "next_step", "connect_url", "required_scope")
                 if key in detail
             }
