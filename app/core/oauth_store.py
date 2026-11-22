@@ -1246,6 +1246,11 @@ def get_app_token_data(token: str):
     if not account or account.get("deleted_at") or account_status in {"disabled", "deleted"} or is_account_expired(account):
         return None
 
+    # Google-verified GPT identity is tenant-scoped, not a Meta access token.
+    # Meta endpoints must still require their own valid provider token.
+    if row["meta_user_id"] == "__gpt_google_identity__":
+        return {"tenant_id": row["tenant_id"], "meta_user_id": row["meta_user_id"], "meta_access_token": None}
+
     connection = get_meta_connection(row["meta_user_id"], tenant_id=row["tenant_id"])
     if not connection:
         return None
