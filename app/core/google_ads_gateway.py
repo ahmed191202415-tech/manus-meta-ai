@@ -301,7 +301,7 @@ def _report(tenant_id: str, args: dict) -> dict:
     duration = str(args.get("date_range") or "LAST_7_DAYS").upper()
     requested_date = str(args.get("date") or "").strip()
     if requested_date:
-        if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", requested_date):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", requested_date):
             raise HTTPException(422, "date must be YYYY-MM-DD.")
         from datetime import date as calendar_date
         try:
@@ -524,17 +524,17 @@ def parse_google_ads_request(body) -> dict:
     # Explicit GAQL must not be interpreted as inspecting a named campaign.
     # A date-specific performance request must return a dated report, even if
     # it mentions an individual campaign name (e.g. Sales-Search-1).
-    date_match = re.search(r"(?<!\\d)(20\\d{2}-\\d{2}-\\d{2})(?!\\d)", message)
-    quoted_gaql = re.search(r"(?is)\\bSELECT\\s+.+?\\bFROM\\s+(?:campaign|ad_group|keyword_view|search_term_view|ad_group_ad)\\b(?:.+)?", message)
+    date_match = re.search(r"(?<!\d)(20\d{2}-\d{2}-\d{2})(?!\d)", message)
+    quoted_gaql = re.search(r"(?is)\bSELECT\s+.+?\bFROM\s+(?:campaign|ad_group|keyword_view|search_term_view|ad_group_ad)\b(?:.+)?", message)
     if quoted_gaql:
-        cid_match = re.search(r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)", message[:quoted_gaql.start()])
+        cid_match = re.search(r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)", message[:quoted_gaql.start()])
         cid = cid_match.group(0) if cid_match else getattr(body, "meta_account_id", None)
         # Disallow guessing a customer ID from a GAQL campaign id.
         if not cid:
             raise HTTPException(422, "Supply customer_id for a GAQL query.")
         gaql = quoted_gaql.group(0).strip().rstrip("\"`").strip()
         # Trim only a closing markdown fence, never change the query itself.
-        gaql = re.split(r"\\n\\s*```", gaql, maxsplit=1)[0].strip()
+        gaql = re.split(r"\n\s*```", gaql, maxsplit=1)[0].strip()
         return {"action": "query", "customer_id": cid, "query": gaql, "search_stream": True}
 
     performance_words = (
@@ -549,14 +549,14 @@ def parse_google_ads_request(body) -> dict:
     ))
     if explicit_report and not explicit_inspect_request:
         cid_match = re.search(
-            r"(?<!\\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\\d)",
+            r"(?<!\d)(?:[0-9]{3}-[0-9]{3}-[0-9]{4}|[0-9]{10})(?!\d)",
             message,
         )
         cid = cid_match.group(0) if cid_match else getattr(body, "meta_account_id", None)
         if not cid:
             return {"action": "list_accounts", "note": "Supply Google Ads customer_id for performance report."}
         report_name = "daily" if "daily" in lower or "يومي" in lower else "campaigns"
-        if re.search(r"(?i)report\\s*=\\s*['\\\"]?daily", message):
+        if re.search(r"(?i)report\s*=\s*['\\"]?daily", message):
             report_name = "daily"
         duration = "TODAY" if any(w in lower for w in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS"
         result = {"action": "report", "customer_id": cid, "report": report_name, "date_range": duration}
