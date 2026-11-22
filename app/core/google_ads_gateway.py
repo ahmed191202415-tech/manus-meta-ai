@@ -236,7 +236,7 @@ def _api(tenant_id: str, method: str, path: str, body: dict | None = None, *, ma
         logging.getLogger("ads.google_action").warning(
             "google_ads_api_error http_status=%d api_status=%s error_code=%s request_id=%s field=%s provider_message=%s",
             response.status_code, status, code or "UNSPECIFIED", str(response.headers.get("request-id") or "")[:100],
-            field_path, re.sub(r"(?i)(bearer\\s+|access[_ -]?token\\s*[:=]\\s*)[^\\s,;]+", r"\\1[REDACTED]", provider_message)[:300],
+            field_path, re.sub(r"(?i)(bearer\\s+|access[_ -]?token\\s*[:=]\\s*)[^\\s,;]+", "[REDACTED]", provider_message)[:300],
         )
         request_id = str(response.headers.get("request-id") or "")
         if not re.fullmatch(r"[A-Za-z0-9_-]{4,100}", request_id):
