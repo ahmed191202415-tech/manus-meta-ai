@@ -97,6 +97,9 @@ affected resources before preparing another change.
 `requirements.txt` applies the committed `constraints.txt`, so a redeployment
 uses the dependency versions tested by CI. Update that file deliberately and
 run the full regression suite when upgrading dependencies.
+Railpack's Python install step copies only recognized manifests by default.
+The committed `railpack.json` adds `constraints.txt` to that step's inputs,
+before pip runs; the later source-copy/build step would be too late.
 
 `GET /health` exposes the deployed Git commit (when supplied by Railway/Vercel)
 and the Google Ads report contract version. Check this after deployment, then
