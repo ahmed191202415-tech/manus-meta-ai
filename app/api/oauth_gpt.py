@@ -25,6 +25,8 @@ GOOGLE_IDENTITY_MARKER = "__gpt_google_identity__"
 
 
 def _verified_google_identity(request: Request, tenant_id: str) -> bool:
+    if request.session.get("gpt_google_verified_tenant") != tenant_id:
+        return False
     account = get_tenant_account_by_id(tenant_id)
     if not account or account.get("deleted_at") or str(account.get("status") or "active").lower() != "active" or is_account_expired(account):
         return False
