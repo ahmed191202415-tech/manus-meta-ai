@@ -12,6 +12,7 @@ on:
       - .python-version
       - requirements.txt
       - constraints.txt
+      - railpack.json
       - app/**
       - tests/**
       - .github/workflows/vercel-preview-compatibility.yml
