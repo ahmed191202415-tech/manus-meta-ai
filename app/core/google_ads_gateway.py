@@ -556,7 +556,7 @@ def parse_google_ads_request(body) -> dict:
         if not cid:
             return {"action": "list_accounts", "note": "Supply Google Ads customer_id for performance report."}
         report_name = "daily" if "daily" in lower or "يومي" in lower else "campaigns"
-        if re.search(r"(?i)report\s*=\s*['\\"]?daily", message):
+        if re.search(r"(?i)report\s*=\s*daily", message):
             report_name = "daily"
         duration = "TODAY" if any(w in lower for w in ("today", "النهارده", "اليوم")) else "LAST_7_DAYS"
         result = {"action": "report", "customer_id": cid, "report": report_name, "date_range": duration}
