@@ -866,6 +866,10 @@ async def portal_home(request: Request, email: str | None = None, gpt_oauth: str
     if not tenant_id:
         return HTMLResponse(_email_gate_html(email=email or ""))
 
+    # When this visit was initiated by ChatGPT OAuth, complete authorization
+    # instead of stranding the user on the regular client dashboard.
+    if request.session.get("gpt_oauth_redirect_uri"):
+        return RedirectResponse(url="/oauth/continue", status_code=302)
     return RedirectResponse(url="/portal/client", status_code=302)
 
 
@@ -894,8 +898,11 @@ async def client_dashboard(request: Request, email: str | None = None):
     selected_property_id = (google_connection or {}).get("selected_ga4_property_id") or ""
     selected_property_name = (google_connection or {}).get("selected_ga4_property_name") or ""
     user_email = request.session.get("user_email") or tenant_id
+    # Explain why the OAuth flow could not finish, rather than showing a
+    # dashboard that appears to have an inert return-to-GPT button.
+    oauth_problem = request.query_params.get("oauth_error")
     schema_url = f"{PUBLIC_BASE_URL}/openapi-gpt.json" if PUBLIC_BASE_URL else "/openapi-gpt.json"
-    return HTMLResponse(_client_dashboard_html(
+    dashboard_html = _client_dashboard_html(
         tenant_id=tenant_id,
         user_email=user_email,
         meta_status=meta_status,
@@ -905,7 +912,21 @@ async def client_dashboard(request: Request, email: str | None = None):
         schema_url=schema_url,
         has_pending_gpt_oauth=bool(request.session.get("gpt_oauth_redirect_uri")),
         dashboards=dashboards,
-    ))
+    )
+    if oauth_problem:
+        explanation = (
+            "تعذّر إكمال الرجوع إلى ChatGPT لأن اتصال Meta غير جاهز. "
+            "راجع حالة ربط Meta أدناه، وأعد الربط عند الضرورة، ثم اضغط الرجوع إلى GPT."
+            if oauth_problem == "meta_connection_not_ready"
+            else "تعذّر إكمال تسجيل الدخول. حاول بدء الاتصال مرة أخرى من ChatGPT."
+        )
+        dashboard_html = dashboard_html.replace(
+            '<header class="hero">',
+            '<section class="card" role="alert"><h2>لم يكتمل تسجيل الدخول إلى ChatGPT</h2><p>'
+            + explanation + '</p></section><header class="hero">',
+            1,
+        )
+    return HTMLResponse(dashboard_html)
     body = f"""
     <section class="card">
       <h1>لوحة ربط العميل</h1>
