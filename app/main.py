@@ -16,6 +16,7 @@ GPT_DATA_PATHS = {
     "/meta/smart_insights",
     "/analysis/run",
     "/tools/intent",
+    "/tools/read",
     "/tools/ga4",
     "/tools/meta_tracking",
     "/tools/website",
@@ -87,7 +88,8 @@ def _gpt_openapi_schema(app: FastAPI) -> dict:
             "For a new Page or Ad engagement Custom Audience, first read an existing working audience rule. Then POST "
             "to act_<account_id>/customaudiences with source_audience_id and audience_retention_days; the server clones "
             "the accepted rule and removes customer-file-only fields instead of inventing event names. "
-            "When unsure which tool to use, call /tools/intent with the user's natural request and known IDs. Follow "
+            "For read-only analysis and Google Ads lookups, use /tools/read with the user's natural request and known IDs. "
+            "Only use /tools/intent for Google Ads mutation previews and commits, subject to confirmation. Follow "
             "its call_next or steps instead of asking the user for technical paths. "
             "For Meta tracking questions, use /tools/meta_tracking. When the user asks which events Meta actually "
             "received, use action=received_pixel_events; do not substitute Custom Conversions. "
@@ -119,6 +121,22 @@ def _gpt_openapi_schema(app: FastAPI) -> dict:
         if path not in allowed_paths:
             continue
         filtered_paths[path] = value
+    # GPT Actions treats POST as consequential by default; explicitly make
+    # only safe read-only actions eligible for remembered permissions.
+    read_only_paths = {
+        "/tools/read", "/meta/query", "/meta/smart_insights",
+        "/tools/ga4", "/tools/meta_tracking", "/tools/website",
+        "/tools/journey", "/tools/clarity",
+        "/api/dashboard-runtime/query",
+        "/api/dashboard-runtime/events/discover",
+        "/api/journey/funnel", "/api/journey/stage-detail",
+        "/api/journey/trend", "/api/journey/comparison",
+    }
+    for path, methods in filtered_paths.items():
+        for method, operation in methods.items():
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            operation["x-openai-isConsequential"] = path not in read_only_paths and method.lower() != "get"
     schema["paths"] = filtered_paths
     return schema
 
