@@ -68,7 +68,7 @@ def test_clone_preview_one_command_uses_official_sdk_without_write(monkeypatch):
     assert j["proposed"]["daily_budget_egp"] == 800
     assert j["sections"]["keywords"]["count"] == 45
     assert j["ready_for_execution"] is False
-    assert len(openapi_gpt_schema()["paths"]) == 28
+    assert len(openapi_gpt_schema()["paths"]) == 29
 
 
 def test_clone_disallows_live_write_and_wrong_status(monkeypatch):
