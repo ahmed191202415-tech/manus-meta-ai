@@ -1,5 +1,6 @@
 """Read-only GPT Actions don't require repeated consequential approval."""
 import json
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -18,26 +19,24 @@ def test_read_and_write_openapi_approval_contract():
         assert schema["paths"][path]["post"]["x-openai-isConsequential"] is True
 
 
-@pytest.mark.asyncio
-async def test_safe_read_dispatcher_forwards_ordinary_intent(monkeypatch):
+def test_safe_read_dispatcher_forwards_ordinary_intent(monkeypatch):
     async def fake_intent(body, request):
         return {"ok": True, "intent": "ga4"}
     monkeypatch.setattr(gpt_tools, "intent_tool", fake_intent)
     body = SimpleNamespace(request="analyze GA4 traffic")
-    result = await gpt_tools.read_tool(body, object())
+    result = asyncio.run(gpt_tools.read_tool(body, object()))
     assert result == {"ok": True, "intent": "ga4"}
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["prepare_mutation", "prepare_negative_keywords", "commit_mutation"])
-async def test_read_endpoint_blocks_google_ads_writes_before_dispatch(monkeypatch, action):
+def test_read_endpoint_blocks_google_ads_writes_before_dispatch(monkeypatch, action):
     async def unexpected(*args):
         pytest.fail("A write reached a read-only endpoint")
     monkeypatch.setattr(gpt_tools, "intent_tool", unexpected)
     payload = {"action": action, "customer_id": "3333735582"}
     body = SimpleNamespace(request="google_ads " + json.dumps(payload))
     with pytest.raises(HTTPException) as exc:
-        await gpt_tools.read_tool(body, object())
+        asyncio.run(gpt_tools.read_tool(body, object()))
     assert exc.value.status_code == 403
 
 
