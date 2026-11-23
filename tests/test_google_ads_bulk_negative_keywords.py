@@ -60,10 +60,12 @@ def test_campaign_mismatch_is_rejected_before_validation(monkeypatch):
     assert err.value.status_code == 422
 
 def test_natural_language_without_explicit_json_not_mutation():
-    result = parse_google_ads_request(SimpleNamespace(
-        request="google_ads أضف الكلمات المستبعدة على SMS في حملة Sales-Search-1",
-        meta_account_id=CID, campaign_name=None))
-    assert result["action"] != "commit_mutation"
+    with pytest.raises(HTTPException) as err:
+        parse_google_ads_request(SimpleNamespace(
+            request="google_ads أضف الكلمات المستبعدة على SMS في حملة Sales-Search-1",
+            meta_account_id=CID, campaign_name=None))
+    assert err.value.status_code == 422
+    assert "prepare_negative_keywords" in str(err.value.detail)
 
 def test_json_write_routes_to_bulk_preview():
     import json
