@@ -18,7 +18,7 @@ _READ_ACTIONS = {
     "audit_crm_migration", "clone_campaign", "duplicate_campaign", "report",
     "analysis", "query", "keyword_inventory",
 }
-_WRITE_ACTIONS = {"prepare_mutation", "commit_mutation"}
+_WRITE_ACTIONS = {"prepare_mutation", "prepare_negative_keywords", "commit_mutation"}
 _ADS_ACTIONS = (_READ_ACTIONS - {"status", "report", "analysis", "query"}) | _WRITE_ACTIONS
 _CONFIGURATION_REPORTS = {"budgets", "conversions", "conversion_actions", "negative_keywords"}
 _PROVIDERS = {"google_ads", "google ads", "google-ads", "googleads"}
@@ -85,7 +85,7 @@ def detect_google_ads_request(command: str) -> bool:
         r"google[_ -]?ads|google adwords|\badwords\b|googleadsservice\.(?:searchstream|search)|"
         r"\bgaql\b|\bsearch_term_view\b|جوجل\s+أ?دز|[إا]علانات\s+جوجل|"
         r"clone_campaign|duplicate_campaign|inspect_campaign|discover_campaign|"
-        r"list_accounts|prepare_mutation|commit_mutation", value
+        r"list_accounts|prepare_mutation|prepare_negative_keywords|commit_mutation", value
     )) or ("جوجل" in value and any(word in value for word in (
         "اعلان", "إعلان", "حمل", "ads", "كلمات البحث",
     )))
@@ -330,7 +330,7 @@ def parse_google_ads_request(body) -> dict:
                 _bad("Write commands must contain exactly one explicit JSON object without surrounding instructions.")
             return {**parsed, "action": action}
         return _read_defaults({**parsed, "action": action}, body)
-    if re.search(r"prepare_mutation|commit_mutation|mutateOperations|approval_token|\b(?:remove|mutate|delete)\b", message, re.I):
+    if re.search(r"prepare_mutation|prepare_negative_keywords|commit_mutation|mutateOperations|approval_token|\b(?:remove|mutate|delete)\b", message, re.I):
         _bad("Google Ads writes require one explicit valid JSON command and the approval flow. No changes were made.")
     if "{" in message:
         # Preserve only the old harmless named-inspection recovery. A malformed
@@ -339,6 +339,13 @@ def parse_google_ads_request(body) -> dict:
             _bad("Malformed Google Ads JSON. Supply one valid JSON command; no report scope was inferred.")
         if re.search(r"[\"']action[\"']\s*:\s*[\"'](?:inspect_campaign|discover_campaign)[\"']", message, re.I) is None:
             _bad("Malformed Google Ads command.")
+    # Never reinterpret a requested negative-keyword addition as a read or
+    # campaign inspection. Require a structured, reviewable exact scope.
+    if re.search(r"(?:أضف|اضف|ضيف|إضافة|اضافة|استبعد|استبعاد|add|create)", lower) and re.search(
+        r"negative[_ ]?keywords?|الكلمات\s+(?:السلبية|المستبعدة)|كلمات\s+سلبية|negative", lower
+    ):
+        _bad("To add negatives, send a Google Ads JSON command with action=prepare_negative_keywords, customer_id, ad_group_id, match_type=EXACT, and keywords. This makes a validate-only preview; then obtain user approval before commit_mutation.")
+
     query, outside_query = _raw_gaql(message)
     if query is not None:
         scope = _scope(outside_query, body)
