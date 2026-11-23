@@ -342,7 +342,7 @@ def parse_google_ads_request(body) -> dict:
     # Never reinterpret a requested negative-keyword addition as a read or
     # campaign inspection. Require a structured, reviewable exact scope.
     if re.search(r"(?:أضف|اضف|ضيف|إضافة|اضافة|استبعد|استبعاد|add|create)", lower) and re.search(
-        r"negative[_ ]?keywords?|الكلمات\\s+(?:السلبية|المستبعدة)|كلمات\\s+سلبية|negative", lower
+        r"negative[_ ]?keywords?|الكلمات\s+(?:السلبية|المستبعدة)|كلمات\s+سلبية|negative", lower
     ):
         _bad("To add negatives, send a Google Ads JSON command with action=prepare_negative_keywords, customer_id, ad_group_id, match_type=EXACT, and keywords. This makes a validate-only preview; then obtain user approval before commit_mutation.")
 
