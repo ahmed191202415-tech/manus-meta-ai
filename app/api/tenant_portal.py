@@ -690,6 +690,11 @@ def _client_dashboard_html(
     meta_app = meta_status.get("meta_app") or {}
     meta_connected = bool(meta_connection.get("connected"))
     google_connected = bool(google_connection)
+    google_ads_connected = bool(
+        google_connection
+        and google_connection.get("connection_mode") == "oauth"
+        and "https://www.googleapis.com/auth/adwords" in str(google_connection.get("scopes") or "").split()
+    )
     clarity_connected = bool(clarity_connection)
     property_id = escape(str((google_connection or {}).get("selected_ga4_property_id") or ""))
     property_name = escape(str((google_connection or {}).get("selected_ga4_property_name") or ""))
@@ -716,7 +721,7 @@ def _client_dashboard_html(
     <header class="hero">
       <div>
         <h1>مركز ربط مصادر البيانات</h1>
-        <p class="muted">أدر ربط Meta وGoogle Analytics وMicrosoft Clarity من مكان واحد.</p>
+        <p class="muted">اربط Meta Ads وGoogle Ads وGoogle Analytics وMicrosoft Clarity من مكان واحد.</p>
         <p class="muted">{escape(user_email)}</p>
       </div>
       <div class="hero-actions">
@@ -727,6 +732,7 @@ def _client_dashboard_html(
     <section class="summary">
       <div class="mini"><strong>Meta Ads</strong><div class="status-line"><i class="status-dot {'ok' if meta_connected else ''}"></i><span>{'متصل' if meta_connected else 'غير متصل'}</span></div><div class="muted">{escape(str(meta_connection.get('connection_mode') or ''))}</div></div>
       <div class="mini"><strong>Google Analytics</strong><div class="status-line"><i class="status-dot {'ok' if google_connected else ''}"></i><span>{'متصل' if google_connected else 'غير متصل'}</span></div><div class="muted">{escape(str((google_connection or {}).get('connection_mode') or ''))}</div></div>
+      <div class="mini"><strong>Google Ads</strong><div class="status-line"><i class="status-dot {'ok' if google_ads_connected else ''}"></i><span>{'متصل' if google_ads_connected else 'غير متصل'}</span></div><div class="muted">صلاحية إدارة وقراءة الحملات</div></div>
       <div class="mini"><strong>Microsoft Clarity</strong><div class="status-line"><i class="status-dot {'ok' if clarity_connected else ''}"></i><span>{'متصل' if clarity_connected else 'غير متصل'}</span></div><div class="muted">{clarity_name}</div></div>
       <div class="mini"><strong>GA4 Property</strong><div class="status-line"><i class="status-dot {'ok' if property_id else ''}"></i><span>{property_name or property_id or 'لم يتم الاختيار'}</span></div></div>
     </section>
@@ -782,6 +788,17 @@ def _client_dashboard_html(
         <button onclick="selectProperty()">تحديث Property</button>
       </div>
       <div class="compact-actions"><a class="button" href="/ga4/properties?tenant_id={quote(tenant_id)}">عرض Properties المتاحة</a><button class="warn" onclick="disconnectGoogle()">حذف ربط Google</button></div>
+    </section>
+
+    <section class="card">
+      <div class="integration-head"><div><div class="step">Google Ads</div><h2>ربط حساب Google Ads</h2></div><span class="pill {'ok' if google_ads_connected else 'bad'}">{'متصل' if google_ads_connected else 'غير متصل'}</span></div>
+      <p class="muted">ربط Google Analytics وحده مش بيدي صلاحية Google Ads. اضغط الزر لطلب صلاحية الإعلانات من Google، وبعد الموافقة هترجع هنا وتظهر حالة الربط.</p>
+      <div class="compact-actions">
+        <form action="/auth/google/ads/start" method="post" style="display:inline-flex;margin:0">
+          <button type="submit">{'إعادة تفويض Google Ads' if google_ads_connected else 'ربط Google Ads عبر Google'}</button>
+        </form>
+      </div>
+      <p class="muted">{'اتصال Google Ads مُفعّل لهذا الحساب. تقدر ترجع لـGPT وتطلب عرض الحسابات الإعلانية.' if google_ads_connected else 'لو سجلت دخولك في Google Analytics قبل كده، محتاج توافق على صلاحية Google Ads بشكل منفصل.'}</p>
     </section>
 
     <section class="card">
@@ -849,6 +866,10 @@ async def portal_home(request: Request, email: str | None = None, gpt_oauth: str
     if not tenant_id:
         return HTMLResponse(_email_gate_html(email=email or ""))
 
+    # When this visit was initiated by ChatGPT OAuth, complete authorization
+    # instead of stranding the user on the regular client dashboard.
+    if request.session.get("gpt_oauth_redirect_uri"):
+        return RedirectResponse(url="/oauth/continue", status_code=302)
     return RedirectResponse(url="/portal/client", status_code=302)
 
 
@@ -877,8 +898,11 @@ async def client_dashboard(request: Request, email: str | None = None):
     selected_property_id = (google_connection or {}).get("selected_ga4_property_id") or ""
     selected_property_name = (google_connection or {}).get("selected_ga4_property_name") or ""
     user_email = request.session.get("user_email") or tenant_id
+    # Explain why the OAuth flow could not finish, rather than showing a
+    # dashboard that appears to have an inert return-to-GPT button.
+    oauth_problem = request.query_params.get("oauth_error")
     schema_url = f"{PUBLIC_BASE_URL}/openapi-gpt.json" if PUBLIC_BASE_URL else "/openapi-gpt.json"
-    return HTMLResponse(_client_dashboard_html(
+    dashboard_html = _client_dashboard_html(
         tenant_id=tenant_id,
         user_email=user_email,
         meta_status=meta_status,
@@ -888,7 +912,21 @@ async def client_dashboard(request: Request, email: str | None = None):
         schema_url=schema_url,
         has_pending_gpt_oauth=bool(request.session.get("gpt_oauth_redirect_uri")),
         dashboards=dashboards,
-    ))
+    )
+    if oauth_problem:
+        explanation = (
+            "تعذّر إكمال الرجوع إلى ChatGPT لأن اتصال Meta غير جاهز. "
+            "راجع حالة ربط Meta أدناه، وأعد الربط عند الضرورة، ثم اضغط الرجوع إلى GPT."
+            if oauth_problem == "meta_connection_not_ready"
+            else "تعذّر إكمال تسجيل الدخول. حاول بدء الاتصال مرة أخرى من ChatGPT."
+        )
+        dashboard_html = dashboard_html.replace(
+            '<header class="hero">',
+            '<section class="card" role="alert"><h2>لم يكتمل تسجيل الدخول إلى ChatGPT</h2><p>'
+            + explanation + '</p></section><header class="hero">',
+            1,
+        )
+    return HTMLResponse(dashboard_html)
     body = f"""
     <section class="card">
       <h1>لوحة ربط العميل</h1>
@@ -1082,6 +1120,9 @@ async def session_email(body: TenantEmailAccessRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    if request.session.get("tenant_id") != record["tenant_id"]:
+        request.session.pop("gpt_google_verified_email", None)
+        request.session.pop("gpt_google_verified_tenant", None)
     request.session["tenant_id"] = record["tenant_id"]
     request.session["user_email"] = record["email"]
     return resolve_tenant_connection_state(record["tenant_id"])
@@ -1091,6 +1132,9 @@ async def session_email(body: TenantEmailAccessRequest, request: Request):
 async def session_logout(request: Request):
     request.session.pop("tenant_id", None)
     request.session.pop("user_email", None)
+    request.session.pop("gpt_google_verified_email", None)
+    request.session.pop("gpt_google_verified_tenant", None)
+    request.session.pop("gpt_google_identity_pending", None)
     request.session.pop("meta_access_token", None)
     request.session.pop("meta_user_id", None)
     request.session.pop("meta_user", None)

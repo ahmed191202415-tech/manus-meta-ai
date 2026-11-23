@@ -1,3 +1,7 @@
+import logging
+import secrets
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
@@ -188,9 +192,50 @@ def _campaign_insights_steps(body: IntentToolRequest) -> list[dict]:
 @router.post(
     "/intent",
     summary="Route natural request",
-    description="Maps Arabic or English user requests to the best tool, action, payload, and next steps. Use first when unsure.",
+    description=(
+        "Routes requests and executes Google Ads. Prefer google_ads JSON with action=report, customer_id, "
+        "report, campaign_id, start_date/end_date. Search terms are actual searches. Put query filters in GAQL. "
+        "Writes require preview and approval. Check scope, period and partial before analysis."
+    ),
 )
-async def intent_tool(body: IntentToolRequest):
+async def intent_tool(body: IntentToolRequest, request: Request = None):
+    # Google Ads uses the SAME previously published GPT Actions schema:
+    # /tools/intent with its existing request string and optional account ID.
+    # No new GPT Action or schema import is needed.
+    from app.core.google_ads_gateway import _detect, google_ads_intent
+    if _detect(body.request):
+        # Do not log user prompts, customer IDs, tenant IDs or OAuth secrets.
+        trace = secrets.token_hex(5)
+        started = time.monotonic()
+        log = logging.getLogger("ads.google_action")
+        log.warning("google_ads_intent received trace=%s", trace)
+        try:
+            if request is None:
+                raise HTTPException(status_code=401, detail="Google Ads requires a verified GPT OAuth request.")
+            result = await google_ads_intent(body, request)
+        except HTTPException as exc:
+            log.warning(
+                "google_ads_intent rejected trace=%s http_status=%s elapsed_ms=%d",
+                trace, exc.status_code, int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            log.exception("google_ads_intent unexpected_failure trace=%s", trace)
+            raise
+        log.warning(
+            "google_ads_intent completed trace=%s elapsed_ms=%d",
+            trace, int((time.monotonic() - started) * 1000),
+        )
+        if isinstance(result, dict):
+            result["action_diagnostics"] = {
+                "request_id": trace,
+                "route": "/tools/intent",
+                "handler": "google_ads",
+                "executed": True,
+                "data_source": "Google Ads API" if result.get("verified_by_google_api") or result.get("google_ads_api_ok") else "not_verified",
+            }
+        return result
+
     text = body.request.strip().lower()
     property_id = _ga4_property(body)
 
@@ -443,6 +488,35 @@ async def intent_tool(body: IntentToolRequest):
         {"tenant_id": body.tenant_id, "payload": {"user_request": body.request}},
         notes=["If this is a platform data request, retry /tools/intent with IDs or keywords from the user's message."],
     )
+
+
+@router.post(
+    "/read",
+    summary="Read-only analysis and Google Ads lookup",
+    description=(
+        "Use this tool for all analysis, Google Ads reports, account inspection, "
+        "search terms and diagnostic reads. It cannot preview, approve or commit "
+        "any Google Ads mutations. For changes, use /tools/intent and its approval flow."
+    ),
+)
+async def read_tool(body: IntentToolRequest, request: Request):
+    """Read-only entry point so ChatGPT can safely remember read permissions.
+
+    /tools/intent is intentionally consequential because it also supports
+    real Google Ads writes. Keep their approval boundary separate.
+    """
+    from app.core.google_ads_gateway import _detect, parse_google_ads_request
+    if _detect(body.request):
+        command = parse_google_ads_request(body)
+        if command.get("action") in {"prepare_mutation", "prepare_negative_keywords", "commit_mutation"}:
+            raise HTTPException(
+                status_code=403,
+                detail="This tool is read-only. Use /tools/intent for write previews and user-confirmed changes."
+            )
+    result = await intent_tool(body, request)
+    if isinstance(result, dict) and isinstance(result.get("action_diagnostics"), dict):
+        result["action_diagnostics"]["route"] = "/tools/read"
+    return result
 
 
 LEAD_ACCESS_REQUIRED_PERMISSIONS = [

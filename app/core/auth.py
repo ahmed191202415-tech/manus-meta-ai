@@ -47,21 +47,21 @@ def _resolve_valid_saved_token(
         me_data = _validate_meta_access_token(access_token, app_secret=app_secret)
     except HTTPException as exc:
         if _is_invalid_meta_token_error(exc):
-            if meta_user_id:
-                purge_meta_connection(meta_user_id, tenant_id=tenant_id)
+            # A provider credential failure is not an expired ChatGPT OAuth
+            # session. 401 makes ChatGPT prompt Sign in again indefinitely.
+            # Preserve the saved connection for explicit user/admin repair.
             _clear_meta_session(request)
             raise HTTPException(
-                status_code=401,
-                detail="Meta connection expired or was revoked. Please authenticate again."
+                status_code=409,
+                detail="Meta connection needs reconnect. ChatGPT sign-in is still valid."
             ) from exc
         raise
 
     if meta_user_id and str(me_data.get("id") or "").strip() != str(meta_user_id).strip():
-        purge_meta_connection(str(meta_user_id), tenant_id=tenant_id)
         _clear_meta_session(request)
         raise HTTPException(
-            status_code=401,
-            detail="Meta connection is no longer valid. Please authenticate again."
+            status_code=409,
+            detail="Connected Meta user changed. Review the provider connection; ChatGPT sign-in remains valid."
         )
 
     return access_token
@@ -107,6 +107,13 @@ async def resolve_access_token(request: Request) -> str:
         app_token_data = _safe_get_app_token_data(bearer)
         if app_token_data:
             meta_access_token = app_token_data.get("meta_access_token")
+            if not meta_access_token:
+                # The GPT user is authenticated but this tool needs Meta.
+                # Never forward an app_ bearer token to Facebook as a token.
+                raise HTTPException(
+                    status_code=409,
+                    detail="Meta data is unavailable for this account. Connect Meta to use Meta tools; Google tools remain available."
+                )
             if meta_access_token:
                 app_secret = app_token_data.get("meta_app_secret")
                 set_current_meta_app_secret(app_secret)
@@ -117,6 +124,12 @@ async def resolve_access_token(request: Request) -> str:
                     app_token_data.get("tenant_id"),
                     app_secret=app_secret,
                 )
+
+        if bearer.startswith("app_"):
+            raise HTTPException(
+                status_code=401,
+                detail="GPT session token is invalid or expired. Sign in again."
+            )
 
         direct_conn = _safe_find_meta_connection_by_access_token(bearer)
         if direct_conn:

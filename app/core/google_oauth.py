@@ -32,13 +32,14 @@ def _require_google_oauth_config():
         raise HTTPException(status_code=500, detail=f"Google OAuth is not configured: {', '.join(missing)}")
 
 
-def build_google_authorization_url(state: str) -> str:
+def build_google_authorization_url(state: str, additional_scopes: str = "") -> str:
     _require_google_oauth_config()
+    requested = list(dict.fromkeys([*GOOGLE_OAUTH_SCOPES.replace(",", " ").split(), *additional_scopes.replace(",", " ").split()]))
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI,
         "response_type": "code",
-        "scope": GOOGLE_OAUTH_SCOPES,
+        "scope": " ".join(requested),
         "access_type": "offline",
         "prompt": "consent",
         "include_granted_scopes": "true",

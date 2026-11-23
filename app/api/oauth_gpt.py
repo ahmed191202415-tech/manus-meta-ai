@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
+from base64 import b64decode
+import secrets
 from urllib.parse import urlencode
 
 from app.config import GPT_OAUTH_CLIENT_ID, GPT_OAUTH_CLIENT_SECRET, PORTAL_PATH, PUBLIC_BASE_URL
@@ -12,10 +14,37 @@ from app.core.oauth_store import (
     consume_auth_code,
     get_active_meta_connection_for_tenant,
     get_tenant_meta_app,
+    get_tenant_account_by_id,
+    is_account_expired,
     purge_meta_connection,
 )
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
+
+GOOGLE_IDENTITY_MARKER = "__gpt_google_identity__"
+
+
+def _verified_google_identity(request: Request, tenant_id: str) -> bool:
+    if request.session.get("gpt_google_verified_tenant") != tenant_id:
+        return False
+    account = get_tenant_account_by_id(tenant_id)
+    if not account or account.get("deleted_at") or str(account.get("status") or "active").lower() != "active" or is_account_expired(account):
+        return False
+    allowed_email = str(account.get("email") or "").strip().lower()
+    return bool(
+        allowed_email
+        and request.session.get("gpt_google_verified_tenant") == tenant_id
+        and str(request.session.get("gpt_google_verified_email") or "").lower() == allowed_email
+    )
+
+
+def _finish_google_identity(request: Request, tenant_id: str, redirect_uri: str, state: str) -> RedirectResponse:
+    code = create_auth_code(tenant_id=tenant_id, meta_user_id=GOOGLE_IDENTITY_MARKER)
+    request.session.pop("gpt_oauth_redirect_uri", None)
+    request.session.pop("gpt_oauth_state", None)
+    request.session.pop("gpt_oauth_client_id", None)
+    return RedirectResponse(url=_oauth_redirect_url(redirect_uri, code, state), status_code=302)
+
 
 
 @router.get("/config", include_in_schema=False)
@@ -27,7 +56,7 @@ async def oauth_config():
         "authorization_url": f"{base_url}/oauth/authorize",
         "token_url": f"{base_url}/oauth/token",
         "scope": "",
-        "client_secret": "Use the GPT_OAUTH_CLIENT_SECRET value from Railway. It is intentionally not exposed here.",
+        "client_secret": "Use the GPT_OAUTH_CLIENT_SECRET value from the hosting environment. It is intentionally not exposed here.",
     }
 
 
@@ -72,51 +101,47 @@ async def oauth_authorize(
     request.session["gpt_oauth_state"] = state
     request.session["gpt_oauth_client_id"] = client_id
 
-    resolution = resolve_tenant_connection_state(tenant_id)
-    next_action = resolution.get("next_action")
+    # Verified ownership of the tenant's email allows independent GPT login.
+    if _verified_google_identity(request, tenant_id):
+        return _finish_google_identity(request, tenant_id, redirect_uri, state)
 
-    if next_action in {"show_setup", "show_email_gate", "show_blocked"}:
-        return RedirectResponse(url=_portal_url_with_gpt_state(client_id, redirect_uri, state), status_code=302)
-    if next_action in {"show_reconnect", "show_support"}:
-        return RedirectResponse(url=_portal_url_with_gpt_state(client_id, redirect_uri, state), status_code=302)
-
-    meta_user_id = request.session.get("meta_user_id") or resolution.get("connection", {}).get("meta_user_id")
-
-    conn = get_active_meta_connection_for_tenant(tenant_id)
-    if not conn:
-        _clear_meta_session(request)
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
-
-    try:
-        meta_app = get_tenant_meta_app(tenant_id)
-        app_secret = meta_app.get("meta_app_secret") if meta_app and conn.get("connection_mode") != "manual_token" else None
-        _validate_meta_access_token(conn["meta_access_token"], app_secret=app_secret)
-    except HTTPException:
-        purge_meta_connection(meta_user_id, tenant_id=tenant_id)
-        _clear_meta_session(request)
-        request.session["tenant_id"] = tenant_id
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
-
-    code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
-    return RedirectResponse(url=_oauth_redirect_url(redirect_uri, code, state), status_code=302)
+    return RedirectResponse(url="/oauth/continue", status_code=302)
 
 
 @router.post("/token")
 async def oauth_token(
+    request: Request,
     grant_type: str = Form(...),
     code: str = Form(...),
-    client_id: str = Form(...),
-    client_secret: str = Form(...),
-    redirect_uri: str = Form(...)
+    client_id: str = Form(""),
+    client_secret: str = Form(""),
+    redirect_uri: str = Form(""),
 ):
+    """Support both OAuth client_secret_post and client_secret_basic.
+
+    ChatGPT Actions can use either exchange method. This remains a protected
+    endpoint and never issues tokens without verifying the configured secret.
+    """
     del redirect_uri
+    basic = str(request.headers.get("authorization") or "")
+    if basic.lower().startswith("basic "):
+        try:
+            raw = b64decode(basic.split(" ", 1)[1].strip(), validate=True).decode("utf-8")
+            basic_id, basic_secret = raw.split(":", 1)
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(status_code=401, detail="Invalid OAuth client authentication")
+        # If both formats are supplied, require them to agree.
+        if (client_id and not secrets.compare_digest(client_id, basic_id)) or (
+            client_secret and not secrets.compare_digest(client_secret, basic_secret)
+        ):
+            raise HTTPException(status_code=401, detail="Conflicting OAuth client credentials")
+        client_id, client_secret = basic_id, basic_secret
 
-    if client_id != GPT_OAUTH_CLIENT_ID:
-        raise HTTPException(status_code=400, detail="Invalid client_id")
-
-    if client_secret != GPT_OAUTH_CLIENT_SECRET:
-        raise HTTPException(status_code=400, detail="Invalid client_secret")
-
+    if not (GPT_OAUTH_CLIENT_ID and GPT_OAUTH_CLIENT_SECRET):
+        raise HTTPException(status_code=503, detail="OAuth client is not configured")
+    if not (secrets.compare_digest(client_id, GPT_OAUTH_CLIENT_ID) and
+            secrets.compare_digest(client_secret, GPT_OAUTH_CLIENT_SECRET)):
+        raise HTTPException(status_code=401, detail="Invalid OAuth client authentication")
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail="Unsupported grant_type")
 
@@ -125,12 +150,10 @@ async def oauth_token(
         raise HTTPException(status_code=400, detail="Invalid or expired code")
 
     app_token = create_app_token(tenant_id=auth_data["tenant_id"], meta_user_id=auth_data["meta_user_id"])
-
-    return {
-        "access_token": app_token,
-        "token_type": "bearer",
-        "expires_in": 86400
-    }
+    return JSONResponse(
+        {"access_token": app_token, "token_type": "bearer", "expires_in": 86400},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/continue")
@@ -142,31 +165,27 @@ async def oauth_continue(request: Request):
     if not tenant_id or not redirect_uri:
         return RedirectResponse(url=PORTAL_PATH, status_code=302)
 
+    if _verified_google_identity(request, tenant_id):
+        return _finish_google_identity(request, tenant_id, redirect_uri, state)
+
+    # Legacy Meta login remains supported, but Meta outages/permissions do
+    # not block Google Ads and analytics after Google verifies user identity.
     resolution = resolve_tenant_connection_state(tenant_id)
-    next_action = resolution.get("next_action")
-    if next_action in {"show_setup", "show_email_gate", "show_blocked"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
-    if next_action in {"show_reconnect", "show_support"}:
-        return RedirectResponse(url=PORTAL_PATH, status_code=302)
+    if resolution.get("next_action") != "continue":
+        return RedirectResponse(url="/auth/google/gpt-login", status_code=302)
 
     meta_user_id = request.session.get("meta_user_id") or resolution.get("connection", {}).get("meta_user_id")
-    if not meta_user_id:
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
-
     conn = get_active_meta_connection_for_tenant(tenant_id)
-    if not conn:
-        _clear_meta_session(request)
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
+    if not conn or not meta_user_id:
+        return RedirectResponse(url="/auth/google/gpt-login", status_code=302)
 
     try:
         meta_app = get_tenant_meta_app(tenant_id)
         app_secret = meta_app.get("meta_app_secret") if meta_app and conn.get("connection_mode") != "manual_token" else None
         _validate_meta_access_token(conn["meta_access_token"], app_secret=app_secret)
     except HTTPException:
-        purge_meta_connection(meta_user_id, tenant_id=tenant_id)
-        _clear_meta_session(request)
-        request.session["tenant_id"] = tenant_id
-        return RedirectResponse(url=f"/auth/meta/login?tenant_id={tenant_id}", status_code=302)
+        # Never purge a shared customer integration merely because login fails.
+        return RedirectResponse(url="/auth/google/gpt-login", status_code=302)
 
     code = create_auth_code(tenant_id=tenant_id, meta_user_id=meta_user_id)
     final_url = _oauth_redirect_url(redirect_uri, code, state)
