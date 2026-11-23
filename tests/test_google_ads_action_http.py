@@ -67,6 +67,6 @@ def test_google_ads_is_denied_without_authorized_gpt_session(monkeypatch):
 
 def test_legacy_schema_preserves_28_actions():
     schema = openapi_gpt_schema()
-    assert len(schema["paths"]) == 29
+    assert len(schema["paths"]) == 28
     assert "/tools/intent" in schema["paths"]
     assert schema["paths"]["/tools/intent"]["post"]["operationId"] == "intent_tool_tools_intent_post"
