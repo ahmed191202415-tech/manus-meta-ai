@@ -69,6 +69,16 @@ across both Search and SearchStream. A provider `400` alone is not a permissions
 diagnosis. Transient reads can be retried once; mutations are never replayed
 automatically.
 
+## Bulk exact negative keywords on one ad group
+
+To propose multiple negatives without splitting a 24-term list into separate approvals, use the *structured* preview action, not a natural-language request or inspect_campaign:
+
+```text
+google_ads {"action":"prepare_negative_keywords","customer_id":"3333735582","campaign_name":"Sales-Search-1","ad_group_id":"208243021384","match_type":"EXACT","keywords":["[send free sms]","[receive sms]"]}
+```
+
+Pass **all 24 distinct user-supplied terms** as the keywords array in the same request (1–50 supported). The bracket syntax is accepted for Exact Match and normalized to bare keyword text for Google's API. The server first checks the ad group/campaign scope and existing exact negatives, then creates a **validateOnly preview** for missing terms only. No campaign or ad-group settings change at this stage. Show the full proposal and ask for explicit user confirmation before calling `commit_mutation` with the returned approval token. Never present a read-only inspection as proof of an addition. Unknown or mismatched scope must fail with an error instead of switching to campaign-level negatives.
+
 ## Writes: strictly preview then explicit confirmation
 
 `prepare_mutation` uses Google Ads `validateOnly=true`. It **does not**
