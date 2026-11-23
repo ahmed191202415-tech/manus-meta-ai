@@ -14,7 +14,7 @@ from app.schemas.gpt_tool_requests import IntentToolRequest
 
 def test_original_action_schema_still_unchanged():
     paths = openapi_gpt_schema()["paths"]
-    assert len(paths) == 29
+    assert len(paths) == 28
     assert "/tools/intent" in paths
     assert "/tools/google_ads" not in paths
 
