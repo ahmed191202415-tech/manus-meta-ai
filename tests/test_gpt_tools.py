@@ -24,6 +24,7 @@ def test_compact_gpt_schema_keeps_broad_dispatchers_and_dashboard_runtime():
         "/meta/smart_insights",
         "/comment_automations/manage",
         "/tools/intent",
+        "/tools/read",
         "/tools/ga4",
         "/tools/meta_tracking",
         "/tools/website",
