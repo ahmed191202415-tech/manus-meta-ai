@@ -278,8 +278,8 @@ def _report(tenant_id: str, args: dict) -> dict:
 
 
 def _check_mutations(operations: object, customer_id: str) -> list[dict]:
-    if not isinstance(operations, list) or not (1 <= len(operations) <= 20):
-        raise HTTPException(422, "Provide 1 to 20 Google Ads mutate operations.")
+    if not isinstance(operations, list) or not (1 <= len(operations) <= 50):
+        raise HTTPException(422, "Provide 1 to 50 Google Ads mutate operations.")
     for operation in operations:
         if not isinstance(operation, dict) or len(operation) != 1:
             raise HTTPException(422, "Each mutate operation must contain exactly one supported operation type.")
@@ -352,6 +352,97 @@ def _mutation_response(result: object, operations: list[dict], customer_id: str,
         "outcome_unknown": not validate_only, "retryable": False,
         "next_step": "Do not replay the approved change. Read the affected resources and reconcile the account state first.",
     })
+
+
+def _prepare_negative_keywords(tenant: str, command: dict) -> dict:
+    """Build a scoped, exact-match, validate-only proposal; never write here."""
+    allowed = {"action", "customer_id", "manager_id", "campaign_id", "campaign_name",
+               "ad_group_id", "keywords", "match_type"}
+    extra = set(command) - allowed
+    if extra:
+        raise HTTPException(422, "Unsupported negative-keyword fields: " + ", ".join(sorted(extra)))
+    cid = _customer_id(command.get("customer_id"))
+    gid = str(command.get("ad_group_id") or "")
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", gid):
+        raise HTTPException(422, "Specify the numeric ad_group_id. Never use campaign-level negatives by default.")
+    match = str(command.get("match_type") or "EXACT").upper()
+    if match != "EXACT":
+        raise HTTPException(422, "Bulk negative keyword preview supports EXACT only.")
+    supplied = command.get("keywords")
+    if not isinstance(supplied, list) or not (1 <= len(supplied) <= 50):
+        raise HTTPException(422, "Provide 1 to 50 negative keyword strings.")
+    words = []
+    seen = set()
+    for raw in supplied:
+        if not isinstance(raw, str):
+            raise HTTPException(422, "Negative keywords must be strings.")
+        word = raw.strip()
+        if word.startswith("[") and word.endswith("]"):
+            word = word[1:-1].strip()
+        if not word or len(word) > 80 or any(ord(c) < 32 or ord(c) == 127 for c in word):
+            raise HTTPException(422, "Negative keyword must be non-empty, at most 80 characters, and one line.")
+        key = word.casefold()
+        if key not in seen:
+            seen.add(key)
+            words.append(word)
+    mid = command.get("manager_id")
+    if mid:
+        mid = _customer_id(mid)
+
+    # Check ad-group ownership and optional campaign scope before proposing any
+    # change, rather than trusting a campaign label from the GPT.
+    lookup = _read(
+        f"SELECT ad_group.id, campaign.id, campaign.name FROM ad_group "
+        f"WHERE ad_group.id = {gid} LIMIT 2", tenant, cid, mid, 2
+    )
+    rows = lookup.get("rows") or []
+    if len(rows) != 1:
+        raise HTTPException(422, "Ad group was not uniquely found in the requested Google Ads account.")
+    group = rows[0].get("adGroup") or rows[0].get("ad_group") or {}
+    campaign = rows[0].get("campaign") or {}
+    if str(group.get("id")) != gid:
+        raise HTTPException(422, "Google Ads did not confirm the requested ad group ID.")
+    if command.get("campaign_id") and str(campaign.get("id")) != str(command["campaign_id"]):
+        raise HTTPException(422, "The ad group belongs to a different campaign ID.")
+    if command.get("campaign_name") and campaign.get("name") != command["campaign_name"]:
+        raise HTTPException(422, "The ad group belongs to a different campaign name.")
+
+    # Existing exact negatives are not created twice.
+    existing_result = _read(
+        "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type "
+        "FROM ad_group_criterion WHERE "
+        f"ad_group.id = {gid} AND ad_group_criterion.negative = TRUE "
+        "AND ad_group_criterion.type = KEYWORD",
+        tenant, cid, mid, 300
+    )
+    if existing_result.get("truncated"):
+        raise HTTPException(409, "Existing negative-keyword inventory is incomplete. Review it before adding more.")
+    existing = set()
+    for item in existing_result.get("rows") or []:
+        criterion = item.get("adGroupCriterion") or item.get("ad_group_criterion") or {}
+        kw = criterion.get("keyword") or {}
+        if kw.get("matchType", kw.get("match_type")) == "EXACT":
+            existing.add(str(kw.get("text") or "").strip().casefold())
+    already_present = [w for w in words if w.casefold() in existing]
+    to_add = [w for w in words if w.casefold() not in existing]
+    if not to_add:
+        return {"ok": True, "provider": "google_ads", "status": "NO_CHANGES_NEEDED",
+                "customer_id": cid, "ad_group_id": gid, "already_present": already_present,
+                "no_changes_applied": True}
+    operations = [{
+        "adGroupCriterionOperation": {"create": {
+            "adGroup": f"customers/{cid}/adGroups/{gid}",
+            "negative": True,
+            "keyword": {"text": word, "matchType": "EXACT"},
+        }}
+    } for word in to_add]
+    preview = execute_google_ads_command({
+        "action": "prepare_mutation", "customer_id": cid, "manager_id": mid,
+        "operations": operations,
+    }, {"tenant_id": tenant})
+    return {**preview, "ad_group_id": gid, "match_type": "EXACT",
+            "new_keywords": to_add, "already_present": already_present,
+            "no_changes_applied": True}
 
 
 def execute_google_ads_command(command: dict, identity: dict) -> dict:
@@ -434,6 +525,8 @@ def execute_google_ads_command(command: dict, identity: dict) -> dict:
             plan["query"], tenant, customer_id, manager_id, plan["read_limit"])
         return {"ok": True, "provider": "google_ads", "customer_id": customer_id,
                 **finalize_query(plan, result)}
+    if action == "prepare_negative_keywords":
+        return _prepare_negative_keywords(tenant, command)
     if action == "prepare_mutation":
         cid = _customer_id(command.get("customer_id"))
         ops = _check_mutations(command.get("operations"), cid)
