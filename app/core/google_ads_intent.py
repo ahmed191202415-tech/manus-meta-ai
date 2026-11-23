@@ -339,6 +339,13 @@ def parse_google_ads_request(body) -> dict:
             _bad("Malformed Google Ads JSON. Supply one valid JSON command; no report scope was inferred.")
         if re.search(r"[\"']action[\"']\s*:\s*[\"'](?:inspect_campaign|discover_campaign)[\"']", message, re.I) is None:
             _bad("Malformed Google Ads command.")
+    # Never reinterpret a requested negative-keyword addition as a read or
+    # campaign inspection. Require a structured, reviewable exact scope.
+    if re.search(r"(?:أضف|اضف|ضيف|إضافة|اضافة|استبعد|استبعاد|add|create)", lower) and re.search(
+        r"negative[_ ]?keywords?|الكلمات\\s+(?:السلبية|المستبعدة)|كلمات\\s+سلبية|negative", lower
+    ):
+        _bad("To add negatives, send a Google Ads JSON command with action=prepare_negative_keywords, customer_id, ad_group_id, match_type=EXACT, and keywords. This makes a validate-only preview; then obtain user approval before commit_mutation.")
+
     query, outside_query = _raw_gaql(message)
     if query is not None:
         scope = _scope(outside_query, body)
