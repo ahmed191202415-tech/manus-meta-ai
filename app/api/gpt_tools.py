@@ -490,6 +490,35 @@ async def intent_tool(body: IntentToolRequest, request: Request = None):
     )
 
 
+@router.post(
+    "/read",
+    summary="Read-only analysis and Google Ads lookup",
+    description=(
+        "Use this tool for all analysis, Google Ads reports, account inspection, "
+        "search terms and diagnostic reads. It cannot preview, approve or commit "
+        "any Google Ads mutations. For changes, use /tools/intent and its approval flow."
+    ),
+)
+async def read_tool(body: IntentToolRequest, request: Request):
+    """Read-only entry point so ChatGPT can safely remember read permissions.
+
+    /tools/intent is intentionally consequential because it also supports
+    real Google Ads writes. Keep their approval boundary separate.
+    """
+    from app.core.google_ads_gateway import _detect, parse_google_ads_request
+    if _detect(body.request):
+        command = parse_google_ads_request(body)
+        if command.get("action") in {"prepare_mutation", "prepare_negative_keywords", "commit_mutation"}:
+            raise HTTPException(
+                status_code=403,
+                detail="This tool is read-only. Use /tools/intent for write previews and user-confirmed changes."
+            )
+    result = await intent_tool(body, request)
+    if isinstance(result, dict) and isinstance(result.get("action_diagnostics"), dict):
+        result["action_diagnostics"]["route"] = "/tools/read"
+    return result
+
+
 LEAD_ACCESS_REQUIRED_PERMISSIONS = [
     "leads_retrieval",
     "pages_manage_ads",
