@@ -73,7 +73,7 @@ def test_existing_action_routes_audit_json_only_to_google_handler(monkeypatch):
     assert data["action"]=="audit_crm_migration"
     assert data["sections"]["ads"]["ok"] is True
     assert data["action_diagnostics"]["route"]=="/tools/intent"
-    assert len(openapi_gpt_schema()["paths"])==29
+    assert len(openapi_gpt_schema()["paths"])==28
 
 
 def test_missing_or_bad_ids_rejected_before_api_reads(monkeypatch):
