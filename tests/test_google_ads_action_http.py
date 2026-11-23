@@ -17,7 +17,6 @@ def test_existing_gpt_action_ping_is_called_and_traceable(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="ads.google_action"):
         response = TestClient(app).post(
             "/tools/intent",
-        "/tools/read",
             json={"request": 'google_ads {"action":"ping"}'},
         )
     assert response.status_code == 200, response.text
@@ -43,7 +42,6 @@ def test_named_campaign_http_path_returns_google_ads_json(monkeypatch):
     })
     response = TestClient(app).post(
         "/tools/intent",
-        "/tools/read",
         json={"request": "google_ads inspect_campaign Sales-Search-1"},
     )
     assert response.status_code == 200, response.text
@@ -59,7 +57,6 @@ def test_google_ads_is_denied_without_authorized_gpt_session(monkeypatch):
     monkeypatch.setattr(ads, "_required_app_identity", deny)
     response = TestClient(app).post(
         "/tools/intent",
-        "/tools/read",
         json={"request": "google_ads ping"},
     )
     assert response.status_code == 401
