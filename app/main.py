@@ -33,7 +33,6 @@ GPT_DATA_PATHS = {
     "/api/dashboard-runtime/query",
     "/api/dashboard-runtime/v2/workflow",
     "/api/dashboard-runtime/events/discover",
-    "/dashboards/custom/{dashboard_id}",
     "/dashboards/code/{dashboard_id}",
     "/api/journey/funnel",
     "/api/journey/stage-detail",
